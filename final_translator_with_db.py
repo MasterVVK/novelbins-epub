@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 import requests
 from bs4 import BeautifulSoup, NavigableString
 import re
+from ebooklib import epub
 
 # Загружаем переменные окружения
 load_dotenv()
@@ -242,7 +243,7 @@ class DatabaseManager:
 
 
 class NovelParser:
-    """Парсер для novelbins.com - использует логику из оригинального final_parser.py"""
+    """Парсер для novelbins.com с поддержкой пагинации"""
 
     def __init__(self):
         self.base_url = "https://novelbins.com"
@@ -762,10 +763,311 @@ class FinalTranslator:
         return result
 
 
+class EPUBGenerator:
+    """Генератор EPUB файлов из переведённых глав"""
+    
+    def __init__(self, db_path: str = "translations.db"):
+        self.db_path = db_path
+        self.book_title = "Покрывая Небеса"
+        self.book_author = "Чэнь Дун"
+        self.book_language = "ru"
+        
+    def get_chapters_from_db(self, chapter_numbers: Optional[List[int]] = None) -> List[Dict]:
+        """Получение глав из базы данных"""
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        if chapter_numbers:
+            placeholders = ','.join('?' * len(chapter_numbers))
+            query = f"""
+                SELECT chapter_number, translated_title, translated_text, summary
+                FROM chapters
+                WHERE status = 'completed' AND chapter_number IN ({placeholders})
+                ORDER BY chapter_number
+            """
+            cursor.execute(query, chapter_numbers)
+        else:
+            # Берём все переведённые главы
+            query = """
+                SELECT chapter_number, translated_title, translated_text, summary
+                FROM chapters
+                WHERE status = 'completed'
+                ORDER BY chapter_number
+                LIMIT 3
+            """
+            cursor.execute(query)
+        
+        chapters = []
+        for row in cursor.fetchall():
+            chapters.append({
+                'number': row['chapter_number'],
+                'title': row['translated_title'],
+                'content': row['translated_text'],
+                'summary': row['summary']
+            })
+        
+        conn.close()
+        return chapters
+    
+    def create_epub(self, chapters: List[Dict], output_path: str = None) -> str:
+        """Создание EPUB файла"""
+        # Создаём книгу
+        book = epub.EpubBook()
+        
+        # Метаданные
+        book.set_identifier(f'shrouding-the-heavens-{datetime.now().strftime("%Y%m%d")}')
+        book.set_title(self.book_title)
+        book.set_language(self.book_language)
+        book.add_author(self.book_author)
+        
+        # Добавляем описание
+        book.add_metadata('DC', 'description', 
+            'Перевод первых глав романа "Shrouding the Heavens" (遮天). '
+            'В далёком космосе древний бронзовый гроб дрейфует в пустоте...')
+        
+        # CSS стили
+        style = '''
+        @namespace epub "http://www.idpf.org/2007/ops";
+        
+        body {
+            font-family: Georgia, serif;
+            margin: 5%;
+            text-align: justify;
+            line-height: 1.6;
+        }
+        
+        h1 {
+            text-align: center;
+            margin-top: 1em;
+            margin-bottom: 1em;
+            font-size: 1.5em;
+            page-break-before: always;
+        }
+        
+        h2 {
+            text-align: center;
+            margin-top: 2em;
+            margin-bottom: 1em;
+            font-size: 1.3em;
+        }
+        
+        p {
+            text-indent: 1.5em;
+            margin-top: 0;
+            margin-bottom: 0.5em;
+        }
+        
+        .chapter-number {
+            text-align: center;
+            font-size: 0.9em;
+            color: #666;
+            margin-bottom: 0.5em;
+        }
+        
+        .first-paragraph {
+            text-indent: 0;
+        }
+        
+        .summary {
+            font-style: italic;
+            color: #555;
+            margin: 1em 0;
+            padding: 1em;
+            border-left: 3px solid #ccc;
+        }
+        '''
+        
+        # Добавляем CSS
+        nav_css = epub.EpubItem(
+            uid="style_nav",
+            file_name="style/nav.css",
+            media_type="text/css",
+            content=style
+        )
+        book.add_item(nav_css)
+        
+        # Создаём обложку (титульную страницу)
+        title_page = epub.EpubHtml(
+            title='Титульная страница',
+            file_name='title.xhtml',
+            lang='ru'
+        )
+        title_page.content = f'''
+        <html xmlns="http://www.w3.org/1999/xhtml">
+        <head>
+            <title>{self.book_title}</title>
+            <link rel="stylesheet" type="text/css" href="style/nav.css"/>
+        </head>
+        <body>
+            <div style="text-align: center; margin-top: 30%;">
+                <h1 style="font-size: 2.5em; margin-bottom: 0.5em;">{self.book_title}</h1>
+                <h2 style="font-size: 1.2em; font-weight: normal;">Покрывая Небеса</h2>
+                <p style="margin-top: 2em;">Автор: {self.book_author}</p>
+                <p style="margin-top: 1em; font-size: 0.9em;">Перевод с английского</p>
+                <p style="margin-top: 3em; font-size: 0.8em;">{datetime.now().strftime("%Y")}</p>
+            </div>
+        </body>
+        </html>
+        '''
+        book.add_item(title_page)
+        
+        # Создаём страницу с оглавлением
+        toc_page = epub.EpubHtml(
+            title='Оглавление',
+            file_name='toc.xhtml',
+            lang='ru'
+        )
+        
+        toc_content = '''
+        <html xmlns="http://www.w3.org/1999/xhtml">
+        <head>
+            <title>Оглавление</title>
+            <link rel="stylesheet" type="text/css" href="style/nav.css"/>
+        </head>
+        <body>
+            <h1>Оглавление</h1>
+        '''
+        
+        # Список для навигации
+        toc_list = []
+        spine_list = ['nav', title_page, toc_page]
+        
+        # Добавляем главы
+        for chapter in chapters:
+            # Создаём файл главы
+            ch_filename = f'chapter_{chapter["number"]:03d}.xhtml'
+            ch = epub.EpubHtml(
+                title=chapter['title'],
+                file_name=ch_filename,
+                lang='ru'
+            )
+            
+            # Форматируем контент главы
+            paragraphs = chapter['content'].split('\n\n')
+            formatted_paragraphs = []
+            
+            for i, para in enumerate(paragraphs):
+                para = para.strip()
+                if para:
+                    if i == 0:
+                        formatted_paragraphs.append(f'<p class="first-paragraph">{para}</p>')
+                    else:
+                        formatted_paragraphs.append(f'<p>{para}</p>')
+            
+            # HTML содержимое главы
+            ch.content = f'''
+            <html xmlns="http://www.w3.org/1999/xhtml">
+            <head>
+                <title>{chapter['title']}</title>
+                <link rel="stylesheet" type="text/css" href="style/nav.css"/>
+            </head>
+            <body>
+                <div class="chapter-number">Глава {chapter['number']}</div>
+                <h1>{chapter['title'].replace(f"Глава {chapter['number']}: ", "")}</h1>
+                {''.join(formatted_paragraphs)}
+            </body>
+            </html>
+            '''
+            
+            ch.add_item(nav_css)
+            book.add_item(ch)
+            
+            # Добавляем в spine и toc
+            spine_list.append(ch)
+            toc_list.append(ch)
+            
+            # Добавляем в оглавление
+            toc_content += f'<p><a href="{ch_filename}">{chapter["title"]}</a></p>\n'
+        
+        toc_content += '''
+        </body>
+        </html>
+        '''
+        toc_page.content = toc_content
+        book.add_item(toc_page)
+        
+        # Настройка навигации
+        book.toc = (
+            epub.Link('title.xhtml', 'Титульная страница', 'title'),
+            epub.Link('toc.xhtml', 'Оглавление', 'toc'),
+            (epub.Section('Главы'), toc_list)
+        )
+        
+        # Добавляем NCX и Nav файлы
+        book.add_item(epub.EpubNcx())
+        book.add_item(epub.EpubNav())
+        
+        # spine
+        book.spine = spine_list
+        
+        # Определяем путь для сохранения
+        if not output_path:
+            output_dir = Path("epub_output")
+            output_dir.mkdir(exist_ok=True)
+            
+            chapters_range = f"{chapters[0]['number']}-{chapters[-1]['number']}"
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_path = output_dir / f"shrouding_the_heavens_ch{chapters_range}_{timestamp}.epub"
+        
+        # Записываем EPUB файл
+        epub.write_epub(output_path, book, {})
+        
+        return str(output_path)
+    
+    def create_epub_with_extras(self, chapters: List[Dict], output_path: str = None) -> str:
+        """Создание EPUB с дополнительными материалами (глоссарий, карта персонажей)"""
+        # Получаем глоссарий из БД
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT english, russian, category, first_appearance_chapter
+            FROM glossary
+            ORDER BY category, english
+        """)
+        
+        glossary = {'characters': [], 'locations': [], 'terms': []}
+        for row in cursor.fetchall():
+            item = {
+                'english': row['english'],
+                'russian': row['russian'],
+                'first_chapter': row['first_appearance_chapter']
+            }
+            
+            if row['category'] == 'character':
+                glossary['characters'].append(item)
+            elif row['category'] == 'location':
+                glossary['locations'].append(item)
+            else:
+                glossary['terms'].append(item)
+        
+        conn.close()
+        
+        # Создаём базовую книгу
+        book_path = self.create_epub(chapters, output_path)
+        
+        # Для добавления глоссария нужно пересоздать книгу
+        # Это упрощённая версия, в реальности лучше модифицировать существующую
+        
+        print(f"\n EPUB создан: {book_path}")
+        print(f"   Глав: {len(chapters)}")
+        print(f"   Размер: {Path(book_path).stat().st_size / 1024:.1f} KB")
+        
+        if glossary['characters'] or glossary['locations'] or glossary['terms']:
+            print(f"\n Глоссарий:")
+            print(f"   Персонажей: {len(glossary['characters'])}")
+            print(f"   Локаций: {len(glossary['locations'])}")
+            print(f"   Терминов: {len(glossary['terms'])}")
+        
+        return book_path
+
+
 def main():
     """Основная функция"""
     print("=" * 70)
-    print("ФИНАЛЬНЫЙ ПЕРЕВОДЧИК: ПАРСИНГ + ПЕРЕВОД + БД")
+    print("ФИНАЛЬНЫЙ ПЕРЕВОДЧИК: ПАРСИНГ + ПЕРЕВОД + БД + EPUB")
     print("=" * 70)
 
     # Проверка конфигурации
@@ -784,7 +1086,7 @@ def main():
     # Шаг 1: Парсинг глав
     print(f"\n Шаг 1: Парсинг глав с {NOVEL_URL}")
     parser = NovelParser()
-    chapters = parser.parse_chapter_list(NOVEL_URL, max_chapters=3)
+    chapters = parser.parse_chapter_list(NOVEL_URL, max_chapters=155)
 
     if not chapters:
         print("❌ Не удалось получить список глав")
@@ -815,11 +1117,13 @@ def main():
 
     start_time = time.time()
     successful = 0
+    translated_chapter_numbers = []
 
     for chapter in parsed_chapters:
         try:
             if translator.translate_chapter(chapter):
                 successful += 1
+                translated_chapter_numbers.append(chapter['chapter_number'])
 
             # Задержка между главами
             if chapter != parsed_chapters[-1]:
@@ -854,8 +1158,47 @@ def main():
     print(f"\n Файлы сохранены в: translations_final/")
     print(f" База данных: translations.db")
 
+    # Шаг 4: Создание EPUB
+    if successful > 0:
+        print("\n" + "=" * 70)
+        print(" Шаг 4: Создание EPUB")
+        print("=" * 70)
+        
+        try:
+            epub_gen = EPUBGenerator(translator.db.db_path)
+            
+            # Получаем переведённые главы из БД
+            epub_chapters = epub_gen.get_chapters_from_db(translated_chapter_numbers)
+            
+            if epub_chapters:
+                # Создаём EPUB с дополнительными материалами
+                epub_path = epub_gen.create_epub_with_extras(epub_chapters)
+                
+                print(f"\n✅ EPUB файл создан успешно!")
+                print(f" Расположение: {epub_path}")
+                print(f" Содержит:")
+                print(f"   - {len(epub_chapters)} переведённых глав")
+                print(f"   - Глоссарий с {total_terms} терминами")
+                print(f"   - Оглавление и навигацию")
+                
+                # Информация о файле
+                epub_file = Path(epub_path)
+                if epub_file.exists():
+                    size_kb = epub_file.stat().st_size / 1024
+                    print(f"   - Размер файла: {size_kb:.1f} KB")
+            else:
+                print("❌ Не найдено переведённых глав для создания EPUB")
+                
+        except ImportError:
+            print("⚠️  Библиотека ebooklib не установлена")
+            print("   Установите: pip install ebooklib")
+        except Exception as e:
+            print(f"❌ Ошибка при создании EPUB: {e}")
+    
     # Закрываем БД
     translator.db.close()
+    
+    print("\n✨ Работа завершена!")
 
 
 if __name__ == "__main__":

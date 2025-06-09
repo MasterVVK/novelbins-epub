@@ -165,3 +165,5 @@ translations.db
 /translations_dynamic
 /translations_final
 glossary_state.json
+/epub_output
+/translations
