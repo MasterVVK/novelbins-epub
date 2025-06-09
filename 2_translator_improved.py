@@ -1,6 +1,4 @@
-translation_time = time.time() - start_time
-            db.update_api_stats(self.current_key_index, success=True)
-            print(f"  ✅ Перевод завершён за {translation_time:.1f} сек")"""
+"""
 2_translator_improved.py - Улучшенный переводчик с повышенной точностью
 """
 print("DEBUG: Начало загрузки модулей...")
@@ -554,6 +552,15 @@ class LLMTranslator:
         if chapter_title:
             print(f"   Название: {chapter_title}")
 
+        # ВАЖНО: Определяем start_time в самом начале
+        start_time = time.time()
+
+        # Инициализируем переменные
+        translated_text = None
+        translated_title = f"Глава {chapter.number}"
+        summary = None
+        translation_time = 0
+
         try:
             # Шаг 1: Перевод текста с расширенным контекстом
             context_prompt = self.build_context_prompt(context, context.glossary)
@@ -571,7 +578,6 @@ class LLMTranslator:
 НАПОМИНАНИЕ: Переведи ВЕСЬ текст, сохраняя ВСЕ абзацы и детали."""
 
             print("\n   Шаг 1/4: Перевод главы...")
-            start_time = time.time()
 
             # Проверяем размер главы
             if chapter.word_count > 1500:
@@ -579,7 +585,7 @@ class LLMTranslator:
 
                 # Разбиваем на части
                 parts = self.split_long_text(chapter.original_text, max_words=1000)
-                print(f"    Разбита на {len(parts)} частей")
+                print(f"    Разбита на {len(parts)} частей")
 
                 translated_parts = []
 
@@ -606,7 +612,7 @@ class LLMTranslator:
                         print(f"   ❌ Не удалось перевести часть {i}")
                         # Пробуем ещё раз с меньшим размером
                         if len(part_text.split()) > 500:
-                            print(f"    Пробуем разбить часть {i} на ещё меньшие фрагменты...")
+                            print(f"    Пробуем разбить часть {i} на ещё меньшие фрагменты...")
                             sub_parts = self.split_long_text(part_text, max_words=500)
                             sub_translations = []
                             for j, sub_part in enumerate(sub_parts, 1):
@@ -638,7 +644,7 @@ class LLMTranslator:
                             time.sleep(2)
 
                 # Объединяем части
-                print(f"\n    Объединение {len(translated_parts)} частей...")
+                print(f"\n    Объединение {len(translated_parts)} частей...")
                 translated_text = '\n\n'.join(translated_parts)
 
                 # Извлекаем название из первой части
@@ -676,6 +682,10 @@ class LLMTranslator:
                         translated_title = f"Глава {chapter.number}: {chapter_title}"
                         print(f"  ⚠️  Используем оригинальное название")
 
+            # Вычисляем время перевода ЗДЕСЬ, после успешного перевода
+            translation_time = time.time() - start_time
+            db.update_api_stats(self.current_key_index, success=True)
+
             # Шаг 2: Валидация перевода
             print("\n   Шаг 2/4: Валидация перевода...")
             validation = self.validate_translation(chapter.original_text, translated_text, chapter.number)
@@ -688,11 +698,11 @@ class LLMTranslator:
                 # Проверяем соотношение длины
                 if validation['stats']['length_ratio'] < 0.7:
                     print(f"\n  ⚠️  Перевод неполный (только {validation['stats']['length_ratio']:.1%} от оригинала)")
-                    print(f"   Автоматический перезапуск с разбиением на части...")
+                    print(f"   Автоматический перезапуск с разбиением на части...")
 
                     # Разбиваем на части и переводим заново
                     parts = self.split_long_text(chapter.original_text, max_words=800)
-                    print(f"   Разбиваем на {len(parts)} частей для повторного перевода")
+                    print(f"   Разбиваем на {len(parts)} частей для повторного перевода")
 
                     translated_parts = []
 
@@ -900,7 +910,7 @@ class LLMTranslator:
             # ВАЖНОЕ ИЗМЕНЕНИЕ: Обновляем данные главы независимо от успеха создания резюме
             chapter.translated_title = translated_title
             chapter.translated_text = translated_text
-            chapter.summary = summary  # Теперь всегда есть значение (реальное или автоматическое)
+            chapter.summary = summary if summary else "Автоматическое резюме"
             chapter.translation_time = translation_time
             chapter.translated_at = datetime.now()
 
@@ -1048,16 +1058,11 @@ def main():
     translator = LLMTranslator(config)
     db = DatabaseManager()
 
-    # Модифицируем метод для получения большего контекста
-    original_get_recent_summaries = db.get_recent_summaries
-    db.get_recent_summaries = lambda limit=5: original_get_recent_summaries(limit)
-
     # Получаем главы для перевода
     if args.force:
         print(f"\n⚠️  РЕЖИМ ПРИНУДИТЕЛЬНОГО ПЕРЕВОДА")
-        # print(f"   Будут переведены заново первые {MAX_CHAPTERS_TO_TRANSLATE} глав")
 
-        # Сбрасываем статус для всех глав (убрали ограничение)
+        # Сбрасываем статус для всех глав
         cursor = db.conn.cursor()
         cursor.execute("""
             UPDATE chapters 
@@ -1070,7 +1075,6 @@ def main():
         db.conn.commit()
 
         chapters = db.get_chapters_for_translation()
-        # chapters = chapters[:MAX_CHAPTERS_TO_TRANSLATE]  # Убрали ограничение
 
     elif args.chapters:
         print(f"\n Перевод конкретных глав: {args.chapters}")
@@ -1101,11 +1105,6 @@ def main():
         db.close()
         return
 
-    # ОГРАНИЧЕНИЕ ДЛЯ ТЕСТИРОВАНИЯ - ЗАКОММЕНТИРОВАНО
-    # if len(chapters) > MAX_CHAPTERS_TO_TRANSLATE:
-    #     print(f"\n⚠️  РЕЖИМ ТЕСТИРОВАНИЯ: ограничиваем перевод {MAX_CHAPTERS_TO_TRANSLATE} главами")
-    #     chapters = chapters[:MAX_CHAPTERS_TO_TRANSLATE]
-
     print(f"\n Найдено глав для перевода: {len(chapters)}")
 
     # Переводим главы
@@ -1119,7 +1118,7 @@ def main():
             print(f"[{i}/{len(chapters)}] ОБРАБОТКА ГЛАВЫ {chapter.number}")
             print(f"{'='*70}")
 
-            # Получаем контекст для главы (теперь до 5 глав)
+            # Получаем контекст для главы
             context = db.get_translation_context(chapter.number)
 
             try:
