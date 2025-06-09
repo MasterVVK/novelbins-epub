@@ -57,7 +57,7 @@ class TranslatorConfig:
     api_keys: List[str]
     model_name: str = "gemini-2.5-flash-preview-05-20"
     temperature: float = 0.1
-    max_output_tokens: int = 16384
+    max_output_tokens: int = 24000
     request_delay: float = 2.0
     proxy_url: Optional[str] = None
 

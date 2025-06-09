@@ -1,5 +1,5 @@
 """
-2_translator_improved.py - Улучшенный переводчик с повышенной точностью
+2_translator_improved_final.py - Улучшенный переводчик с исправлением проблемы звуковых эффектов
 """
 print("DEBUG: Начало загрузки модулей...")
 
@@ -42,9 +42,6 @@ except ImportError as e:
 # Загружаем переменные окружения
 load_dotenv()
 print("DEBUG: Переменные окружения загружены")
-
-# ОГРАНИЧЕНИЕ ДЛЯ ТЕСТИРОВАНИЯ
-# MAX_CHAPTERS_TO_TRANSLATE = 10  # Максимум глав для перевода
 
 # Улучшенный промпт для перевода с конкретными примерами
 TRANSLATION_PROMPT = """Ты профессиональный переводчик китайских веб-новелл жанра сянься.
@@ -105,6 +102,14 @@ TRANSLATION_PROMPT = """Ты профессиональный переводчи
    - Mercedes-Benz → Мерседес-Бенц
    - Toyota → Тойота
    - karaoke → караоке
+
+8. ЗВУКОВЫЕ ЭФФЕКТЫ:
+   - "Wooo..." → "Уууу..." (протяжный вой)
+   - "Ahhh..." → "Аааа..." (протяжный крик)
+   - "Eeee..." → "Ииии..." (визг)
+   - "Ohhh..." → "Оооо..." (стон)
+   - "Nooo..." → "Нееет..." (протяжный крик)
+   - Многоточие означает протяжный/затухающий звук
 
 ЗАПРЕЩЕНО:
 ❌ Пропускать предложения или абзацы
@@ -170,6 +175,58 @@ EXTRACT_TERMS_PROMPT = """Ты работаешь с китайской веб-�
 - нет новых"""
 
 
+def preprocess_chapter_text(text: str) -> str:
+    """Предобработка текста главы для избежания проблем с токенизацией"""
+
+    # Словарь замен для звуковых эффектов
+    # Если 3 и более повторений - заменяем на короткую версию с многоточием
+    sound_effects = {
+        r'W[oO]{3,}': 'Wooo...',
+        r'A[hH]{3,}': 'Ahhh...',
+        r'E[eE]{3,}': 'Eeee...',
+        r'O[hH]{3,}': 'Ohhh...',
+        r'U[uU]{3,}': 'Uuuu...',
+        r'Y[aA]{3,}': 'Yaaa...',
+        r'N[oO]{3,}': 'Nooo...',
+        r'H[aA]{3,}': 'Haaa...',
+        r'R[rR]{3,}': 'Rrrr...',
+        r'S[sS]{3,}': 'Ssss...',
+        r'Z[zZ]{3,}': 'Zzzz...',
+        # Дополнительные паттерны
+        r'M[mM]{3,}': 'Mmm...',
+        r'G[rR]{3,}': 'Grrr...',
+        r'B[rR]{3,}': 'Brrr...',
+    }
+
+    # Счётчик замен для отладки
+    replacements_made = 0
+
+    # Применяем замены
+    for pattern, replacement in sound_effects.items():
+        text, count = re.subn(pattern, replacement, text, flags=re.IGNORECASE)
+        replacements_made += count
+
+    # Дополнительно: обработка любых других повторяющихся букв
+    # Если встречается любая буква повторенная 5+ раз
+    def replace_any_long_repetition(match):
+        full_match = match.group(0)
+        if len(full_match) > 5:
+            # Берём первую букву, повторяем 3 раза и добавляем многоточие
+            first_char = full_match[0]
+            return first_char * 3 + '...'
+        return full_match
+
+    # Обрабатываем любые другие длинные повторения
+    text, count = re.subn(r'(\w)\1{4,}', replace_any_long_repetition, text)
+    replacements_made += count
+
+    # Логирование изменений
+    if replacements_made > 0:
+        print(f"    Применена предобработка звуковых эффектов ({replacements_made} замен)")
+
+    return text
+
+
 class LLMTranslator:
     """Улучшенный переводчик через LLM API с повышенной точностью"""
 
@@ -178,6 +235,8 @@ class LLMTranslator:
         self.current_key_index = 0
         self.failed_keys = set()  # Множество неработающих ключей
         self.full_cycles_without_success = 0  # Счётчик полных циклов без успеха
+        self.stop_on_max_tokens = os.getenv('STOP_ON_MAX_TOKENS', 'false').lower() == 'true'  # Режим отладки
+        self.last_finish_reason = None  # Сохраняем причину завершения
 
         # HTTP клиент
         if config.proxy_url:
@@ -310,9 +369,33 @@ class LLMTranslator:
 
                         # Проверяем причину завершения
                         finish_reason = candidate.get("finishReason")
+                        self.last_finish_reason = finish_reason  # Сохраняем для дальнейшей обработки
+
                         if finish_reason == "MAX_TOKENS":
                             print(f"  ⚠️  ВНИМАНИЕ: Ответ обрезан из-за лимита токенов!")
                             print(f"     Рекомендуется разбить текст на части")
+
+                            # Если включён режим остановки на MAX_TOKENS
+                            if self.stop_on_max_tokens:
+                                print(f"\n   РЕЖИМ ОТЛАДКИ: Остановка из-за MAX_TOKENS")
+                                print(f"     Установите STOP_ON_MAX_TOKENS=false для продолжения")
+
+                                # Сохраняем информацию для анализа
+                                debug_info = {
+                                    'timestamp': datetime.now().isoformat(),
+                                    'prompt_size': len(system_prompt) + len(user_prompt),
+                                    'response_size': len(parts[0].get("text", "")) if parts else 0,
+                                    'finish_reason': finish_reason,
+                                    'last_200_chars': parts[0].get("text", "")[-200:] if parts else "",
+                                    'usage_metadata': data.get('usageMetadata', {})
+                                }
+
+                                debug_file = Path("max_tokens_debug.json")
+                                with open(debug_file, 'w', encoding='utf-8') as f:
+                                    json.dump(debug_info, f, ensure_ascii=False, indent=2)
+
+                                print(f"     Отладочная информация сохранена в: {debug_file}")
+                                raise Exception("MAX_TOKENS достигнут - остановка для анализа")
 
                         content = candidate.get("content", {})
                         parts = content.get("parts", [])
@@ -375,44 +458,6 @@ class LLMTranslator:
 
         # Если дошли сюда, значит превысили максимум попыток
         raise Exception(f"Не удалось выполнить запрос после {max_attempts} попыток")
-
-    def make_request_with_retry(self, system_prompt: str, user_prompt: str, retry_with_shorter: bool = False) -> Optional[str]:
-        """Делает запрос с возможностью повтора с сокращённым текстом"""
-        result = self.make_request(system_prompt, user_prompt)
-
-        # Если включён режим повтора и первая попытка не удалась
-        if not result and retry_with_shorter and "резюме главы" in system_prompt.lower():
-            # Проверяем, были ли все ответы блокировками (не лимитами)
-            # Это грубая проверка, но работает
-            if len(self.failed_keys) < len(self.config.api_keys):
-                print("   ⚠️  Похоже на блокировку контента, пробуем сокращённую версию...")
-
-                # Извлекаем текст из промпта
-                import re
-                match = re.search(r'Текст главы \d+:\n\n(.+)', user_prompt, re.DOTALL)
-                if match:
-                    full_text = match.group(1)
-
-                    # Сокращаем текст
-                    if len(full_text) > 4000:
-                        shortened = full_text[:3000] + "\n\n[...]\n\n" + full_text[-1000:]
-                    else:
-                        third = len(full_text) // 3
-                        shortened = full_text[:third] + "\n\n[...]\n\n" + full_text[-third:]
-
-                    # Новый промпт с сокращённым текстом
-                    new_prompt = user_prompt.replace(full_text, shortened)
-                    new_prompt = new_prompt.replace("Текст главы", "Текст главы (сокращённая версия)")
-
-                    # Сбрасываем failed_keys для новой попытки
-                    self.reset_failed_keys()
-
-                    # Повторная попытка
-                    result = self.make_request(system_prompt, new_prompt)
-                    if result:
-                        print("   ✅ Сокращённая версия сработала!")
-
-        return result
 
     def rotate_key_after_chapter(self):
         """Ротация ключа после успешного перевода главы"""
@@ -514,7 +559,7 @@ class LLMTranslator:
             'stats': stats
         }
 
-    def split_long_text(self, text: str, max_words: int = 1000) -> List[str]:
+    def split_long_text(self, text: str, max_words: int = 1200) -> List[str]:  # Увеличили с 600 до 1200
         """Разбивает длинный текст на части с сохранением целостности абзацев"""
         paragraphs = text.split('\n\n')
         parts = []
@@ -561,7 +606,13 @@ class LLMTranslator:
         summary = None
         translation_time = 0
 
+        # Сохраняем оригинальный текст перед предобработкой
+        original_text_backup = chapter.original_text
+
         try:
+            # Предобработка текста для избежания проблем со звуковыми эффектами
+            chapter.original_text = preprocess_chapter_text(chapter.original_text)
+
             # Шаг 1: Перевод текста с расширенным контекстом
             context_prompt = self.build_context_prompt(context, context.glossary)
 
@@ -580,11 +631,19 @@ class LLMTranslator:
             print("\n   Шаг 1/4: Перевод главы...")
 
             # Проверяем размер главы
-            if chapter.word_count > 1500:
+            if chapter.word_count > 3000:  # Увеличили порог с 1500 до 3000
                 print(f"   ⚠️  Глава большая ({chapter.word_count} слов), будет разбита на части")
 
+                # Адаптивное разбиение в зависимости от размера
+                if chapter.word_count > 5000:  # Увеличили с 2000
+                    max_words_per_part = 1000   # Увеличили с 500
+                elif chapter.word_count > 3000:
+                    max_words_per_part = 1200   # Увеличили с 600
+                else:
+                    max_words_per_part = 1500
+
                 # Разбиваем на части
-                parts = self.split_long_text(chapter.original_text, max_words=1000)
+                parts = self.split_long_text(chapter.original_text, max_words=max_words_per_part)
                 print(f"    Разбита на {len(parts)} частей")
 
                 translated_parts = []
@@ -608,40 +667,44 @@ class LLMTranslator:
                     print(f"   Перевод части {i}...")
                     part_translation = self.make_request(TRANSLATION_PROMPT, part_prompt)
 
-                    if not part_translation:
-                        print(f"   ❌ Не удалось перевести часть {i}")
-                        # Пробуем ещё раз с меньшим размером
-                        if len(part_text.split()) > 500:
-                            print(f"    Пробуем разбить часть {i} на ещё меньшие фрагменты...")
-                            sub_parts = self.split_long_text(part_text, max_words=500)
-                            sub_translations = []
-                            for j, sub_part in enumerate(sub_parts, 1):
-                                sub_prompt = f"""{context_prompt}
-ЗАДАЧА: Переведи фрагмент {j} части {i} главы {chapter.number}.
+                    # Проверяем, была ли обрезка из-за MAX_TOKENS
+                    if self.last_finish_reason == "MAX_TOKENS" and not self.stop_on_max_tokens:
+                        print(f"   ⚠️  Часть {i} была обрезана из-за MAX_TOKENS!")
+                        print(f"      Текст части: {len(part_text)} символов")
+                        print(f"      Результат: {len(part_translation) if part_translation else 0} символов")
+
+                        # Автоматически разбиваем на меньшие части
+                        print(f"    Автоматическое разбиение части {i} на меньшие фрагменты...")
+                        sub_parts = self.split_long_text(part_text, max_words=300)
+                        print(f"      Разбито на {len(sub_parts)} подчастей")
+
+                        sub_translations = []
+                        for j, sub_part in enumerate(sub_parts, 1):
+                            print(f"      Перевод подчасти {i}.{j}...")
+                            sub_prompt = f"""{context_prompt}
+ЗАДАЧА: Переведи фрагмент {j} из {len(sub_parts)} части {i} главы {chapter.number}.
 
 ТЕКСТ:
 {sub_part}"""
-                                sub_trans = self.make_request(TRANSLATION_PROMPT, sub_prompt)
-                                if sub_trans:
-                                    sub_translations.append(sub_trans)
-                                    print(f"   ✅ Фрагмент {j} переведён")
-                                else:
-                                    print(f"   ❌ Фрагмент {j} не удалось перевести")
+                            sub_trans = self.make_request(TRANSLATION_PROMPT, sub_prompt)
+                            if sub_trans:
+                                sub_translations.append(sub_trans)
+                                time.sleep(1)
 
-                            if sub_translations:
-                                part_translation = '\n\n'.join(sub_translations)
-                            else:
-                                return False
-                        else:
-                            return False
+                        if sub_translations:
+                            part_translation = '\n\n'.join(sub_translations)
+                            print(f"   ✅ Часть {i} успешно переведена через подчасти")
 
-                    if part_translation:
-                        translated_parts.append(part_translation)
-                        print(f"   ✅ Часть {i} переведена ({len(part_translation.split())} слов)")
+                    if not part_translation:
+                        print(f"   ❌ Не удалось перевести часть {i}")
+                        return False
 
-                        # Небольшая задержка между частями
-                        if i < len(parts):
-                            time.sleep(2)
+                    translated_parts.append(part_translation)
+                    print(f"   ✅ Часть {i} переведена ({len(part_translation.split())} слов)")
+
+                    # Небольшая задержка между частями
+                    if i < len(parts):
+                        time.sleep(2)
 
                 # Объединяем части
                 print(f"\n    Объединение {len(translated_parts)} частей...")
@@ -688,83 +751,27 @@ class LLMTranslator:
 
             # Шаг 2: Валидация перевода
             print("\n   Шаг 2/4: Валидация перевода...")
-            validation = self.validate_translation(chapter.original_text, translated_text, chapter.number)
+            # Используем оригинальный текст для валидации
+            validation = self.validate_translation(original_text_backup, translated_text, chapter.number)
 
             if validation['critical']:
                 print(f"  ❌ КРИТИЧЕСКИЕ ПРОБЛЕМЫ:")
                 for issue in validation['critical_issues']:
                     print(f"     - {issue}")
+                print(f"\n  ❌ ОСТАНОВКА: Глава {chapter.number} имеет критические проблемы")
 
-                # Проверяем соотношение длины
-                if validation['stats']['length_ratio'] < 0.7:
-                    print(f"\n  ⚠️  Перевод неполный (только {validation['stats']['length_ratio']:.1%} от оригинала)")
-                    print(f"   Автоматический перезапуск с разбиением на части...")
+                # Сохраняем с пометкой о проблеме
+                chapter.translated_title = f"Глава {chapter.number}: {chapter_title} [ПРОБЛЕМНЫЙ ПЕРЕВОД]"
+                chapter.translated_text = translated_text
+                chapter.summary = "Перевод с критическими проблемами"
+                chapter.translation_time = time.time() - start_time
+                chapter.translated_at = datetime.now()
 
-                    # Разбиваем на части и переводим заново
-                    parts = self.split_long_text(chapter.original_text, max_words=800)
-                    print(f"   Разбиваем на {len(parts)} частей для повторного перевода")
-
-                    translated_parts = []
-
-                    for i, part_text in enumerate(parts, 1):
-                        print(f"\n  ═══ Повторный перевод части {i}/{len(parts)} ═══")
-
-                        part_prompt = f"""{context_prompt}
-ЗАДАЧА: Переведи часть {i} из {len(parts)} главы {chapter.number}.
-
-ТЕКСТ ЧАСТИ {i}:
-{'=' * 60}
-{part_text}
-{'=' * 60}"""
-
-                        part_translation = self.make_request(TRANSLATION_PROMPT, part_prompt)
-
-                        if part_translation:
-                            translated_parts.append(part_translation)
-                            print(f"  ✅ Часть {i} переведена успешно")
-                            time.sleep(2)
-                        else:
-                            print(f"  ❌ Не удалось перевести часть {i}")
-                            # Сохраняем хотя бы частичный перевод
-                            if translated_parts:
-                                translated_text = '\n\n[ПЕРЕВОД НЕПОЛНЫЙ]\n\n'.join(translated_parts)
-                            break
-
-                    if len(translated_parts) == len(parts):
-                        # Успешно перевели все части
-                        translated_text = '\n\n'.join(translated_parts)
-                        print(f"\n  ✅ Успешно перевели все {len(parts)} частей!")
-
-                        # Переходим к следующим шагам
-                        validation = self.validate_translation(chapter.original_text, translated_text, chapter.number)
-                        if validation['valid'] or not validation['critical']:
-                            print(f"  ✅ Повторная валидация пройдена")
-                    else:
-                        # Не все части переведены
-                        print(f"\n  ⚠️  Переведено только {len(translated_parts)} из {len(parts)} частей")
-                        chapter.translated_title = f"Глава {chapter.number}: {chapter_title} [НЕПОЛНЫЙ ПЕРЕВОД]"
-                        chapter.translated_text = translated_text
-                        chapter.summary = "Неполный перевод из-за технических ограничений"
-                        chapter.translation_time = time.time() - start_time
-                        chapter.translated_at = datetime.now()
-
-                        db.update_chapter_translation(chapter)
-                        self.save_to_file(chapter)
-                        return False
-                else:
-                    # Другие критические проблемы (не связанные с длиной)
-                    print(f"\n  ❌ ОСТАНОВКА: Глава {chapter.number} имеет критические проблемы")
-
-                    # Сохраняем с пометкой о проблеме
-                    chapter.translated_title = f"Глава {chapter.number}: {chapter_title} [ПРОБЛЕМНЫЙ ПЕРЕВОД]"
-                    chapter.translated_text = translated_text
-                    chapter.summary = "Перевод с критическими проблемами"
-                    chapter.translation_time = time.time() - start_time
-                    chapter.translated_at = datetime.now()
-
-                    db.update_chapter_translation(chapter)
-                    self.save_to_file(chapter)
-                    return False
+                # Восстанавливаем оригинальный текст перед сохранением
+                chapter.original_text = original_text_backup
+                db.update_chapter_translation(chapter)
+                self.save_to_file(chapter)
+                return False
 
             elif not validation['valid']:
                 print(f"  ❌ Обнаружены проблемы:")
@@ -820,25 +827,9 @@ class LLMTranslator:
                               summary_prompt, summary)
                 db.update_api_stats(self.current_key_index, success=True)
             else:
-                print("  ⚠️  Не удалось создать резюме из перевода")
-                print("  ℹ️  Пробуем создать резюме из оригинала...")
-
-                # Альтернатива: создаём резюме из оригинального текста
-                original_for_summary = chapter.original_text
-                if len(original_for_summary) > 3000:
-                    original_for_summary = original_for_summary[:3000] + "\n\n[...]\n\n" + original_for_summary[-500:]
-
-                alt_summary_prompt = f"Создай краткое резюме главы {chapter.number} (максимум 100 слов) на русском языке.\n\nТекст главы на английском:\n\n{original_for_summary}"
-                summary = self.make_request("Напиши краткое резюме текста на русском языке.", alt_summary_prompt)
-
-                if summary:
-                    print(f"  ✅ Резюме создано из оригинала ({len(summary.split())} слов)")
-                else:
-                    print("  ℹ️  Используем автоматическое резюме")
-                    # Используем автоматическое резюме
-                    summary = f"Глава {chapter.number}. События развиваются. Герои продолжают путешествие. (Автоматическое резюме)"
-
-                db.update_api_stats(self.current_key_index, success=False, error="Summary failed")
+                print("  ⚠️  Не удалось создать резюме")
+                # Используем автоматическое резюме
+                summary = f"Глава {chapter.number}. События развиваются. Герои продолжают путешествие. (Автоматическое резюме)"
 
             # Шаг 4: Извлечение терминов (для глав 2+)
             if chapter.number > 1:
@@ -848,7 +839,8 @@ class LLMTranslator:
                 current_glossary = self.format_glossary_for_prompt(context.glossary)
 
                 # ВАЖНО: Ограничиваем размер текстов для извлечения терминов
-                orig_for_terms = chapter.original_text
+                # Используем оригинальный текст
+                orig_for_terms = original_text_backup
                 trans_for_terms = translated_text
 
                 if len(orig_for_terms) > 2000:
@@ -874,19 +866,19 @@ class LLMTranslator:
                         # Сохраняем в БД только валидные термины
                         total_new = 0
                         for eng, rus in new_terms.get('characters', {}).items():
-                            if self.is_valid_term(eng, rus, chapter.original_text, translated_text):
+                            if self.is_valid_term(eng, rus, original_text_backup, translated_text):
                                 item = GlossaryItem(eng, rus, 'character', chapter.number)
                                 db.save_glossary_item(item)
                                 total_new += 1
 
                         for eng, rus in new_terms.get('locations', {}).items():
-                            if self.is_valid_term(eng, rus, chapter.original_text, translated_text):
+                            if self.is_valid_term(eng, rus, original_text_backup, translated_text):
                                 item = GlossaryItem(eng, rus, 'location', chapter.number)
                                 db.save_glossary_item(item)
                                 total_new += 1
 
                         for eng, rus in new_terms.get('terms', {}).items():
-                            if self.is_valid_term(eng, rus, chapter.original_text, translated_text):
+                            if self.is_valid_term(eng, rus, original_text_backup, translated_text):
                                 item = GlossaryItem(eng, rus, 'term', chapter.number)
                                 db.save_glossary_item(item)
                                 total_new += 1
@@ -901,13 +893,15 @@ class LLMTranslator:
                         db.update_api_stats(self.current_key_index, success=True)
                     else:
                         print(f"  ⚠️  Не удалось извлечь термины")
-                        print(f"  ℹ️  Пропускаем извлечение терминов для главы {chapter.number}")
 
                 except Exception as e:
                     print(f"  ⚠️  Ошибка при извлечении терминов: {e}")
                     print(f"  ℹ️  Продолжаем без извлечения терминов")
 
-            # ВАЖНОЕ ИЗМЕНЕНИЕ: Обновляем данные главы независимо от успеха создания резюме
+            # Восстанавливаем оригинальный текст перед сохранением в БД
+            chapter.original_text = original_text_backup
+
+            # Обновляем данные главы
             chapter.translated_title = translated_title
             chapter.translated_text = translated_text
             chapter.summary = summary if summary else "Автоматическое резюме"
@@ -931,6 +925,8 @@ class LLMTranslator:
             print(f"\n  ❌ ОШИБКА при переводе главы {chapter.number}:")
             print(f"     {str(e)}")
             print("\n  ℹ️  Пропускаем главу и продолжаем перевод следующих")
+            # Восстанавливаем оригинальный текст перед ошибкой
+            chapter.original_text = original_text_backup
             db.update_api_stats(self.current_key_index, success=False, error=str(e))
             return False
 
@@ -1043,6 +1039,7 @@ def main():
         proxy_url=os.getenv('PROXY_URL'),
         model_name=os.getenv('GEMINI_MODEL', 'gemini-2.5-flash-preview-05-20'),
         temperature=float(os.getenv('TEMPERATURE', '0.1')),
+        max_output_tokens=int(os.getenv('MAX_OUTPUT_TOKENS', '24000')),
         request_delay=float(os.getenv('REQUEST_DELAY', '5'))  # Увеличено до 5 секунд
     )
 
@@ -1050,6 +1047,7 @@ def main():
     print(f"   API ключей: {len(config.api_keys)}")
     print(f"   Модель: {config.model_name}")
     print(f"   Температура: {config.temperature}")
+    print(f"   maxOutputTokens: {config.max_output_tokens}")
     print(f"   Контекст: до 5 предыдущих глав")
     if config.proxy_url:
         print(f"   Прокси: {config.proxy_url.split('@')[1] if '@' in config.proxy_url else config.proxy_url}")
