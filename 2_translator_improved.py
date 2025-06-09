@@ -205,7 +205,7 @@ class LLMTranslator:
     def reset_failed_keys(self):
         """Сбрасываем список неработающих ключей"""
         if self.failed_keys:
-            print(f"   Сброс статуса для {len(self.failed_keys)} ключей")
+            print(f"   Сброс статуса для {len(self.failed_keys)} ключей")
         self.failed_keys.clear()
 
     def all_keys_failed(self) -> bool:
@@ -235,7 +235,7 @@ class LLMTranslator:
             print(f"\r  ⏱️  Осталось: {remaining // 60}:{remaining % 60:02d}", end='', flush=True)
             time.sleep(30)
 
-        print("\n   Повторная попытка...")
+        print("\n   Повторная попытка...")
         self.reset_failed_keys()
 
     def make_request(self, system_prompt: str, user_prompt: str) -> Optional[str]:
@@ -262,7 +262,7 @@ class LLMTranslator:
                 continue
 
             try:
-                print(f"   Используем ключ #{self.current_key_index + 1} из {len(self.config.api_keys)}")
+                print(f"   Используем ключ #{self.current_key_index + 1} из {len(self.config.api_keys)}")
 
                 response = self.client.post(
                     self.api_url,
@@ -462,16 +462,16 @@ class LLMTranslator:
 
     def translate_chapter(self, chapter: Chapter, context, db: DatabaseManager) -> bool:
         """Перевод одной главы с улучшенной точностью"""
-        print(f"\n Перевод главы {chapter.number}: {chapter.original_title}")
+        print(f"\n Перевод главы {chapter.number}: {chapter.original_title}")
         print("─" * 60)
 
         # Извлекаем название главы
         title_match = re.match(r'Chapter\s+\d+[:\s]*(.+)', chapter.original_title)
         chapter_title = title_match.group(1).strip() if title_match else ""
 
-        print(f"   Размер: {chapter.word_count} слов, {chapter.paragraph_count} абзацев")
+        print(f"   Размер: {chapter.word_count} слов, {chapter.paragraph_count} абзацев")
         if chapter_title:
-            print(f"   Название: {chapter_title}")
+            print(f"   Название: {chapter_title}")
 
         try:
             # Шаг 1: Перевод текста с расширенным контекстом
@@ -489,7 +489,7 @@ class LLMTranslator:
 
 НАПОМИНАНИЕ: Переведи ВЕСЬ текст, сохраняя ВСЕ абзацы и детали."""
 
-            print("\n   Шаг 1/4: Перевод главы...")
+            print("\n   Шаг 1/4: Перевод главы...")
             start_time = time.time()
 
             translated_text = self.make_request(TRANSLATION_PROMPT, translation_prompt)
@@ -520,7 +520,7 @@ class LLMTranslator:
                     print(f"  ⚠️  Используем оригинальное название")
 
             # Шаг 2: Валидация перевода
-            print("\n   Шаг 2/4: Валидация перевода...")
+            print("\n   Шаг 2/4: Валидация перевода...")
             validation = self.validate_translation(chapter.original_text, translated_text, chapter.number)
 
             if not validation['valid']:
@@ -538,7 +538,7 @@ class LLMTranslator:
 
             # Выводим статистику
             stats = validation['stats']
-            print(f"\n   Статистика перевода:")
+            print(f"\n   Статистика перевода:")
             print(f"     - Слов: {stats['original_words']} → {stats['translated_words']}")
             print(f"     - Соотношение длины: {stats['length_ratio']:.2f}")
             print(f"     - Числа сохранены: {'✅' if stats['numbers_preserved'] else '❌'}")
@@ -548,8 +548,18 @@ class LLMTranslator:
                           translation_prompt, translated_text)
 
             # Шаг 3: Создание резюме
-            print("\n   Шаг 3/4: Создание резюме...")
-            summary_prompt = f"Текст главы {chapter.number}:\n\n{translated_text}"
+            print("\n   Шаг 3/4: Создание резюме...")
+
+            # ВАЖНО: Ограничиваем размер текста для резюме
+            # Берём первые 3000 символов + последние 1000 символов
+            text_for_summary = translated_text
+            if len(translated_text) > 4000:
+                first_part = translated_text[:3000]
+                last_part = translated_text[-1000:]
+                text_for_summary = f"{first_part}\n\n[...]\n\n{last_part}"
+                print(f"   ℹ️  Текст сокращён для резюме: {len(translated_text)} → {len(text_for_summary)} символов")
+
+            summary_prompt = f"Текст главы {chapter.number} (сокращённая версия):\n\n{text_for_summary}"
             summary = self.make_request(SUMMARY_PROMPT, summary_prompt)
 
             if summary:
@@ -562,63 +572,97 @@ class LLMTranslator:
                               summary_prompt, summary)
                 db.update_api_stats(self.current_key_index, success=True)
             else:
-                print("  ⚠️  Не удалось создать резюме")
+                print("  ⚠️  Не удалось создать резюме из перевода")
+                print("  ℹ️  Пробуем создать резюме из оригинала...")
+
+                # Альтернатива: создаём резюме из оригинального текста
+                original_for_summary = chapter.original_text
+                if len(original_for_summary) > 3000:
+                    original_for_summary = original_for_summary[:3000] + "\n\n[...]\n\n" + original_for_summary[-500:]
+
+                alt_summary_prompt = f"Создай краткое резюме главы {chapter.number} (максимум 100 слов) на русском языке.\n\nТекст главы на английском:\n\n{original_for_summary}"
+                summary = self.make_request("Напиши краткое резюме текста на русском языке.", alt_summary_prompt)
+
+                if summary:
+                    print(f"  ✅ Резюме создано из оригинала ({len(summary.split())} слов)")
+                else:
+                    print("  ℹ️  Используем автоматическое резюме")
+                    # Используем автоматическое резюме
+                    summary = f"Глава {chapter.number}. События развиваются. Герои продолжают путешествие. (Автоматическое резюме)"
+
                 db.update_api_stats(self.current_key_index, success=False, error="Summary failed")
 
             # Шаг 4: Извлечение терминов (для глав 2+)
             if chapter.number > 1:
-                print("\n   Шаг 4/4: Извлечение новых терминов...")
+                print("\n   Шаг 4/4: Извлечение новых терминов...")
 
                 # Добавляем текущий глоссарий в промпт
                 current_glossary = self.format_glossary_for_prompt(context.glossary)
 
+                # ВАЖНО: Ограничиваем размер текстов для извлечения терминов
+                orig_for_terms = chapter.original_text
+                trans_for_terms = translated_text
+
+                if len(orig_for_terms) > 2000:
+                    orig_for_terms = orig_for_terms[:2000] + "\n\n[...текст сокращён...]"
+                if len(trans_for_terms) > 2000:
+                    trans_for_terms = trans_for_terms[:2000] + "\n\n[...текст сокращён...]"
+
                 extract_prompt = f"""Текущий глоссарий:
 {current_glossary}
 
-Оригинал (английский):
-{chapter.original_text}
+Оригинал (английский, сокращённая версия):
+{orig_for_terms}
 
-Перевод (русский):
-{translated_text}"""
+Перевод (русский, сокращённая версия):
+{trans_for_terms}"""
 
-                extraction_result = self.make_request(EXTRACT_TERMS_PROMPT, extract_prompt)
+                try:
+                    extraction_result = self.make_request(EXTRACT_TERMS_PROMPT, extract_prompt)
 
-                if extraction_result:
-                    new_terms = self.parse_extraction_result(extraction_result)
+                    if extraction_result:
+                        new_terms = self.parse_extraction_result(extraction_result)
 
-                    # Сохраняем в БД только валидные термины
-                    total_new = 0
-                    for eng, rus in new_terms.get('characters', {}).items():
-                        if self.is_valid_term(eng, rus, chapter.original_text, translated_text):
-                            item = GlossaryItem(eng, rus, 'character', chapter.number)
-                            db.save_glossary_item(item)
-                            total_new += 1
+                        # Сохраняем в БД только валидные термины
+                        total_new = 0
+                        for eng, rus in new_terms.get('characters', {}).items():
+                            if self.is_valid_term(eng, rus, chapter.original_text, translated_text):
+                                item = GlossaryItem(eng, rus, 'character', chapter.number)
+                                db.save_glossary_item(item)
+                                total_new += 1
 
-                    for eng, rus in new_terms.get('locations', {}).items():
-                        if self.is_valid_term(eng, rus, chapter.original_text, translated_text):
-                            item = GlossaryItem(eng, rus, 'location', chapter.number)
-                            db.save_glossary_item(item)
-                            total_new += 1
+                        for eng, rus in new_terms.get('locations', {}).items():
+                            if self.is_valid_term(eng, rus, chapter.original_text, translated_text):
+                                item = GlossaryItem(eng, rus, 'location', chapter.number)
+                                db.save_glossary_item(item)
+                                total_new += 1
 
-                    for eng, rus in new_terms.get('terms', {}).items():
-                        if self.is_valid_term(eng, rus, chapter.original_text, translated_text):
-                            item = GlossaryItem(eng, rus, 'term', chapter.number)
-                            db.save_glossary_item(item)
-                            total_new += 1
+                        for eng, rus in new_terms.get('terms', {}).items():
+                            if self.is_valid_term(eng, rus, chapter.original_text, translated_text):
+                                item = GlossaryItem(eng, rus, 'term', chapter.number)
+                                db.save_glossary_item(item)
+                                total_new += 1
 
-                    if total_new > 0:
-                        print(f"  ✅ Добавлено новых терминов: {total_new}")
+                        if total_new > 0:
+                            print(f"  ✅ Добавлено новых терминов: {total_new}")
+                        else:
+                            print(f"  ℹ️  Новых терминов не найдено")
+
+                        db.save_prompt(chapter.number, 'extraction', EXTRACT_TERMS_PROMPT,
+                                      extract_prompt, extraction_result)
+                        db.update_api_stats(self.current_key_index, success=True)
                     else:
-                        print(f"  ℹ️  Новых терминов не найдено")
+                        print(f"  ⚠️  Не удалось извлечь термины")
+                        print(f"  ℹ️  Пропускаем извлечение терминов для главы {chapter.number}")
 
-                    db.save_prompt(chapter.number, 'extraction', EXTRACT_TERMS_PROMPT,
-                                  extract_prompt, extraction_result)
-                    db.update_api_stats(self.current_key_index, success=True)
+                except Exception as e:
+                    print(f"  ⚠️  Ошибка при извлечении терминов: {e}")
+                    print(f"  ℹ️  Продолжаем без извлечения терминов")
 
-            # Обновляем данные главы
+            # ВАЖНОЕ ИЗМЕНЕНИЕ: Обновляем данные главы независимо от успеха создания резюме
             chapter.translated_title = translated_title
             chapter.translated_text = translated_text
-            chapter.summary = summary
+            chapter.summary = summary  # Теперь всегда есть значение (реальное или автоматическое)
             chapter.translation_time = translation_time
             chapter.translated_at = datetime.now()
 
@@ -628,7 +672,7 @@ class LLMTranslator:
             # Сохраняем в файл
             self.save_to_file(chapter)
 
-            print(f"\n  ✅ Глава {chapter.number} успешно переведена!")
+            print(f"\n  ✅ Глава {chapter.number} успешно переведена и сохранена!")
 
             # Ротация ключа после успешного перевода главы
             self.rotate_key_after_chapter()
@@ -719,7 +763,7 @@ class LLMTranslator:
             f.write("=" * 70 + '\n\n')
             f.write(chapter.translated_text)
 
-        print(f"   Сохранено: {output_file}")
+        print(f"   Сохранено: {output_file}")
 
 
 def main():
@@ -791,7 +835,7 @@ def main():
         chapters = chapters[:MAX_CHAPTERS_TO_TRANSLATE]
 
     elif args.chapters:
-        print(f"\n Перевод конкретных глав: {args.chapters}")
+        print(f"\n Перевод конкретных глав: {args.chapters}")
 
         # Сбрасываем статус для указанных глав
         cursor = db.conn.cursor()
@@ -824,7 +868,7 @@ def main():
         print(f"\n⚠️  РЕЖИМ ТЕСТИРОВАНИЯ: ограничиваем перевод {MAX_CHAPTERS_TO_TRANSLATE} главами")
         chapters = chapters[:MAX_CHAPTERS_TO_TRANSLATE]
 
-    print(f"\n Найдено глав для перевода: {len(chapters)}")
+    print(f"\n Найдено глав для перевода: {len(chapters)}")
 
     # Переводим главы
     start_time = time.time()
@@ -860,7 +904,7 @@ def main():
     # Итоги
     elapsed = time.time() - start_time
     print("\n" + "=" * 70)
-    print(" ИТОГИ ПЕРЕВОДА:")
+    print(" ИТОГИ ПЕРЕВОДА:")
     print("=" * 70)
     print(f"✅ Успешно переведено: {successful}/{len(chapters)} глав")
     if failed_chapters:
@@ -870,26 +914,26 @@ def main():
 
     # Статистика из БД
     stats = db.get_statistics()
-    print(f"\n Статистика БД:")
+    print(f"\n Статистика БД:")
     print(f"   Всего глав: {stats['chapters']['total']}")
     print(f"   Переведено: {stats['chapters']['completed']}")
 
     glossary_total = sum(stats['glossary'].values())
     if glossary_total > 0:
-        print(f"\n Глоссарий:")
+        print(f"\n Глоссарий:")
         print(f"   Персонажей: {stats['glossary'].get('character', 0)}")
         print(f"   Локаций: {stats['glossary'].get('location', 0)}")
         print(f"   Терминов: {stats['glossary'].get('term', 0)}")
         print(f"   Всего: {glossary_total}")
 
-    print(f"\n Использование API:")
+    print(f"\n Использование API:")
     print(f"   Ключей использовано: {stats['api']['keys_used']}")
     print(f"   Всего запросов: {stats['api']['total_requests']}")
     print(f"   Ошибок: {stats['api']['total_errors']}")
 
     # Анализ качества переводов
     if successful > 0:
-        print(f"\n АНАЛИЗ КАЧЕСТВА ПЕРЕВОДОВ:")
+        print(f"\n АНАЛИЗ КАЧЕСТВА ПЕРЕВОДОВ:")
         print("─" * 50)
 
         # Получаем переведённые главы для анализа
@@ -914,7 +958,7 @@ def main():
         print(f"   Переводов с идеальным соотношением: {perfect_translations}/{len(translated_chapters)}")
 
     print(f"\n✅ Перевод завершён!")
-    print(f" Файлы сохранены в: translations/")
+    print(f" Файлы сохранены в: translations/")
 
     db.close()
 
