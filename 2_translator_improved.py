@@ -1,4 +1,6 @@
-"""
+translation_time = time.time() - start_time
+            db.update_api_stats(self.current_key_index, success=True)
+            print(f"  ✅ Перевод завершён за {translation_time:.1f} сек")"""
 2_translator_improved.py - Улучшенный переводчик с повышенной точностью
 """
 print("DEBUG: Начало загрузки модулей...")
@@ -44,7 +46,7 @@ load_dotenv()
 print("DEBUG: Переменные окружения загружены")
 
 # ОГРАНИЧЕНИЕ ДЛЯ ТЕСТИРОВАНИЯ
-MAX_CHAPTERS_TO_TRANSLATE = 10  # Максимум глав для перевода
+# MAX_CHAPTERS_TO_TRANSLATE = 10  # Максимум глав для перевода
 
 # Улучшенный промпт для перевода с конкретными примерами
 TRANSLATION_PROMPT = """Ты профессиональный переводчик китайских веб-новелл жанра сянься.
@@ -308,6 +310,12 @@ class LLMTranslator:
                             # Для блокировки по безопасности не меняем ключ
                             return None
 
+                        # Проверяем причину завершения
+                        finish_reason = candidate.get("finishReason")
+                        if finish_reason == "MAX_TOKENS":
+                            print(f"  ⚠️  ВНИМАНИЕ: Ответ обрезан из-за лимита токенов!")
+                            print(f"     Рекомендуется разбить текст на части")
+
                         content = candidate.get("content", {})
                         parts = content.get("parts", [])
 
@@ -370,6 +378,44 @@ class LLMTranslator:
         # Если дошли сюда, значит превысили максимум попыток
         raise Exception(f"Не удалось выполнить запрос после {max_attempts} попыток")
 
+    def make_request_with_retry(self, system_prompt: str, user_prompt: str, retry_with_shorter: bool = False) -> Optional[str]:
+        """Делает запрос с возможностью повтора с сокращённым текстом"""
+        result = self.make_request(system_prompt, user_prompt)
+
+        # Если включён режим повтора и первая попытка не удалась
+        if not result and retry_with_shorter and "резюме главы" in system_prompt.lower():
+            # Проверяем, были ли все ответы блокировками (не лимитами)
+            # Это грубая проверка, но работает
+            if len(self.failed_keys) < len(self.config.api_keys):
+                print("   ⚠️  Похоже на блокировку контента, пробуем сокращённую версию...")
+
+                # Извлекаем текст из промпта
+                import re
+                match = re.search(r'Текст главы \d+:\n\n(.+)', user_prompt, re.DOTALL)
+                if match:
+                    full_text = match.group(1)
+
+                    # Сокращаем текст
+                    if len(full_text) > 4000:
+                        shortened = full_text[:3000] + "\n\n[...]\n\n" + full_text[-1000:]
+                    else:
+                        third = len(full_text) // 3
+                        shortened = full_text[:third] + "\n\n[...]\n\n" + full_text[-third:]
+
+                    # Новый промпт с сокращённым текстом
+                    new_prompt = user_prompt.replace(full_text, shortened)
+                    new_prompt = new_prompt.replace("Текст главы", "Текст главы (сокращённая версия)")
+
+                    # Сбрасываем failed_keys для новой попытки
+                    self.reset_failed_keys()
+
+                    # Повторная попытка
+                    result = self.make_request(system_prompt, new_prompt)
+                    if result:
+                        print("   ✅ Сокращённая версия сработала!")
+
+        return result
+
     def rotate_key_after_chapter(self):
         """Ротация ключа после успешного перевода главы"""
         self.switch_to_next_key()
@@ -415,6 +461,7 @@ class LLMTranslator:
         """Базовая валидация качества перевода"""
         issues = []
         warnings = []
+        critical_issues = []  # Добавляем критические проблемы
 
         # Проверка соотношения длины
         orig_len = len(original)
@@ -422,7 +469,9 @@ class LLMTranslator:
         ratio = trans_len / orig_len if orig_len > 0 else 0
 
         # Для русского языка перевод обычно длиннее английского на 10-30%
-        if ratio < 0.9:
+        if ratio < 0.7:  # Менее 70% - это критично
+            critical_issues.append(f"Перевод критически короткий: {ratio:.2f} от оригинала")
+        elif ratio < 0.9:
             issues.append(f"Перевод слишком короткий: {ratio:.2f} от оригинала")
         elif ratio > 1.6:
             warnings.append(f"Перевод слишком длинный: {ratio:.2f} от оригинала")
@@ -432,7 +481,11 @@ class LLMTranslator:
         trans_paragraphs = len([p for p in translated.split('\n\n') if p.strip()])
 
         para_diff = abs(orig_paragraphs - trans_paragraphs)
-        if para_diff > 2:
+        para_ratio = trans_paragraphs / orig_paragraphs if orig_paragraphs > 0 else 0
+
+        if para_ratio < 0.6:  # Менее 60% абзацев - критично
+            critical_issues.append(f"Критическая разница в абзацах: {orig_paragraphs} → {trans_paragraphs} ({para_ratio:.1%})")
+        elif para_diff > 2:
             issues.append(f"Разница в количестве абзацев: {orig_paragraphs} → {trans_paragraphs}")
         elif para_diff > 0:
             warnings.append(f"Небольшая разница в абзацах: {orig_paragraphs} → {trans_paragraphs}")
@@ -448,17 +501,45 @@ class LLMTranslator:
         stats = {
             'length_ratio': ratio,
             'paragraph_diff': para_diff,
+            'paragraph_ratio': para_ratio,
             'original_words': len(original.split()),
             'translated_words': len(translated.split()),
             'numbers_preserved': len(orig_numbers) == len(trans_numbers)
         }
 
         return {
-            'valid': len(issues) == 0,
+            'valid': len(issues) == 0 and len(critical_issues) == 0,
+            'critical': len(critical_issues) > 0,
             'issues': issues,
             'warnings': warnings,
+            'critical_issues': critical_issues,
             'stats': stats
         }
+
+    def split_long_text(self, text: str, max_words: int = 1000) -> List[str]:
+        """Разбивает длинный текст на части с сохранением целостности абзацев"""
+        paragraphs = text.split('\n\n')
+        parts = []
+        current_part = []
+        current_words = 0
+
+        for para in paragraphs:
+            para_words = len(para.split())
+
+            # Если добавление абзаца превысит лимит и уже есть контент
+            if current_words + para_words > max_words and current_part:
+                parts.append('\n\n'.join(current_part))
+                current_part = [para]
+                current_words = para_words
+            else:
+                current_part.append(para)
+                current_words += para_words
+
+        # Добавляем последнюю часть
+        if current_part:
+            parts.append('\n\n'.join(current_part))
+
+        return parts
 
     def translate_chapter(self, chapter: Chapter, context, db: DatabaseManager) -> bool:
         """Перевод одной главы с улучшенной точностью"""
@@ -492,42 +573,193 @@ class LLMTranslator:
             print("\n   Шаг 1/4: Перевод главы...")
             start_time = time.time()
 
-            translated_text = self.make_request(TRANSLATION_PROMPT, translation_prompt)
+            # Проверяем размер главы
+            if chapter.word_count > 1500:
+                print(f"   ⚠️  Глава большая ({chapter.word_count} слов), будет разбита на части")
 
-            if not translated_text:
-                print("  ❌ Не удалось перевести главу")
-                db.update_api_stats(self.current_key_index, success=False, error="Translation failed")
-                return False
+                # Разбиваем на части
+                parts = self.split_long_text(chapter.original_text, max_words=1000)
+                print(f"    Разбита на {len(parts)} частей")
 
-            translation_time = time.time() - start_time
-            db.update_api_stats(self.current_key_index, success=True)
-            print(f"  ✅ Перевод завершён за {translation_time:.1f} сек")
+                translated_parts = []
 
-            # Извлекаем переведённое название
-            translated_lines = translated_text.strip().split('\n')
-            translated_title = f"Глава {chapter.number}"
+                # Переводим каждую часть
+                for i, part_text in enumerate(parts, 1):
+                    print(f"\n   ═══ Часть {i}/{len(parts)} ═══")
 
-            if translated_lines and chapter_title:
-                potential_title = translated_lines[0].strip().strip('*')
-                # Убираем только если это точно название, а не начало текста
-                if len(potential_title) < 150 and not potential_title.endswith('.'):
-                    translated_title = f"Глава {chapter.number}: {potential_title}"
-                    translated_text = '\n'.join(translated_lines[1:]).strip()
-                    print(f"  ✅ Название: {potential_title}")
+                    part_prompt = f"""{context_prompt}
+ЗАДАЧА: Переведи часть {i} из {len(parts)} главы {chapter.number} романа "Shrouding the Heavens".
+
+Оригинальное название главы: {chapter_title}
+
+ТЕКСТ ЧАСТИ {i} ДЛЯ ПЕРЕВОДА:
+{'=' * 60}
+{part_text}
+{'=' * 60}
+
+НАПОМИНАНИЕ: Это часть {i} из {len(parts)}. Переведи весь текст части."""
+
+                    print(f"   Перевод части {i}...")
+                    part_translation = self.make_request(TRANSLATION_PROMPT, part_prompt)
+
+                    if not part_translation:
+                        print(f"   ❌ Не удалось перевести часть {i}")
+                        # Пробуем ещё раз с меньшим размером
+                        if len(part_text.split()) > 500:
+                            print(f"    Пробуем разбить часть {i} на ещё меньшие фрагменты...")
+                            sub_parts = self.split_long_text(part_text, max_words=500)
+                            sub_translations = []
+                            for j, sub_part in enumerate(sub_parts, 1):
+                                sub_prompt = f"""{context_prompt}
+ЗАДАЧА: Переведи фрагмент {j} части {i} главы {chapter.number}.
+
+ТЕКСТ:
+{sub_part}"""
+                                sub_trans = self.make_request(TRANSLATION_PROMPT, sub_prompt)
+                                if sub_trans:
+                                    sub_translations.append(sub_trans)
+                                    print(f"   ✅ Фрагмент {j} переведён")
+                                else:
+                                    print(f"   ❌ Фрагмент {j} не удалось перевести")
+
+                            if sub_translations:
+                                part_translation = '\n\n'.join(sub_translations)
+                            else:
+                                return False
+                        else:
+                            return False
+
+                    if part_translation:
+                        translated_parts.append(part_translation)
+                        print(f"   ✅ Часть {i} переведена ({len(part_translation.split())} слов)")
+
+                        # Небольшая задержка между частями
+                        if i < len(parts):
+                            time.sleep(2)
+
+                # Объединяем части
+                print(f"\n    Объединение {len(translated_parts)} частей...")
+                translated_text = '\n\n'.join(translated_parts)
+
+                # Извлекаем название из первой части
+                first_lines = translated_parts[0].split('\n')
+                if first_lines and not first_lines[0].endswith('.'):
+                    translated_title = f"Глава {chapter.number}: {first_lines[0].strip().strip('*')}"
+                    # Убираем название из первой части при объединении
+                    translated_parts[0] = '\n'.join(first_lines[1:]).strip()
+                    translated_text = '\n\n'.join(translated_parts)
                 else:
-                    # Если первая строка выглядит как текст, оставляем всё как есть
                     translated_title = f"Глава {chapter.number}: {chapter_title}"
-                    print(f"  ⚠️  Используем оригинальное название")
+
+            else:
+                # Обычный перевод для коротких глав
+                translated_text = self.make_request(TRANSLATION_PROMPT, translation_prompt)
+
+                if not translated_text:
+                    print("  ❌ Не удалось перевести главу")
+                    db.update_api_stats(self.current_key_index, success=False, error="Translation failed")
+                    return False
+
+                # Извлекаем переведённое название
+                translated_lines = translated_text.strip().split('\n')
+                translated_title = f"Глава {chapter.number}"
+
+                if translated_lines and chapter_title:
+                    potential_title = translated_lines[0].strip().strip('*')
+                    # Убираем только если это точно название, а не начало текста
+                    if len(potential_title) < 150 and not potential_title.endswith('.'):
+                        translated_title = f"Глава {chapter.number}: {potential_title}"
+                        translated_text = '\n'.join(translated_lines[1:]).strip()
+                        print(f"  ✅ Название: {potential_title}")
+                    else:
+                        # Если первая строка выглядит как текст, оставляем всё как есть
+                        translated_title = f"Глава {chapter.number}: {chapter_title}"
+                        print(f"  ⚠️  Используем оригинальное название")
 
             # Шаг 2: Валидация перевода
             print("\n   Шаг 2/4: Валидация перевода...")
             validation = self.validate_translation(chapter.original_text, translated_text, chapter.number)
 
-            if not validation['valid']:
+            if validation['critical']:
+                print(f"  ❌ КРИТИЧЕСКИЕ ПРОБЛЕМЫ:")
+                for issue in validation['critical_issues']:
+                    print(f"     - {issue}")
+
+                # Проверяем соотношение длины
+                if validation['stats']['length_ratio'] < 0.7:
+                    print(f"\n  ⚠️  Перевод неполный (только {validation['stats']['length_ratio']:.1%} от оригинала)")
+                    print(f"   Автоматический перезапуск с разбиением на части...")
+
+                    # Разбиваем на части и переводим заново
+                    parts = self.split_long_text(chapter.original_text, max_words=800)
+                    print(f"   Разбиваем на {len(parts)} частей для повторного перевода")
+
+                    translated_parts = []
+
+                    for i, part_text in enumerate(parts, 1):
+                        print(f"\n  ═══ Повторный перевод части {i}/{len(parts)} ═══")
+
+                        part_prompt = f"""{context_prompt}
+ЗАДАЧА: Переведи часть {i} из {len(parts)} главы {chapter.number}.
+
+ТЕКСТ ЧАСТИ {i}:
+{'=' * 60}
+{part_text}
+{'=' * 60}"""
+
+                        part_translation = self.make_request(TRANSLATION_PROMPT, part_prompt)
+
+                        if part_translation:
+                            translated_parts.append(part_translation)
+                            print(f"  ✅ Часть {i} переведена успешно")
+                            time.sleep(2)
+                        else:
+                            print(f"  ❌ Не удалось перевести часть {i}")
+                            # Сохраняем хотя бы частичный перевод
+                            if translated_parts:
+                                translated_text = '\n\n[ПЕРЕВОД НЕПОЛНЫЙ]\n\n'.join(translated_parts)
+                            break
+
+                    if len(translated_parts) == len(parts):
+                        # Успешно перевели все части
+                        translated_text = '\n\n'.join(translated_parts)
+                        print(f"\n  ✅ Успешно перевели все {len(parts)} частей!")
+
+                        # Переходим к следующим шагам
+                        validation = self.validate_translation(chapter.original_text, translated_text, chapter.number)
+                        if validation['valid'] or not validation['critical']:
+                            print(f"  ✅ Повторная валидация пройдена")
+                    else:
+                        # Не все части переведены
+                        print(f"\n  ⚠️  Переведено только {len(translated_parts)} из {len(parts)} частей")
+                        chapter.translated_title = f"Глава {chapter.number}: {chapter_title} [НЕПОЛНЫЙ ПЕРЕВОД]"
+                        chapter.translated_text = translated_text
+                        chapter.summary = "Неполный перевод из-за технических ограничений"
+                        chapter.translation_time = time.time() - start_time
+                        chapter.translated_at = datetime.now()
+
+                        db.update_chapter_translation(chapter)
+                        self.save_to_file(chapter)
+                        return False
+                else:
+                    # Другие критические проблемы (не связанные с длиной)
+                    print(f"\n  ❌ ОСТАНОВКА: Глава {chapter.number} имеет критические проблемы")
+
+                    # Сохраняем с пометкой о проблеме
+                    chapter.translated_title = f"Глава {chapter.number}: {chapter_title} [ПРОБЛЕМНЫЙ ПЕРЕВОД]"
+                    chapter.translated_text = translated_text
+                    chapter.summary = "Перевод с критическими проблемами"
+                    chapter.translation_time = time.time() - start_time
+                    chapter.translated_at = datetime.now()
+
+                    db.update_chapter_translation(chapter)
+                    self.save_to_file(chapter)
+                    return False
+
+            elif not validation['valid']:
                 print(f"  ❌ Обнаружены проблемы:")
                 for issue in validation['issues']:
                     print(f"     - {issue}")
-                # Можно добавить повторный перевод или коррекцию
             else:
                 print(f"  ✅ Валидация пройдена")
 
@@ -550,16 +782,22 @@ class LLMTranslator:
             # Шаг 3: Создание резюме
             print("\n   Шаг 3/4: Создание резюме...")
 
-            # ВАЖНО: Ограничиваем размер текста для резюме
-            # Берём первые 3000 символов + последние 1000 символов
-            text_for_summary = translated_text
-            if len(translated_text) > 4000:
-                first_part = translated_text[:3000]
-                last_part = translated_text[-1000:]
-                text_for_summary = f"{first_part}\n\n[...]\n\n{last_part}"
-                print(f"   ℹ️  Текст сокращён для резюме: {len(translated_text)} → {len(text_for_summary)} символов")
+            # Список глав, где полный текст блокируется при создании резюме
+            PROBLEMATIC_CHAPTERS = [4]
 
-            summary_prompt = f"Текст главы {chapter.number} (сокращённая версия):\n\n{text_for_summary}"
+            # Автоматически используем сокращённую версию для известных проблемных глав
+            if chapter.number in PROBLEMATIC_CHAPTERS:
+                print("   ℹ️  Используем сокращённую версию для известной проблемной главы")
+                if len(translated_text) > 4000:
+                    text_for_summary = translated_text[:3000] + "\n\n[...]\n\n" + translated_text[-1000:]
+                else:
+                    third = len(translated_text) // 3
+                    text_for_summary = translated_text[:third] + "\n\n[...]\n\n" + translated_text[-third:]
+                summary_prompt = f"Текст главы {chapter.number} (сокращённая версия):\n\n{text_for_summary}"
+            else:
+                # Для остальных глав используем полный текст
+                summary_prompt = f"Текст главы {chapter.number}:\n\n{translated_text}"
+
             summary = self.make_request(SUMMARY_PROMPT, summary_prompt)
 
             if summary:
@@ -817,9 +1055,9 @@ def main():
     # Получаем главы для перевода
     if args.force:
         print(f"\n⚠️  РЕЖИМ ПРИНУДИТЕЛЬНОГО ПЕРЕВОДА")
-        print(f"   Будут переведены заново первые {MAX_CHAPTERS_TO_TRANSLATE} глав")
+        # print(f"   Будут переведены заново первые {MAX_CHAPTERS_TO_TRANSLATE} глав")
 
-        # Сбрасываем статус для первых 10 глав
+        # Сбрасываем статус для всех глав (убрали ограничение)
         cursor = db.conn.cursor()
         cursor.execute("""
             UPDATE chapters 
@@ -827,12 +1065,12 @@ def main():
                 translated_title = NULL,
                 translated_text = NULL,
                 summary = NULL
-            WHERE chapter_number <= ?
-        """, (MAX_CHAPTERS_TO_TRANSLATE,))
+            WHERE status = 'completed'
+        """)
         db.conn.commit()
 
         chapters = db.get_chapters_for_translation()
-        chapters = chapters[:MAX_CHAPTERS_TO_TRANSLATE]
+        # chapters = chapters[:MAX_CHAPTERS_TO_TRANSLATE]  # Убрали ограничение
 
     elif args.chapters:
         print(f"\n Перевод конкретных глав: {args.chapters}")
@@ -863,10 +1101,10 @@ def main():
         db.close()
         return
 
-    # ОГРАНИЧЕНИЕ ДЛЯ ТЕСТИРОВАНИЯ
-    if len(chapters) > MAX_CHAPTERS_TO_TRANSLATE:
-        print(f"\n⚠️  РЕЖИМ ТЕСТИРОВАНИЯ: ограничиваем перевод {MAX_CHAPTERS_TO_TRANSLATE} главами")
-        chapters = chapters[:MAX_CHAPTERS_TO_TRANSLATE]
+    # ОГРАНИЧЕНИЕ ДЛЯ ТЕСТИРОВАНИЯ - ЗАКОММЕНТИРОВАНО
+    # if len(chapters) > MAX_CHAPTERS_TO_TRANSLATE:
+    #     print(f"\n⚠️  РЕЖИМ ТЕСТИРОВАНИЯ: ограничиваем перевод {MAX_CHAPTERS_TO_TRANSLATE} главами")
+    #     chapters = chapters[:MAX_CHAPTERS_TO_TRANSLATE]
 
     print(f"\n Найдено глав для перевода: {len(chapters)}")
 
