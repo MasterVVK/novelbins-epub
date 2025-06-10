@@ -275,6 +275,13 @@ class LLMTranslator:
         """Обработка ситуации, когда все ключи не работают"""
         self.full_cycles_without_success += 1
 
+        # Проверяем контекст - если это резюме, можем продолжить без него
+        import inspect
+        frame = inspect.currentframe().f_back.f_back
+        if frame and 'SUMMARY_PROMPT' in frame.f_locals:
+            print(f"\n⚠️  Все ключи исчерпаны при создании резюме. Продолжаем без резюме.")
+            return  # Не прерываем работу для резюме
+
         if self.full_cycles_without_success == 1:
             wait_time = 5 * 60  # 5 минут
             print(f"\n⏳ Все ключи исчерпаны. Ожидание {wait_time // 60} минут...")
@@ -314,10 +321,11 @@ class LLMTranslator:
             if self.current_key_index in self.failed_keys:
                 self.switch_to_next_key()
 
-                # Если прошли полный круг и все ключи неработающие
+                # Проверяем после КАЖДОГО переключения
                 if self.all_keys_failed():
                     self.handle_full_cycle_failure()
                     attempts = 0  # Сбрасываем счётчик попыток после ожидания
+
                 continue
 
             try:
@@ -350,9 +358,10 @@ class LLMTranslator:
                         if feedback.get("blockReason"):
                             print(f"  ❌ Промпт заблокирован: {feedback['blockReason']}")
                             print(f"     Фильтры безопасности: {feedback.get('safetyRatings', [])}")
-                            self.switch_to_next_key()
-                            attempts += 1
-                            continue
+
+                            # Для блокировки промпта НЕ меняем ключ, а возвращаем None
+                            # чтобы вызывающий код мог обработать это
+                            return None
 
                     if candidates:
                         candidate = candidates[0]
@@ -799,23 +808,40 @@ class LLMTranslator:
             # Шаг 3: Создание резюме
             print("\n   Шаг 3/4: Создание резюме...")
 
-            # Список глав, где полный текст блокируется при создании резюме
-            PROBLEMATIC_CHAPTERS = [4]
+            # Сначала пробуем с полным текстом
+            summary_prompt = f"Текст главы {chapter.number}:\n\n{translated_text}"
 
-            # Автоматически используем сокращённую версию для известных проблемных глав
-            if chapter.number in PROBLEMATIC_CHAPTERS:
-                print("   ℹ️  Используем сокращённую версию для известной проблемной главы")
+            # Специальная обработка, если все ключи исчерпаны
+            try:
+                summary = self.make_request(SUMMARY_PROMPT, summary_prompt)
+            except Exception as e:
+                if "Все API ключи недоступны" in str(e):
+                    print("  ⚠️  Все ключи исчерпаны, используем автоматическое резюме")
+                    summary = None
+                else:
+                    raise
+
+            # Если резюме заблокировано, автоматически используем сокращённую версию
+            if summary is None and not self.all_keys_failed():
+                print("   ⚠️  Резюме из полного текста заблокировано, используем сокращённую версию...")
+
+                # Создаём сокращённую версию
                 if len(translated_text) > 4000:
                     text_for_summary = translated_text[:3000] + "\n\n[...]\n\n" + translated_text[-1000:]
                 else:
                     third = len(translated_text) // 3
                     text_for_summary = translated_text[:third] + "\n\n[...]\n\n" + translated_text[-third:]
-                summary_prompt = f"Текст главы {chapter.number} (сокращённая версия):\n\n{text_for_summary}"
-            else:
-                # Для остальных глав используем полный текст
-                summary_prompt = f"Текст главы {chapter.number}:\n\n{translated_text}"
 
-            summary = self.make_request(SUMMARY_PROMPT, summary_prompt)
+                summary_prompt = f"Текст главы {chapter.number} (сокращённая версия):\n\n{text_for_summary}"
+
+                try:
+                    summary = self.make_request(SUMMARY_PROMPT, summary_prompt)
+                except Exception as e:
+                    if "Все API ключи недоступны" in str(e):
+                        print("  ⚠️  Все ключи исчерпаны даже для сокращённой версии")
+                        summary = None
+                    else:
+                        raise
 
             if summary:
                 # Обрезаем резюме если слишком длинное
@@ -827,9 +853,10 @@ class LLMTranslator:
                               summary_prompt, summary)
                 db.update_api_stats(self.current_key_index, success=True)
             else:
-                print("  ⚠️  Не удалось создать резюме")
+                print("  ⚠️  Не удалось создать резюме (ключи исчерпаны или контент заблокирован)")
                 # Используем автоматическое резюме
                 summary = f"Глава {chapter.number}. События развиваются. Герои продолжают путешествие. (Автоматическое резюме)"
+                # Но всё равно сохраняем главу!
 
             # Шаг 4: Извлечение терминов (для глав 2+)
             if chapter.number > 1:
