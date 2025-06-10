@@ -480,18 +480,59 @@ class LLMTranslator:
                 else:
                     print(f"  ❌ Ошибка API: {response.status_code}")
                     # Выводим детали ошибки
+                    error_details = None
                     try:
                         error_data = response.json()
                         if "error" in error_data:
-                            print(f"     Сообщение: {error_data['error'].get('message', 'нет сообщения')}")
-                            print(f"     Код: {error_data['error'].get('code', 'нет кода')}")
-                            print(f"     Статус: {error_data['error'].get('status', 'нет статуса')}")
+                            error_details = error_data['error']
+                            print(f"     Сообщение: {error_details.get('message', 'нет сообщения')}")
+                            print(f"     Код: {error_details.get('code', 'нет кода')}")
+                            print(f"     Статус: {error_details.get('status', 'нет статуса')}")
                     except:
                         print(f"     Тело ответа: {response.text[:200]}...")
 
-                    # Для других ошибок тоже помечаем ключ как проблемный
-                    self.mark_key_as_failed()
-                    self.switch_to_next_key()
+                    # Различная обработка в зависимости от типа ошибки
+                    if response.status_code >= 500:
+                        # Серверные ошибки (500, 502, 503) - проблема на стороне Google
+                        print(f"  ⚠️  Серверная ошибка Google. Ожидание 30 секунд перед повторной попыткой...")
+                        time.sleep(30)
+
+                        # Повторная попытка с тем же ключом
+                        retry_response = self.client.post(
+                            self.api_url,
+                            params={"key": self.current_key},
+                            headers={"Content-Type": "application/json"},
+                            json={
+                                "generationConfig": generation_config,
+                                "contents": [{
+                                    "parts": [
+                                        {"text": system_prompt},
+                                        {"text": user_prompt}
+                                    ]
+                                }]
+                            }
+                        )
+
+                        if retry_response.status_code == 200:
+                            # Успешная повторная попытка
+                            print(f"  ✅ Повторная попытка успешна!")
+                            response = retry_response
+                            continue  # Переходим к обработке успешного ответа
+                        elif retry_response.status_code >= 500:
+                            # Всё ещё серверная ошибка
+                            print(f"  ❌ Серверная ошибка сохраняется. Пробуем другой ключ...")
+                            self.switch_to_next_key()
+                        else:
+                            # Другая ошибка при повторе
+                            response = retry_response
+                            # Продолжаем обработку ниже
+
+                    # Для клиентских ошибок (4xx) - проблема с ключом или запросом
+                    if response.status_code >= 400 and response.status_code < 500:
+                        # Помечаем ключ как проблемный только для 401, 403
+                        if response.status_code in [401, 403]:
+                            self.mark_key_as_failed()
+                        self.switch_to_next_key()
 
             except Exception as e:
                 print(f"  ❌ Ошибка запроса: {e}")
