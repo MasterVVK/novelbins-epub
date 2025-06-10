@@ -352,6 +352,14 @@ class LLMTranslator:
                     # Детальная диагностика ответа
                     candidates = data.get("candidates", [])
 
+                    # Выводим информацию об использовании токенов
+                    if "usageMetadata" in data:
+                        usage = data["usageMetadata"]
+                        print(f"    Использование токенов:")
+                        print(f"      - promptTokenCount: {usage.get('promptTokenCount', 'N/A')}")
+                        print(f"      - candidatesTokenCount: {usage.get('candidatesTokenCount', 'N/A')}")
+                        print(f"      - totalTokenCount: {usage.get('totalTokenCount', 'N/A')}")
+
                     # Проверяем обратную связь по промпту
                     if "promptFeedback" in data:
                         feedback = data["promptFeedback"]
@@ -389,21 +397,41 @@ class LLMTranslator:
                                 print(f"\n   РЕЖИМ ОТЛАДКИ: Остановка из-за MAX_TOKENS")
                                 print(f"     Установите STOP_ON_MAX_TOKENS=false для продолжения")
 
+                                # Получаем текст ответа для отладки
+                                response_text = ""
+                                content = candidate.get("content", {})
+                                parts = content.get("parts", [])
+                                if parts and parts[0].get("text"):
+                                    response_text = parts[0].get("text", "")
+
                                 # Сохраняем информацию для анализа
                                 debug_info = {
                                     'timestamp': datetime.now().isoformat(),
+                                    'key_index': self.current_key_index,
+                                    'chapter_number': user_prompt.split('главу ')[1].split(' ')[0] if 'главу ' in user_prompt else 'unknown',
                                     'prompt_size': len(system_prompt) + len(user_prompt),
-                                    'response_size': len(parts[0].get("text", "")) if parts else 0,
+                                    'response_size': len(response_text),
                                     'finish_reason': finish_reason,
-                                    'last_200_chars': parts[0].get("text", "")[-200:] if parts else "",
-                                    'usage_metadata': data.get('usageMetadata', {})
+                                    'last_500_chars': response_text[-500:] if response_text else "",
+                                    'usage_metadata': data.get('usageMetadata', {}),
+                                    'response_status': response.status_code,
+                                    'candidates_count': len(candidates),
+                                    'safety_ratings': candidate.get('safetyRatings', [])
                                 }
 
-                                debug_file = Path("max_tokens_debug.json")
+                                debug_file = Path(f"max_tokens_debug_key{self.current_key_index}_ch{debug_info['chapter_number']}.json")
                                 with open(debug_file, 'w', encoding='utf-8') as f:
                                     json.dump(debug_info, f, ensure_ascii=False, indent=2)
 
                                 print(f"     Отладочная информация сохранена в: {debug_file}")
+
+                                # Проверяем, действительно ли это MAX_TOKENS или квота
+                                if usage := data.get('usageMetadata', {}):
+                                    if usage.get('candidatesTokenCount') == self.config.max_output_tokens:
+                                        print(f"     ✅ Подтверждено: достигнут лимит выходных токенов ({self.config.max_output_tokens})")
+                                    else:
+                                        print(f"     ⚠️  Возможно, проблема с квотой ключа. Выходных токенов: {usage.get('candidatesTokenCount')}")
+
                                 raise Exception("MAX_TOKENS достигнут - остановка для анализа")
 
                         content = candidate.get("content", {})
@@ -436,6 +464,13 @@ class LLMTranslator:
                                 print(f"     Тип лимита: квота")
                             elif "rate" in error_msg.lower():
                                 print(f"     Тип лимита: частота запросов")
+
+                            # Проверяем оставшуюся квоту если есть в заголовках
+                            if 'x-ratelimit-remaining' in response.headers:
+                                print(f"     Осталось запросов: {response.headers.get('x-ratelimit-remaining')}")
+                            if 'x-ratelimit-reset' in response.headers:
+                                reset_time = response.headers.get('x-ratelimit-reset')
+                                print(f"     Сброс лимита: {reset_time}")
                     except:
                         pass
 
@@ -1066,7 +1101,7 @@ def main():
         proxy_url=os.getenv('PROXY_URL'),
         model_name=os.getenv('GEMINI_MODEL', 'gemini-2.5-flash-preview-05-20'),
         temperature=float(os.getenv('TEMPERATURE', '0.1')),
-        max_output_tokens=int(os.getenv('MAX_OUTPUT_TOKENS', '24000')),
+        max_output_tokens=int(os.getenv('MAX_OUTPUT_TOKENS', '32000')),
         request_delay=float(os.getenv('REQUEST_DELAY', '5'))  # Увеличено до 5 секунд
     )
 
