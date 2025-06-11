@@ -238,12 +238,19 @@ class LLMTranslator:
         self.stop_on_max_tokens = os.getenv('STOP_ON_MAX_TOKENS', 'false').lower() == 'true'  # Режим отладки
         self.last_finish_reason = None  # Сохраняем причину завершения
 
-        # HTTP клиент
+        # HTTP клиент с увеличенным таймаутом
+        timeout_config = httpx.Timeout(
+            connect=30.0,      # Время на установку соединения
+            read=300.0,        # Время на чтение ответа (5 минут для больших переводов)
+            write=30.0,        # Время на отправку запроса
+            pool=30.0          # Время ожидания соединения из пула
+        )
+
         if config.proxy_url:
             self.transport = SyncProxyTransport.from_url(config.proxy_url)
-            self.client = httpx.Client(transport=self.transport, timeout=180)
+            self.client = httpx.Client(transport=self.transport, timeout=timeout_config)
         else:
-            self.client = httpx.Client(timeout=180)
+            self.client = httpx.Client(timeout=timeout_config)
 
         self.api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{config.model_name}:generateContent"
 
@@ -534,10 +541,42 @@ class LLMTranslator:
                             self.mark_key_as_failed()
                         self.switch_to_next_key()
 
+            except httpx.TimeoutException as e:
+                print(f"  ⚠️  Таймаут запроса: {e}")
+                print(f"     Ожидание 10 секунд перед повторной попыткой...")
+                time.sleep(10)
+
+                # НЕ помечаем ключ как неработающий при таймауте
+                # Просто пробуем ещё раз
+                attempts += 1
+
+                # Если слишком много таймаутов подряд, меняем ключ
+                if attempts % 3 == 0:
+                    print(f"     Много таймаутов, пробуем другой ключ...")
+                    self.switch_to_next_key()
+
+            except httpx.NetworkError as e:
+                print(f"  ⚠️  Сетевая ошибка: {e}")
+                print(f"     Проверьте подключение к интернету/прокси")
+                time.sleep(5)
+                attempts += 1
+
             except Exception as e:
                 print(f"  ❌ Ошибка запроса: {e}")
-                self.mark_key_as_failed()
-                self.switch_to_next_key()
+
+                # Обрабатываем разные типы ошибок
+                error_str = str(e).lower()
+
+                if any(x in error_str for x in ['timeout', 'timed out', 'connection', 'network']):
+                    # Сетевые проблемы - НЕ вина ключа
+                    print(f"     Похоже на сетевую проблему. Ожидание 10 секунд...")
+                    time.sleep(10)
+                    attempts += 1
+                else:
+                    # Другие ошибки - возможно проблема с ключом
+                    self.mark_key_as_failed()
+                    self.switch_to_next_key()
+                    attempts += 1
 
             attempts += 1
 
