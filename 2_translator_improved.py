@@ -1142,7 +1142,7 @@ def main():
         proxy_url=os.getenv('PROXY_URL'),
         model_name=os.getenv('GEMINI_MODEL', 'gemini-2.5-flash-preview-05-20'),
         temperature=float(os.getenv('TEMPERATURE', '0.1')),
-        max_output_tokens=int(os.getenv('MAX_OUTPUT_TOKENS', '32000')),
+        max_output_tokens=int(os.getenv('MAX_OUTPUT_TOKENS', '50000')),
         request_delay=float(os.getenv('REQUEST_DELAY', '5'))  # Увеличено до 5 секунд
     )
 
