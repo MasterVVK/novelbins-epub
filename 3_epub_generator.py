@@ -105,7 +105,7 @@ class EPUBGenerator:
         return str(output_path)
 
     def _get_css_styles(self) -> str:
-        """CSS стили для книги"""
+        """CSS стили для книги с исправленными разрывами страниц"""
         return '''
         @namespace epub "http://www.idpf.org/2007/ops";
         
@@ -121,7 +121,7 @@ class EPUBGenerator:
             margin-top: 1em;
             margin-bottom: 1em;
             font-size: 1.5em;
-            page-break-before: always;
+            /* НЕ ставим page-break-before для h1, чтобы он оставался с номером главы */
         }
         
         h2 {
@@ -143,15 +143,45 @@ class EPUBGenerator:
             margin-bottom: 0.5em;
         }
         
-        .chapter-number {
+        /* Страница с номером главы */
+        .chapter-number-page {
+            page-break-before: always;
+            page-break-after: always;
+            text-align: center;
+            margin-top: 40%;
+            font-size: 1.2em;
+            color: #666;
+        }
+        
+        /* Контейнер для заголовка и текста главы */
+        .chapter-content {
+            page-break-before: always;
+        }
+        
+        /* Альтернативный вариант: номер главы без разрыва */
+        .chapter-number-inline {
             text-align: center;
             font-size: 0.9em;
             color: #666;
             margin-bottom: 0.5em;
+            page-break-before: always;
+            page-break-after: avoid;
+        }
+        
+        /* Заголовок главы сразу после номера */
+        .chapter-title {
+            text-align: center;
+            margin-top: 0.5em;
+            margin-bottom: 1em;
+            font-size: 1.5em;
+            font-weight: bold;
+            page-break-before: avoid;
+            page-break-after: avoid;
         }
         
         .first-paragraph {
             text-indent: 0;
+            margin-top: 1em;
         }
         
         .summary {
@@ -178,6 +208,21 @@ class EPUBGenerator:
         .toc-link {
             text-indent: 0;
             margin: 0.5em 0;
+        }
+        
+        /* Медиа-запросы для электронных книг */
+        @media amzn-kf8 {
+            /* Специфичные стили для Kindle */
+            .chapter-number-page {
+                margin-top: 45%;
+            }
+        }
+        
+        @media amzn-mobi {
+            /* Для старых Kindle */
+            .chapter-number-page {
+                page-break-after: always;
+            }
         }
         '''
 
@@ -240,7 +285,7 @@ class EPUBGenerator:
         return toc_page
 
     def _create_chapter_page(self, chapter: Chapter, nav_css: epub.EpubItem) -> epub.EpubHtml:
-        """Создание страницы главы"""
+        """Создание страницы главы с правильными разрывами"""
         ch_filename = f'chapter_{chapter.number:03d}.xhtml'
         ch = epub.EpubHtml(
             title=chapter.translated_title,
@@ -263,31 +308,56 @@ class EPUBGenerator:
         # Убираем номер главы из заголовка для отображения
         display_title = chapter.translated_title.replace(f"Глава {chapter.number}: ", "")
 
-        # HTML содержимое главы
-        ch_content = f'''
-        <html xmlns="http://www.w3.org/1999/xhtml">
-        <head>
-            <title>{chapter.translated_title}</title>
-            <link rel="stylesheet" type="text/css" href="style/nav.css"/>
-        </head>
-        <body>
-            <div class="chapter-number">Глава {chapter.number}</div>
-            <h1>{display_title}</h1>
-        '''
+        # ВАРИАНТ 1: Две отдельные страницы (номер главы на отдельной странице)
+        if self.config.separate_chapter_number_page:
+            ch_content = f'''
+            <html xmlns="http://www.w3.org/1999/xhtml">
+            <head>
+                <title>{chapter.translated_title}</title>
+                <link rel="stylesheet" type="text/css" href="style/nav.css"/>
+            </head>
+            <body>
+                <!-- Отдельная страница с номером главы -->
+                <div class="chapter-number-page">
+                    <p>Глава {chapter.number}</p>
+                </div>
+                
+                <!-- Страница с заголовком и текстом -->
+                <div class="chapter-content">
+                    <h1 class="chapter-title">{display_title}</h1>
+            '''
+        else:
+            # ВАРИАНТ 2: Всё на одной странице (по умолчанию)
+            ch_content = f'''
+            <html xmlns="http://www.w3.org/1999/xhtml">
+            <head>
+                <title>{chapter.translated_title}</title>
+                <link rel="stylesheet" type="text/css" href="style/nav.css"/>
+            </head>
+            <body>
+                <div class="chapter-number-inline">Глава {chapter.number}</div>
+                <h1 class="chapter-title">{display_title}</h1>
+            '''
 
         # Добавляем резюме если включено
         if self.config.include_summaries and chapter.summary:
             ch_content += f'''
-            <div class="summary">
-                <p><em>Резюме предыдущей главы:</em></p>
-                <p>{chapter.summary}</p>
-            </div>
+                <div class="summary">
+                    <p><em>Резюме предыдущей главы:</em></p>
+                    <p>{chapter.summary}</p>
+                </div>
             '''
 
+        # Добавляем текст главы
         ch_content += '\n'.join(formatted_paragraphs)
+
+        # Закрываем div если использовали вариант с отдельной страницей
+        if self.config.separate_chapter_number_page:
+            ch_content += '\n</div>'
+
         ch_content += '''
-        </body>
-        </html>
+            </body>
+            </html>
         '''
 
         ch.content = ch_content
@@ -363,6 +433,8 @@ def main():
                        help='Не включать глоссарий')
     parser.add_argument('--include-summaries', action='store_true',
                        help='Включить резюме в начало каждой главы')
+    parser.add_argument('--separate-number-page', action='store_true',
+                       help='Поместить номер главы на отдельную страницу (для e-readers)')
     parser.add_argument('--title', type=str, default='Покрывая Небеса',
                        help='Название книги')
     parser.add_argument('--author', type=str, default='Чэнь Дун',
@@ -379,7 +451,8 @@ def main():
         book_title=args.title,
         book_author=args.author,
         include_glossary=not args.no_glossary,
-        include_summaries=args.include_summaries
+        include_summaries=args.include_summaries,
+        separate_chapter_number_page=args.separate_number_page
     )
 
     print(f"\n⚙️  Конфигурация:")
@@ -387,6 +460,7 @@ def main():
     print(f"   Автор: {config.book_author}")
     print(f"   Включить глоссарий: {'Да' if config.include_glossary else 'Нет'}")
     print(f"   Включить резюме: {'Да' if config.include_summaries else 'Нет'}")
+    print(f"   Номер главы на отдельной странице: {'Да' if config.separate_chapter_number_page else 'Нет'}")
 
     # Инициализация
     db = DatabaseManager()
@@ -401,7 +475,7 @@ def main():
         db.close()
         return
 
-    print(f"\n Найдено переведённых глав: {len(chapters)}")
+    print(f"\n Найдено переведённых глав: {len(chapters)}")
     for chapter in chapters:
         print(f"   - {chapter.translated_title}")
 
@@ -411,13 +485,13 @@ def main():
         glossary = db.get_glossary()
         total_terms = sum(len(cat) for cat in glossary.values())
         if total_terms > 0:
-            print(f"\n Глоссарий:")
+            print(f"\n Глоссарий:")
             print(f"   Персонажей: {len(glossary['characters'])}")
             print(f"   Локаций: {len(glossary['locations'])}")
             print(f"   Терминов: {len(glossary['terms'])}")
 
     # Создаём EPUB
-    print(f"\n Создание EPUB...")
+    print(f"\n Создание EPUB...")
     try:
         epub_path = generator.create_epub(chapters, glossary)
 
@@ -427,14 +501,18 @@ def main():
             size_kb = epub_file.stat().st_size / 1024
 
             print(f"\n✅ EPUB создан успешно!")
-            print(f" Файл: {epub_path}")
-            print(f" Размер: {size_kb:.1f} KB")
-            print(f" Содержит:")
+            print(f" Файл: {epub_path}")
+            print(f" Размер: {size_kb:.1f} KB")
+            print(f" Содержит:")
             print(f"   - {len(chapters)} глав")
             if config.include_glossary and glossary:
                 print(f"   - Глоссарий с {total_terms} терминами")
             print(f"   - Оглавление с навигацией")
             print(f"   - Титульную страницу")
+
+            if config.separate_chapter_number_page:
+                print(f"\n ℹ️  Номера глав размещены на отдельных страницах")
+                print(f"    (оптимизировано для электронных книг)")
 
     except Exception as e:
         print(f"\n❌ Ошибка при создании EPUB: {e}")

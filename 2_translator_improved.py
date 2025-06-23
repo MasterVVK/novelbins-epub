@@ -222,7 +222,7 @@ def preprocess_chapter_text(text: str) -> str:
 
     # Логирование изменений
     if replacements_made > 0:
-        print(f"    Применена предобработка звуковых эффектов ({replacements_made} замен)")
+        print(f"    Применена предобработка звуковых эффектов ({replacements_made} замен)")
 
     return text
 
@@ -362,7 +362,7 @@ class LLMTranslator:
                     # Выводим информацию об использовании токенов
                     if "usageMetadata" in data:
                         usage = data["usageMetadata"]
-                        print(f"    Использование токенов:")
+                        print(f"    Использование токенов:")
                         print(f"      - promptTokenCount: {usage.get('promptTokenCount', 'N/A')}")
                         print(f"      - candidatesTokenCount: {usage.get('candidatesTokenCount', 'N/A')}")
                         print(f"      - totalTokenCount: {usage.get('totalTokenCount', 'N/A')}")
@@ -401,7 +401,7 @@ class LLMTranslator:
 
                             # Если включён режим остановки на MAX_TOKENS
                             if self.stop_on_max_tokens:
-                                print(f"\n   РЕЖИМ ОТЛАДКИ: Остановка из-за MAX_TOKENS")
+                                print(f"\n   РЕЖИМ ОТЛАДКИ: Остановка из-за MAX_TOKENS")
                                 print(f"     Установите STOP_ON_MAX_TOKENS=false для продолжения")
 
                                 # Получаем текст ответа для отладки
@@ -636,10 +636,11 @@ class LLMTranslator:
         ratio = trans_len / orig_len if orig_len > 0 else 0
 
         # Для русского языка перевод обычно длиннее английского на 10-30%
-        if ratio < 0.7:  # Менее 70% - это критично
-            critical_issues.append(f"Перевод критически короткий: {ratio:.2f} от оригинала")
+        # ИЗМЕНЕНИЕ: Делаем порог 0.8 критическим
+        if ratio < 0.6:  # Изменено с 0.7 на 0.8
+            critical_issues.append(f"Перевод слишком короткий: {ratio:.2f} от оригинала")
         elif ratio < 0.9:
-            issues.append(f"Перевод слишком короткий: {ratio:.2f} от оригинала")
+            issues.append(f"Перевод короткий: {ratio:.2f} от оригинала")
         elif ratio > 1.6:
             warnings.append(f"Перевод слишком длинный: {ratio:.2f} от оригинала")
 
@@ -798,7 +799,7 @@ class LLMTranslator:
                         print(f"      Результат: {len(part_translation) if part_translation else 0} символов")
 
                         # Автоматически разбиваем на меньшие части
-                        print(f"    Автоматическое разбиение части {i} на меньшие фрагменты...")
+                        print(f"    Автоматическое разбиение части {i} на меньшие фрагменты...")
                         sub_parts = self.split_long_text(part_text, max_words=300)
                         print(f"      Разбито на {len(sub_parts)} подчастей")
 
@@ -882,23 +883,74 @@ class LLMTranslator:
                 print(f"  ❌ КРИТИЧЕСКИЕ ПРОБЛЕМЫ:")
                 for issue in validation['critical_issues']:
                     print(f"     - {issue}")
-                print(f"\n  ❌ ОСТАНОВКА: Глава {chapter.number} имеет критические проблемы")
 
-                # Сохраняем с пометкой о проблеме
-                chapter.translated_title = f"Глава {chapter.number}: {chapter_title} [ПРОБЛЕМНЫЙ ПЕРЕВОД]"
-                chapter.translated_text = translated_text
-                chapter.summary = "Перевод с критическими проблемами"
-                chapter.translation_time = time.time() - start_time
-                chapter.translated_at = datetime.now()
+                # НОВОЕ: Выводим детальную статистику
+                stats = validation['stats']
+                print(f"\n   Детальная статистика:")
+                print(f"     - Оригинал: {stats['original_words']} слов")
+                print(f"     - Перевод: {stats['translated_words']} слов")
+                print(f"     - Соотношение длины: {stats['length_ratio']:.2f}")
+                print(f"     - Соотношение абзацев: {stats['paragraph_ratio']:.1%}")
 
-                # Восстанавливаем оригинальный текст перед сохранением
-                chapter.original_text = original_text_backup
-                db.update_chapter_translation(chapter)
-                self.save_to_file(chapter)
-                return False
+                print(f"\n  ⛔ ОСТАНОВКА: Глава {chapter.number} имеет критически короткий перевод")
+                print(f"     Минимально допустимое соотношение: 0.8")
+                print(f"     Фактическое соотношение: {stats['length_ratio']:.2f}")
+
+                # НОВОЕ: Сохраняем проблемный перевод для анализа
+                problem_dir = Path("translations_problems")
+                problem_dir.mkdir(exist_ok=True)
+
+                problem_file = problem_dir / f"chapter_{chapter.number:03d}_SHORT_RATIO_{stats['length_ratio']:.2f}.txt"
+                with open(problem_file, 'w', encoding='utf-8') as f:
+                    f.write(f"ПРОБЛЕМНЫЙ ПЕРЕВОД - Соотношение: {stats['length_ratio']:.2f}\n")
+                    f.write(f"Оригинал: {stats['original_words']} слов\n")
+                    f.write(f"Перевод: {stats['translated_words']} слов\n")
+                    f.write("="*70 + "\n\n")
+                    f.write(f"{translated_title}\n")
+                    f.write("="*70 + "\n\n")
+                    f.write(translated_text)
+
+                print(f"\n   Проблемный перевод сохранён для анализа:")
+                print(f"     {problem_file}")
+
+                # НОВОЕ: Сохраняем детальную информацию в JSON
+                problem_json = problem_dir / f"chapter_{chapter.number:03d}_analysis.json"
+                problem_data = {
+                    'chapter_number': chapter.number,
+                    'original_title': chapter.original_title,
+                    'translated_title': translated_title,
+                    'validation_stats': stats,
+                    'critical_issues': validation['critical_issues'],
+                    'issues': validation['issues'],
+                    'warnings': validation['warnings'],
+                    'timestamp': datetime.now().isoformat(),
+                    'api_key_index': self.current_key_index,
+                    'model': self.config.model_name,
+                    'temperature': self.config.temperature
+                }
+
+                with open(problem_json, 'w', encoding='utf-8') as f:
+                    json.dump(problem_data, f, ensure_ascii=False, indent=2)
+
+                print(f"     {problem_json}")
+
+                # ИЗМЕНЕНИЕ: Теперь полностью останавливаем скрипт
+                print(f"\n  ❌ КРИТИЧЕСКАЯ ОШИБКА: Остановка работы скрипта")
+                print(f"     Рекомендации:")
+                print(f"     1. Проверьте настройки модели и промпты")
+                print(f"     2. Возможно, глава содержит особый контент")
+                print(f"     3. Попробуйте увеличить temperature до 0.3")
+                print(f"     4. Проверьте файлы в папке translations_problems/")
+
+                # Закрываем соединение с БД перед выходом
+                db.close()
+
+                # Полная остановка скрипта
+                import sys
+                sys.exit(1)
 
             elif not validation['valid']:
-                print(f"  ❌ Обнаружены проблемы:")
+                print(f"  ⚠️ Обнаружены проблемы:")
                 for issue in validation['issues']:
                     print(f"     - {issue}")
             else:
@@ -1179,9 +1231,9 @@ def main():
     config = TranslatorConfig(
         api_keys=api_keys,
         proxy_url=os.getenv('PROXY_URL'),
-        model_name=os.getenv('GEMINI_MODEL', 'gemini-2.5-flash-preview-05-20'),
-        temperature=float(os.getenv('TEMPERATURE', '0.1')),
-        max_output_tokens=int(os.getenv('MAX_OUTPUT_TOKENS', '50000')),
+        model_name=os.getenv('GEMINI_MODEL', 'gemini-2.5-flash'),
+        temperature=float(os.getenv('TEMPERATURE', '0.2')),
+        max_output_tokens=int(os.getenv('MAX_OUTPUT_TOKENS', '120000')),
         request_delay=float(os.getenv('REQUEST_DELAY', '5'))  # Увеличено до 5 секунд
     )
 
@@ -1191,6 +1243,7 @@ def main():
     print(f"   Температура: {config.temperature}")
     print(f"   maxOutputTokens: {config.max_output_tokens}")
     print(f"   Контекст: до 5 предыдущих глав")
+    print(f"   ⚠️  КРИТИЧЕСКИЙ ПОРОГ: соотношение < 0.8 = остановка")
     if config.proxy_url:
         print(f"   Прокси: {config.proxy_url.split('@')[1] if '@' in config.proxy_url else config.proxy_url}")
 
@@ -1336,6 +1389,14 @@ def main():
 
     print(f"\n✅ Перевод завершён!")
     print(f" Файлы сохранены в: translations/")
+
+    # Проверка папки с проблемными переводами
+    problem_dir = Path("translations_problems")
+    if problem_dir.exists():
+        problem_files = list(problem_dir.glob("*.txt"))
+        if problem_files:
+            print(f"\n⚠️  Обнаружены проблемные переводы в: {problem_dir}/")
+            print(f"   Количество: {len(problem_files)}")
 
     db.close()
 

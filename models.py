@@ -70,3 +70,4 @@ class EPUBConfig:
     book_language: str = "ru"
     include_glossary: bool = True
     include_summaries: bool = False
+    separate_chapter_number_page: bool = False  # Новый параметр
