@@ -330,6 +330,22 @@ class AdvancedChapterEditor:
 
         if result:
             print(f"     Размер результата: {len(result)} символов")
+
+            # Проверка на дублирование
+            if len(result) > len(text) * 1.8:
+                print(f"     ⚠️  Результат подозрительно большой! Проверяем на дублирование...")
+
+                # Проверяем, не содержит ли результат текст дважды
+                half_result = result[:len(result)//2]
+                if text[:1000] in half_result and text[:1000] in result[len(result)//2:]:
+                    print(f"     ❌ Обнаружено дублирование текста! Пропускаем этот этап.")
+                    return text
+
+                # Даже если не точное дублирование, слишком большое увеличение подозрительно
+                print(f"     ⚠️  Слишком большое увеличение размера. Пропускаем этот этап.")
+                return text
+
+            # Проверка на критическое сокращение
             if len(result) < len(text) * 0.5:
                 print(f"     ❌ Результат слишком короткий! Пропускаем этот этап.")
                 return text
@@ -486,9 +502,22 @@ class AdvancedChapterEditor:
         if ratio < 0.7:
             print(f"  ⚠️  Текст сильно сокращён: {ratio:.2f}")
             return False
-        elif ratio > 2.0:
-            print(f"  ⚠️  Текст увеличен более чем в 2 раза: {ratio:.2f}")
-            return False
+        elif ratio > 1.8:  # Снизили с 2.0 до 1.8
+            print(f"  ⚠️  Текст увеличен более чем в 1.8 раза: {ratio:.2f}")
+
+            # Проверяем на дублирование
+            if ratio > 1.9:
+                half_edited = edited[:len(edited)//2]
+                if original[:500] in half_edited and original[:500] in edited[len(edited)//2:]:
+                    print(f"  ❌ Обнаружено дублирование текста!")
+                    return False
+
+            # Для небольшого увеличения это может быть нормально
+            if ratio < 2.0:
+                print(f"  ℹ️  Проверяем другие критерии...")
+            else:
+                return False
+
         elif ratio > 1.5:
             print(f"  ℹ️  Текст заметно увеличен: {ratio:.2f} (это нормально для редактуры)")
 
@@ -511,18 +540,15 @@ class AdvancedChapterEditor:
         lost_numbers = orig_numbers - edited_numbers
 
         # Проверяем, что это не просто изменение формата чисел
-        # Например: "1977" → "1977 год" или "20" → "двадцать"
         critical_lost = []
         for num in lost_numbers:
-            # Проверяем, есть ли число в тексте в другом формате
             if num not in edited and f"{num} " not in edited:
-                # Проверяем, не заменено ли число словом
                 num_int = int(num)
                 if num_int <= 20:  # Маленькие числа часто пишутся словами
                     continue
                 critical_lost.append(num)
 
-        if len(critical_lost) > 5:  # Увеличиваем порог до 5
+        if len(critical_lost) > 5:
             print(f"  ⚠️  Потеряно много важных чисел: {critical_lost[:5]}...")
             return False
         elif len(lost_numbers) > 0:
