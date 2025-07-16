@@ -91,7 +91,7 @@ class EPUBGenerator:
                 'quality_score': row['quality_score_after'] if is_edited else None
             })
 
-        print(f"\n Загружено глав: {len(chapters)}")
+        print(f"\n Загружено глав: {len(chapters)}")
         print(f"   Отредактировано: {edited_count}")
         print(f"   Только переведено: {len(chapters) - edited_count}")
 
@@ -223,6 +223,15 @@ class EPUBGenerator:
             margin-bottom: 1em;
             font-size: 1.5em;
             page-break-before: always;
+            page-break-inside: avoid;  /* Предотвращаем разрыв внутри заголовка */
+        }
+        
+        h1 .chapter-number {
+            display: block;  /* Номер главы как блочный элемент */
+            font-size: 0.8em;
+            color: #666;
+            margin-bottom: 0.3em;
+            font-weight: normal;
         }
         
         h2 {
@@ -241,13 +250,6 @@ class EPUBGenerator:
         p {
             text-indent: 1.5em;
             margin-top: 0;
-            margin-bottom: 0.5em;
-        }
-        
-        .chapter-number {
-            text-align: center;
-            font-size: 0.9em;
-            color: #666;
             margin-bottom: 0.5em;
         }
         
@@ -423,6 +425,9 @@ class EPUBGenerator:
         for i, para in enumerate(paragraphs):
             para = para.strip()
             if para:
+                # Преобразуем markdown в HTML
+                para = self._convert_markdown_to_html(para)
+
                 if i == 0:
                     formatted_paragraphs.append(f'<p class="first-paragraph">{para}</p>')
                 else:
@@ -430,8 +435,10 @@ class EPUBGenerator:
 
         # Убираем номер главы из заголовка для отображения
         display_title = chapter['title'].replace(f"Глава {chapter['number']}: ", "")
+        # Преобразуем markdown в заголовке
+        display_title = self._convert_markdown_to_html(display_title)
 
-        # HTML содержимое главы
+        # HTML содержимое главы - ИСПРАВЛЕНО: номер и название в одном h1
         ch_content = f'''
         <html xmlns="http://www.w3.org/1999/xhtml">
         <head>
@@ -439,22 +446,22 @@ class EPUBGenerator:
             <link rel="stylesheet" type="text/css" href="style/nav.css"/>
         </head>
         <body>
-            <div class="chapter-number">Глава {chapter['number']}</div>
-            <h1>{display_title}</h1>
+            <h1><span class="chapter-number">Глава {chapter['number']}</span>{display_title}</h1>
         '''
 
         # Добавляем пометку о качестве для отредактированных глав
-        if chapter['is_edited'] and chapter['quality_score']:
-            ch_content += f'''
-            <p class="quality-mark">Качество редактуры: {chapter['quality_score']}/10</p>
-            '''
+        #if chapter['is_edited'] and chapter['quality_score']:
+        #    ch_content += f'''
+        #    <p class="quality-mark">Качество редактуры: {chapter['quality_score']}/10</p>
+        #    '''
 
         # Добавляем резюме если включено
         if self.config.include_summaries and chapter['summary']:
+            summary_html = self._convert_markdown_to_html(chapter['summary'])
             ch_content += f'''
             <div class="summary">
                 <p><em>Резюме предыдущей главы:</em></p>
-                <p>{chapter['summary']}</p>
+                <p>{summary_html}</p>
             </div>
             '''
 
@@ -527,6 +534,26 @@ class EPUBGenerator:
 
         return glossary_page
 
+    def _convert_markdown_to_html(self, text: str) -> str:
+        """Преобразование markdown-форматирования в HTML"""
+        import re
+
+        # Сначала обрабатываем жирный текст (двойные звёздочки)
+        # Используем негативный просмотр, чтобы не захватывать тройные звёздочки
+        text = re.sub(r'\*\*(?!\*)(.*?)\*\*', r'<strong>\1</strong>', text)
+
+        # Затем обрабатываем курсив (одинарные звёздочки)
+        # Исключаем уже обработанные strong теги
+        text = re.sub(r'(?<!\*)\*(?!\*)(.*?)\*(?!\*)', r'<em>\1</em>', text)
+
+        # Обрабатываем подчёркивания для курсива
+        text = re.sub(r'\b_([^_]+)_\b', r'<em>\1</em>', text)
+
+        # Обрабатываем двойные подчёркивания для жирного текста
+        text = re.sub(r'\b__([^_]+)__\b', r'<strong>\1</strong>', text)
+
+        return text
+
 
 def main():
     """Основная функция генератора EPUB"""
@@ -549,7 +576,7 @@ def main():
     args = parser.parse_args()
 
     print("=" * 70)
-    print(" ГЕНЕРАТОР EPUB (С РЕДАКТИРОВАННЫМИ ГЛАВАМИ)")
+    print(" ГЕНЕРАТОР EPUB (С РЕДАКТИРОВАННЫМИ ГЛАВАМИ)")
     print("=" * 70)
 
     # Конфигурация
@@ -567,11 +594,11 @@ def main():
     print(f"   Включить резюме: {'Да' if config.include_summaries else 'Нет'}")
 
     if args.only_edited:
-        print(f"    Режим: только отредактированные главы")
+        print(f"   Режим: только отредактированные главы")
     elif args.only_translated:
-        print(f"    Режим: только переводы без редактуры")
+        print(f"   Режим: только переводы без редактуры")
     else:
-        print(f"    Режим: лучшая доступная версия каждой главы")
+        print(f"   Режим: лучшая доступная версия каждой главы")
 
     # Инициализация
     db = DatabaseManager()
@@ -592,14 +619,14 @@ def main():
             print("\n❌ Не найдено отредактированных глав!")
             db.close()
             return
-        print(f"\n Отфильтровано: {len(chapters)} отредактированных глав")
+        print(f"\n Отфильтровано: {len(chapters)} отредактированных глав")
     elif args.only_translated:
         # Для режима only_translated нужно перезагрузить данные без edited_text
         # Это требует изменения запроса, пока просто предупредим
         print("\n⚠️  Режим --only-translated требует отдельной реализации")
         print("   Используются лучшие доступные версии")
 
-    print(f"\n Подготовка к созданию EPUB с {len(chapters)} главами")
+    print(f"\n Подготовка к созданию EPUB с {len(chapters)} главами")
 
     # Получаем глоссарий если нужно
     glossary = None
@@ -607,7 +634,7 @@ def main():
         glossary = db.get_glossary()
         total_terms = sum(len(cat) for cat in glossary.values())
         if total_terms > 0:
-            print(f"\n Глоссарий:")
+            print(f"\n Глоссарий:")
             print(f"   Персонажей: {len(glossary['characters'])}")
             print(f"   Локаций: {len(glossary['locations'])}")
             print(f"   Терминов: {len(glossary['terms'])}")
@@ -623,9 +650,9 @@ def main():
             size_kb = epub_file.stat().st_size / 1024
 
             print(f"\n✅ EPUB создан успешно!")
-            print(f" Файл: {epub_path}")
-            print(f" Размер: {size_kb:.1f} KB")
-            print(f"\n Содержимое:")
+            print(f" Файл: {epub_path}")
+            print(f" Размер: {size_kb:.1f} KB")
+            print(f"\n Содержимое:")
             print(f"   - Глав всего: {len(chapters)}")
             edited_count = sum(1 for ch in chapters if ch['is_edited'])
             print(f"   - С редактурой: {edited_count}")
