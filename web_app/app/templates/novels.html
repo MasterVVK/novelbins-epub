@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+
+{% block title %}Новеллы - Novel Translator{% endblock %}
+{% block page_title %}Новеллы{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="bi bi-book"></i> Все новеллы</h2>
+    <div>
+        <a href="{{ url_for('main.deleted_novels') }}" class="btn btn-outline-secondary me-2">
+            <i class="bi bi-trash"></i> Удаленные новеллы
+        </a>
+        <a href="{{ url_for('main.new_novel') }}" class="btn btn-primary">
+            <i class="bi bi-plus-circle"></i> Добавить новеллу
+        </a>
+    </div>
+</div>
+
+{% if novels %}
+<div class="row">
+    {% for novel in novels %}
+    <div class="col-md-6 col-lg-4 mb-4">
+        <div class="card h-100">
+            <div class="card-body">
+                <h5 class="card-title">{{ novel.title }}</h5>
+                {% if novel.author %}
+                <p class="card-text text-muted">Автор: {{ novel.author }}</p>
+                {% endif %}
+                
+                <div class="mb-3">
+                    <span class="badge bg-{{ 'success' if novel.status == 'completed' else 'warning' if novel.status == 'translating' else 'info' }}">
+                        {{ novel.status }}
+                    </span>
+                </div>
+                
+                <div class="mb-3">
+                    <small class="text-muted">Прогресс перевода:</small>
+                    <div class="progress" style="height: 8px;">
+                        <div class="progress-bar" style="width: {{ novel.progress_percentage }}%"></div>
+                    </div>
+                    <small class="text-muted">{{ novel.progress_percentage }}% ({{ novel.translated_chapters }}/{{ novel.total_chapters }})</small>
+                </div>
+                
+                {% if novel.edited_chapters > 0 %}
+                <div class="mb-3">
+                    <small class="text-muted">Прогресс редактуры:</small>
+                    <div class="progress" style="height: 8px;">
+                        <div class="progress-bar bg-success" style="width: {{ novel.editing_progress_percentage }}%"></div>
+                    </div>
+                    <small class="text-muted">{{ novel.editing_progress_percentage }}% ({{ novel.edited_chapters }}/{{ novel.translated_chapters }})</small>
+                </div>
+                {% endif %}
+                
+                <div class="d-flex justify-content-between align-items-center">
+                    <small class="text-muted">{{ novel.created_at.strftime('%d.%m.%Y') }}</small>
+                    <div>
+                        <a href="{{ url_for('main.edit_novel', novel_id=novel.id) }}" class="btn btn-sm btn-outline-secondary me-1" title="Редактировать">
+                            <i class="bi bi-pencil"></i>
+                        </a>
+                        <a href="{{ url_for('main.novel_detail', novel_id=novel.id) }}" class="btn btn-sm btn-outline-primary me-1" title="Просмотр">
+                            <i class="bi bi-eye"></i>
+                        </a>
+                        <button type="button" class="btn btn-outline-danger btn-sm" 
+                                data-bs-toggle="modal" 
+                                data-bs-target="#deleteNovelModal{{ novel.id }}" 
+                                title="Удалить">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<!-- Модальные окна подтверждения удаления -->
+{% for novel in novels %}
+<div class="modal fade" id="deleteNovelModal{{ novel.id }}" tabindex="-1" aria-labelledby="deleteNovelModalLabel{{ novel.id }}" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="deleteNovelModalLabel{{ novel.id }}">
+                    <i class="bi bi-exclamation-triangle text-danger"></i> Подтверждение удаления
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p>Вы действительно хотите удалить новеллу <strong>"{{ novel.title }}"</strong>?</p>
+                <div class="alert alert-warning">
+                    <i class="bi bi-exclamation-triangle"></i>
+                    <strong>Внимание!</strong> Новелла будет перемещена в корзину. При этом:
+                    <ul class="mb-0 mt-2">
+                        <li>Все главы новеллы ({{ novel.total_chapters }}) будут сохранены</li>
+                        <li>Все задачи, связанные с новеллой, останутся</li>
+                        <li>Весь глоссарий новеллы будет сохранен</li>
+                        <li>Все настройки и конфигурация останутся</li>
+                        <li>Новеллу можно будет восстановить позже</li>
+                    </ul>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                    <i class="bi bi-x-circle"></i> Отмена
+                </button>
+                <form method="POST" action="{{ url_for('main.delete_novel', novel_id=novel.id) }}" style="display: inline;">
+                    <button type="submit" class="btn btn-danger">
+                        <i class="bi bi-trash"></i> Удалить новеллу
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endfor %}
+
+{% else %}
+<div class="text-center py-5">
+    <i class="bi bi-book text-muted fs-1"></i>
+    <h4 class="text-muted mt-3">Нет добавленных новелл</h4>
+    <p class="text-muted">Начните с добавления первой новеллы для перевода</p>
+    <a href="{{ url_for('main.new_novel') }}" class="btn btn-primary btn-lg">
+        <i class="bi bi-plus-circle"></i> Добавить новеллу
+    </a>
+</div>
+{% endif %}
+{% endblock %} 

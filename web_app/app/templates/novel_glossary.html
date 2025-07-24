@@ -1,0 +1,236 @@
+{% extends "base.html" %}
+
+{% block title %}Глоссарий {{ novel.title }} - Novel Translator{% endblock %}
+{% block page_title %}Глоссарий {{ novel.title }}{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="bi bi-translate"></i> Глоссарий</h2>
+    <div>
+        <a href="{{ url_for('main.novel_detail', novel_id=novel.id) }}" class="btn btn-outline-secondary me-2">
+            <i class="bi bi-arrow-left"></i> К новелле
+        </a>
+        <a href="{{ url_for('main.add_glossary_term', novel_id=novel.id) }}" class="btn btn-primary">
+            <i class="bi bi-plus-circle"></i> Добавить термин
+        </a>
+    </div>
+</div>
+
+<!-- Статистика -->
+{% if stats %}
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h5 class="card-title">{{ stats.total or 0 }}</h5>
+                <p class="card-text">Всего терминов</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h5 class="card-title">{{ stats.characters or 0 }}</h5>
+                <p class="card-text">Персонажи</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h5 class="card-title">{{ stats.locations or 0 }}</h5>
+                <p class="card-text">Локации</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h5 class="card-title">{{ stats.terms or 0 }}</h5>
+                <p class="card-text">Термины</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Глоссарий по категориям -->
+{% if glossary %}
+    {% for category, items in glossary.items() %}
+    {% if items %}
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5 class="card-title mb-0">
+                                {% if category == 'characters' %}
+                                    <i class="bi bi-person"></i> Персонажи
+                                {% elif category == 'locations' %}
+                                    <i class="bi bi-geo-alt"></i> Локации
+                                {% elif category == 'terms' %}
+                                    <i class="bi bi-translate"></i> Термины
+                                {% elif category == 'techniques' %}
+                                    <i class="bi bi-lightning"></i> Техники
+                                {% elif category == 'artifacts' %}
+                                    <i class="bi bi-gem"></i> Артефакты
+                                {% else %}
+                                    <i class="bi bi-tag"></i> {{ category|title }}
+                                {% endif %}
+                                ({{ items|length }})
+            </h5>
+        </div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Английский</th>
+                            <th>Русский</th>
+                            <th>Описание</th>
+                            <th>Глава</th>
+                            <th>Использований</th>
+                            <th>Действия</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in items %}
+                        <tr>
+                            <td>
+                                <strong>{{ item.english_term }}</strong>
+                                {% if item.is_auto_generated %}
+                                <span class="badge bg-info">Авто</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ item.russian_term }}</td>
+                            <td>
+                                {% if item.description %}
+                                <small class="text-muted">{{ item.description[:100] }}{% if item.description|length > 100 %}...{% endif %}</small>
+                                {% else %}
+                                <small class="text-muted">Нет описания</small>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if item.first_appearance_chapter %}
+                                <span class="badge bg-secondary">{{ item.first_appearance_chapter }}</span>
+                                {% else %}
+                                <small class="text-muted">Не указана</small>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <span class="badge bg-primary">{{ item.usage_count }}</span>
+                            </td>
+                            <td>
+                                <div class="btn-group btn-group-sm">
+                                    <button type="button" class="btn btn-outline-primary" 
+                                            data-bs-toggle="modal" 
+                                            data-bs-target="#editTermModal{{ item.id }}"
+                                            title="Редактировать">
+                                        <i class="bi bi-pencil"></i>
+                                    </button>
+                                    <button type="button" class="btn btn-outline-danger" 
+                                            data-bs-toggle="modal" 
+                                            data-bs-target="#deleteTermModal{{ item.id }}"
+                                            title="Удалить">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+    {% endfor %}
+{% else %}
+<div class="text-center py-5">
+    <i class="bi bi-translate text-muted fs-1"></i>
+    <h4 class="text-muted mt-3">Глоссарий пуст</h4>
+    <p class="text-muted">Добавьте первые термины для улучшения качества перевода</p>
+    <a href="{{ url_for('main.add_glossary_term', novel_id=novel.id) }}" class="btn btn-primary btn-lg">
+        <i class="bi bi-plus-circle"></i> Добавить термин
+    </a>
+</div>
+{% endif %}
+
+<!-- Модальные окна для редактирования -->
+{% if glossary %}
+{% for category, items in glossary.items() %}
+{% for item in items %}
+<div class="modal fade" id="editTermModal{{ item.id }}" tabindex="-1" aria-labelledby="editTermModalLabel{{ item.id }}" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="editTermModalLabel{{ item.id }}">
+                    <i class="bi bi-pencil"></i> Редактировать термин
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form method="POST" action="{{ url_for('main.edit_glossary_term', novel_id=novel.id, term_id=item.id) }}">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="english_term{{ item.id }}" class="form-label">Английский термин *</label>
+                        <input type="text" class="form-control" id="english_term{{ item.id }}" name="english_term" value="{{ item.english_term }}" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="russian_term{{ item.id }}" class="form-label">Русский перевод *</label>
+                        <input type="text" class="form-control" id="russian_term{{ item.id }}" name="russian_term" value="{{ item.russian_term }}" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="category{{ item.id }}" class="form-label">Категория</label>
+                        <select class="form-select" id="category{{ item.id }}" name="category">
+                            <option value="characters" {{ 'selected' if item.category == 'characters' else '' }}>Персонажи</option>
+                            <option value="locations" {{ 'selected' if item.category == 'locations' else '' }}>Локации</option>
+                            <option value="terms" {{ 'selected' if item.category == 'terms' else '' }}>Термины</option>
+                            <option value="techniques" {{ 'selected' if item.category == 'techniques' else '' }}>Техники</option>
+                            <option value="artifacts" {{ 'selected' if item.category == 'artifacts' else '' }}>Артефакты</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="description{{ item.id }}" class="form-label">Описание</label>
+                        <textarea class="form-control" id="description{{ item.id }}" name="description" rows="3">{{ item.description or '' }}</textarea>
+                    </div>
+                    <div class="mb-3">
+                        <label for="first_appearance_chapter{{ item.id }}" class="form-label">Первое появление (глава)</label>
+                        <input type="number" class="form-control" id="first_appearance_chapter{{ item.id }}" name="first_appearance_chapter" value="{{ item.first_appearance_chapter or '' }}" min="1">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                    <button type="submit" class="btn btn-primary">Сохранить</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Модальные окна для удаления -->
+<div class="modal fade" id="deleteTermModal{{ item.id }}" tabindex="-1" aria-labelledby="deleteTermModalLabel{{ item.id }}" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="deleteTermModalLabel{{ item.id }}">
+                    <i class="bi bi-exclamation-triangle text-danger"></i> Подтверждение удаления
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p>Вы действительно хотите удалить термин <strong>"{{ item.english_term }}"</strong>?</p>
+                <div class="alert alert-warning">
+                    <i class="bi bi-exclamation-triangle"></i>
+                    <strong>Внимание!</strong> Это действие нельзя отменить.
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                <form method="POST" action="{{ url_for('main.delete_glossary_term', novel_id=novel.id, term_id=item.id) }}" style="display: inline;">
+                    <button type="submit" class="btn btn-danger">Удалить</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endfor %}
+{% endfor %}
+{% endif %}
+{% endblock %} 

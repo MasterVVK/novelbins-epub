@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+
+{% block title %}Шаблоны промптов - Novel Translator{% endblock %}
+{% block page_title %}Шаблоны промптов{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="bi bi-file-text"></i> Шаблоны промптов</h2>
+    <a href="{{ url_for('main.new_prompt_template') }}" class="btn btn-primary">
+        <i class="bi bi-plus-circle"></i> Создать шаблон
+    </a>
+</div>
+
+{% if templates %}
+<div class="row">
+    {% for template in templates %}
+    <div class="col-md-6 col-lg-4 mb-4">
+        <div class="card h-100">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="card-title mb-0">{{ template.name }}</h5>
+                {% if template.is_default %}
+                <span class="badge bg-success">По умолчанию</span>
+                {% endif %}
+            </div>
+            <div class="card-body">
+                {% if template.description %}
+                <p class="card-text">{{ template.description }}</p>
+                {% endif %}
+                
+                <div class="mb-3">
+                    <span class="badge bg-info">{{ template.category }}</span>
+                    {% if template.is_active %}
+                    <span class="badge bg-success">Активен</span>
+                    {% else %}
+                    <span class="badge bg-secondary">Неактивен</span>
+                    {% endif %}
+                </div>
+                
+                <div class="mb-3">
+                    <small class="text-muted">Настройки:</small>
+                    <ul class="list-unstyled small text-muted">
+                        <li>Температура: {{ template.temperature }}</li>
+                        <li>Макс. токенов: {{ template.max_tokens }}</li>
+                    </ul>
+                </div>
+                
+                <div class="mb-3">
+                    <small class="text-muted">Промпты:</small>
+                    <ul class="list-unstyled small text-muted">
+                        <li>Перевод: {{ '✓' if template.translation_prompt else '✗' }}</li>
+                        <li>Резюме: {{ '✓' if template.summary_prompt else '✗' }}</li>
+                        <li>Извлечение терминов: {{ '✓' if template.terms_extraction_prompt else '✗' }}</li>
+                    </ul>
+                </div>
+                
+                <div class="d-flex justify-content-between align-items-center">
+                    <small class="text-muted">{{ template.created_at.strftime('%d.%m.%Y') }}</small>
+                    <div>
+                        <a href="{{ url_for('main.edit_prompt_template', template_id=template.id) }}" class="btn btn-outline-primary btn-sm me-1" title="Редактировать">
+                            <i class="bi bi-pencil"></i>
+                        </a>
+                        {% if not template.is_default %}
+                        <button type="button" class="btn btn-outline-danger btn-sm" 
+                                data-bs-toggle="modal" 
+                                data-bs-target="#deleteTemplateModal{{ template.id }}" 
+                                title="Удалить">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<!-- Модальные окна подтверждения удаления -->
+{% for template in templates %}
+{% if not template.is_default %}
+<div class="modal fade" id="deleteTemplateModal{{ template.id }}" tabindex="-1" aria-labelledby="deleteTemplateModalLabel{{ template.id }}" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="deleteTemplateModalLabel{{ template.id }}">
+                    <i class="bi bi-exclamation-triangle text-danger"></i> Подтверждение удаления
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p>Вы действительно хотите удалить шаблон <strong>"{{ template.name }}"</strong>?</p>
+                <div class="alert alert-warning">
+                    <i class="bi bi-exclamation-triangle"></i>
+                    <strong>Внимание!</strong> Это действие нельзя отменить.
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                    <i class="bi bi-x-circle"></i> Отмена
+                </button>
+                <form method="POST" action="{{ url_for('main.delete_prompt_template', template_id=template.id) }}" style="display: inline;">
+                    <button type="submit" class="btn btn-danger">
+                        <i class="bi bi-trash"></i> Удалить шаблон
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endfor %}
+
+{% else %}
+<div class="text-center py-5">
+    <i class="bi bi-file-text text-muted fs-1"></i>
+    <h4 class="text-muted mt-3">Нет созданных шаблонов</h4>
+    <p class="text-muted">Создайте первый шаблон промпта для улучшения качества перевода</p>
+    <a href="{{ url_for('main.new_prompt_template') }}" class="btn btn-primary btn-lg">
+        <i class="bi bi-plus-circle"></i> Создать шаблон
+    </a>
+</div>
+{% endif %}
+{% endblock %} 

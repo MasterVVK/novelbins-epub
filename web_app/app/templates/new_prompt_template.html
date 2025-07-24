@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+
+{% block title %}Создать шаблон промпта - Novel Translator{% endblock %}
+{% block page_title %}Создать шаблон промпта{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-10">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="bi bi-plus-circle"></i> Новый шаблон промпта
+                </h5>
+            </div>
+            <div class="card-body">
+                <form method="POST">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="name" class="form-label">Название шаблона *</label>
+                                <input type="text" class="form-control" id="name" name="name" 
+                                       value="{{ template.name or '' }}" required>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="category" class="form-label">Категория</label>
+                                <select class="form-select" id="category" name="category">
+                                    <option value="general" {{ 'selected' if template.category == 'general' else '' }}>Общий</option>
+                                    <option value="xianxia" {{ 'selected' if template.category == 'xianxia' else '' }}>Сянься</option>
+                                    <option value="wuxia" {{ 'selected' if template.category == 'wuxia' else '' }}>Уся</option>
+                                    <option value="modern" {{ 'selected' if template.category == 'modern' else '' }}>Современный</option>
+                                    <option value="fantasy" {{ 'selected' if template.category == 'fantasy' else '' }}>Фэнтези</option>
+                                    <option value="romance" {{ 'selected' if template.category == 'romance' else '' }}>Романтика</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="description" class="form-label">Описание</label>
+                        <textarea class="form-control" id="description" name="description" rows="2">{{ template.description or '' }}</textarea>
+                        <div class="form-text">Краткое описание назначения шаблона</div>
+                    </div>
+                    
+                    <hr>
+                    <h6 class="mb-3">Промпты</h6>
+                    
+                    <div class="mb-3">
+                        <label for="translation_prompt" class="form-label">Промпт для перевода *</label>
+                        <textarea class="form-control" id="translation_prompt" name="translation_prompt" rows="8" required>{{ template.translation_prompt or '' }}</textarea>
+                        <div class="form-text">Основной промпт для перевода текста. Используйте {text} для вставки текста.</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="summary_prompt" class="form-label">Промпт для резюме</label>
+                        <textarea class="form-control" id="summary_prompt" name="summary_prompt" rows="4">{{ template.summary_prompt or '' }}</textarea>
+                        <div class="form-text">Промпт для создания резюме главы</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="terms_extraction_prompt" class="form-label">Промпт для извлечения терминов</label>
+                        <textarea class="form-control" id="terms_extraction_prompt" name="terms_extraction_prompt" rows="4">{{ template.terms_extraction_prompt or '' }}</textarea>
+                        <div class="form-text">Промпт для извлечения важных терминов и имен</div>
+                    </div>
+                    
+                    <hr>
+                    <h6 class="mb-3">Настройки</h6>
+                    
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="temperature" class="form-label">Температура</label>
+                                <input type="number" class="form-control" id="temperature" name="temperature" 
+                                       value="{{ template.temperature or 0.1 }}" min="0" max="2" step="0.1">
+                                <div class="form-text">Креативность генерации (0-2)</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="max_tokens" class="form-label">Максимум токенов</label>
+                                <input type="number" class="form-control" id="max_tokens" name="max_tokens" 
+                                       value="{{ template.max_tokens or 24000 }}" min="1000" max="100000">
+                                <div class="form-text">Максимальное количество токенов в ответе</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="d-flex justify-content-between">
+                        <a href="{{ url_for('main.prompt_templates') }}" class="btn btn-outline-secondary">
+                            <i class="bi bi-arrow-left"></i> Назад
+                        </a>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-plus-circle"></i> Создать шаблон
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %} 

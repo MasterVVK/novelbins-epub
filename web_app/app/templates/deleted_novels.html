@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+
+{% block title %}Удаленные новеллы - Novel Translator{% endblock %}
+{% block page_title %}Удаленные новеллы{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="bi bi-trash"></i> Удаленные новеллы</h2>
+    <div>
+        <a href="{{ url_for('main.novels') }}" class="btn btn-outline-secondary me-2">
+            <i class="bi bi-arrow-left"></i> К активным новеллам
+        </a>
+        <a href="{{ url_for('main.new_novel') }}" class="btn btn-primary">
+            <i class="bi bi-plus-circle"></i> Добавить новеллу
+        </a>
+    </div>
+</div>
+
+{% if novels %}
+<div class="alert alert-info">
+    <i class="bi bi-info-circle"></i>
+    <strong>Информация:</strong> Удаленные новеллы можно восстановить. При восстановлении все главы, задачи и глоссарий останутся без изменений.
+</div>
+
+<div class="row">
+    {% for novel in novels %}
+    <div class="col-md-6 col-lg-4 mb-4">
+        <div class="card h-100 border-danger">
+            <div class="card-header bg-danger text-white">
+                <h5 class="card-title mb-0">
+                    <i class="bi bi-trash"></i> {{ novel.title }}
+                </h5>
+            </div>
+            <div class="card-body">
+                {% if novel.author %}
+                <p class="card-text text-muted">Автор: {{ novel.author }}</p>
+                {% endif %}
+                
+                <div class="mb-3">
+                    <span class="badge bg-secondary">Удалена</span>
+                </div>
+                
+                <div class="mb-3">
+                    <small class="text-muted">Статистика на момент удаления:</small>
+                    <ul class="list-unstyled small text-muted">
+                        <li>Всего глав: {{ novel.total_chapters }}</li>
+                        <li>Переведено: {{ novel.translated_chapters }}</li>
+                        <li>Отредактировано: {{ novel.edited_chapters }}</li>
+                    </ul>
+                </div>
+                
+                <div class="d-flex justify-content-between align-items-center">
+                    <small class="text-muted">Удалена: {{ novel.updated_at.strftime('%d.%m.%Y %H:%M') }}</small>
+                    <div>
+                        <button type="button" class="btn btn-outline-success btn-sm" 
+                                data-bs-toggle="modal" 
+                                data-bs-target="#restoreNovelModal{{ novel.id }}" 
+                                title="Восстановить">
+                            <i class="bi bi-arrow-clockwise"></i> Восстановить
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<!-- Модальные окна подтверждения восстановления -->
+{% for novel in novels %}
+<div class="modal fade" id="restoreNovelModal{{ novel.id }}" tabindex="-1" aria-labelledby="restoreNovelModalLabel{{ novel.id }}" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="restoreNovelModalLabel{{ novel.id }}">
+                    <i class="bi bi-arrow-clockwise text-success"></i> Подтверждение восстановления
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p>Вы действительно хотите восстановить новеллу <strong>"{{ novel.title }}"</strong>?</p>
+                <div class="alert alert-info">
+                    <i class="bi bi-info-circle"></i>
+                    <strong>Информация:</strong> При восстановлении:
+                    <ul class="mb-0 mt-2">
+                        <li>Все главы новеллы будут доступны</li>
+                        <li>Все задачи будут восстановлены</li>
+                        <li>Весь глоссарий останется без изменений</li>
+                        <li>Все настройки будут сохранены</li>
+                    </ul>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                    <i class="bi bi-x-circle"></i> Отмена
+                </button>
+                <form method="POST" action="{{ url_for('main.restore_novel', novel_id=novel.id) }}" style="display: inline;">
+                    <button type="submit" class="btn btn-success">
+                        <i class="bi bi-arrow-clockwise"></i> Восстановить новеллу
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endfor %}
+
+{% else %}
+<div class="text-center py-5">
+    <i class="bi bi-trash text-muted fs-1"></i>
+    <h4 class="text-muted mt-3">Нет удаленных новелл</h4>
+    <p class="text-muted">Все новеллы активны</p>
+    <a href="{{ url_for('main.novels') }}" class="btn btn-primary btn-lg">
+        <i class="bi bi-arrow-left"></i> К активным новеллам
+    </a>
+</div>
+{% endif %}
+{% endblock %} 

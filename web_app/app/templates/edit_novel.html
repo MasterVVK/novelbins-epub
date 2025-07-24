@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+
+{% block title %}Редактировать {{ novel.title }} - Novel Translator{% endblock %}
+{% block page_title %}Редактировать {{ novel.title }}{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="bi bi-pencil-square"></i> Редактировать новеллу
+                </h5>
+            </div>
+            <div class="card-body">
+                <form method="POST">
+                    <div class="mb-3">
+                        <label for="title" class="form-label">Название новеллы *</label>
+                        <input type="text" class="form-control" id="title" name="title" value="{{ novel.title }}" required>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="original_title" class="form-label">Оригинальное название</label>
+                        <input type="text" class="form-control" id="original_title" name="original_title" value="{{ novel.original_title or '' }}">
+                        <div class="form-text">Название на языке оригинала</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="author" class="form-label">Автор</label>
+                        <input type="text" class="form-control" id="author" name="author" value="{{ novel.author or '' }}">
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="source_url" class="form-label">URL источника *</label>
+                        <input type="url" class="form-control" id="source_url" name="source_url" value="{{ novel.source_url }}" required>
+                        <div class="form-text">Ссылка на страницу новеллы</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="source_type" class="form-label">Тип источника</label>
+                        <select class="form-select" id="source_type" name="source_type">
+                            <option value="novelbins" {{ 'selected' if novel.source_type == 'novelbins' else '' }}>NovelBins</option>
+                            <option value="webnovel" {{ 'selected' if novel.source_type == 'webnovel' else '' }}>WebNovel</option>
+                            <option value="other" {{ 'selected' if novel.source_type == 'other' else '' }}>Другой</option>
+                        </select>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="prompt_template_id" class="form-label">Шаблон промпта</label>
+                        <select class="form-select" id="prompt_template_id" name="prompt_template_id">
+                            <option value="none" {{ 'selected' if not novel.prompt_template_id else '' }}>Без шаблона (по умолчанию)</option>
+                            {% for template in prompt_templates %}
+                            <option value="{{ template.id }}" {{ 'selected' if novel.prompt_template_id == template.id else '' }}>
+                                {{ template.name }} ({{ template.category }})
+                            </option>
+                            {% endfor %}
+                        </select>
+                        <div class="form-text">Выберите специальный шаблон промпта для перевода этой новеллы</div>
+                    </div>
+                    
+                    <hr>
+                    <h6 class="mb-3">Настройки парсинга</h6>
+                    
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="max_chapters" class="form-label">Максимум глав</label>
+                                <!-- Отладка: max_chapters = {{ novel.config.max_chapters if novel.config and novel.config.max_chapters else 'НЕТ ЗНАЧЕНИЯ' }} -->
+                                <input type="number" class="form-control" id="max_chapters" name="max_chapters" 
+                                       value="{{ novel.config.max_chapters if novel.config and novel.config.max_chapters else 10 }}" 
+                                       min="1" max="100">
+                                <div class="form-text">Текущее значение: {{ novel.config.max_chapters if novel.config and novel.config.max_chapters else 'не установлено' }}</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="request_delay" class="form-label">Задержка запросов (сек)</label>
+                                <input type="number" class="form-control" id="request_delay" name="request_delay" 
+                                       value="{{ novel.config.request_delay if novel.config and novel.config.request_delay else 1.0 }}" 
+                                       min="0.1" max="10" step="0.1">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <hr>
+                    <h6 class="mb-3">Настройки перевода</h6>
+                    
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="translation_model" class="form-label">Модель перевода</label>
+                                <select class="form-select" id="translation_model" name="translation_model">
+                                    <option value="gemini-2.5-flash-preview-05-20" 
+                                            {{ 'selected' if not novel.config or novel.config.translation_model == 'gemini-2.5-flash-preview-05-20' else '' }}>
+                                        Gemini 2.5 Flash
+                                    </option>
+                                    <option value="gpt-4o" 
+                                            {{ 'selected' if novel.config and novel.config.translation_model == 'gpt-4o' else '' }}>
+                                        GPT-4o
+                                    </option>
+                                    <option value="claude-3-5-sonnet" 
+                                            {{ 'selected' if novel.config and novel.config.translation_model == 'claude-3-5-sonnet' else '' }}>
+                                        Claude 3.5 Sonnet
+                                    </option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="temperature" class="form-label">Температура</label>
+                                <input type="number" class="form-control" id="temperature" name="temperature" 
+                                       value="{{ novel.config.temperature if novel.config and novel.config.temperature else 0.1 }}" 
+                                       min="0" max="2" step="0.1">
+                                <div class="form-text">Креативность перевода (0-2)</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="d-flex justify-content-between">
+                        <a href="{{ url_for('main.novel_detail', novel_id=novel.id) }}" class="btn btn-outline-secondary">
+                            <i class="bi bi-arrow-left"></i> Назад
+                        </a>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-check-circle"></i> Сохранить изменения
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %} 

@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+
+{% block title %}Настройки - Novel Translator{% endblock %}
+{% block page_title %}Настройки{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="bi bi-gear"></i> Настройки системы
+                </h5>
+            </div>
+            <div class="card-body">
+                <form method="POST">
+                    <h6 class="mb-3">API ключи</h6>
+                    
+                    <div class="mb-3">
+                        <label for="gemini_api_keys" class="form-label">Gemini API ключи</label>
+                        <textarea class="form-control" id="gemini_api_keys" name="gemini_api_keys" rows="3" placeholder="Введите API ключи Gemini (по одному на строку)">{{ settings.get('gemini_api_keys', '') }}</textarea>
+                        <div class="form-text">Ключи для Google Gemini API</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="openai_api_key" class="form-label">OpenAI API ключ</label>
+                        <input type="password" class="form-control" id="openai_api_key" name="openai_api_key" placeholder="sk-..." value="{{ settings.get('openai_api_key', '') }}">
+                        <div class="form-text">Ключ для OpenAI API</div>
+                    </div>
+                    
+                    <hr>
+                    
+                    <h6 class="mb-3">Настройки перевода</h6>
+                    
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="default_model" class="form-label">Модель по умолчанию</label>
+                                <select class="form-select" id="default_model" name="default_model">
+                                    <option value="gemini-2.5-flash-preview-05-20" {% if settings.get('default_model') == 'gemini-2.5-flash-preview-05-20' %}selected{% endif %}>Gemini 2.5 Flash</option>
+                                    <option value="gpt-4o" {% if settings.get('default_model') == 'gpt-4o' %}selected{% endif %}>GPT-4o</option>
+                                    <option value="claude-3-5-sonnet" {% if settings.get('default_model') == 'claude-3-5-sonnet' %}selected{% endif %}>Claude 3.5 Sonnet</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="default_temperature" class="form-label">Температура</label>
+                                <input type="number" class="form-control" id="default_temperature" name="default_temperature" value="{{ settings.get('default_temperature', '0.1') }}" min="0" max="2" step="0.1">
+                                <div class="form-text">Креативность перевода (0-2)</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="max_tokens" class="form-label">Максимум токенов</label>
+                                <input type="number" class="form-control" id="max_tokens" name="max_tokens" value="{{ settings.get('max_tokens', '24000') }}" min="1000" max="100000">
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="request_delay" class="form-label">Задержка запросов (сек)</label>
+                                <input type="number" class="form-control" id="request_delay" name="request_delay" value="{{ settings.get('request_delay', '1.0') }}" min="0.1" max="10" step="0.1">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <hr>
+                    
+                    <h6 class="mb-3">Настройки парсинга</h6>
+                    
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="max_chapters" class="form-label">Максимум глав</label>
+                                <input type="number" class="form-control" id="max_chapters" name="max_chapters" value="{{ settings.get('max_chapters', '10') }}" min="1" max="1000">
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="quality_threshold" class="form-label">Порог качества</label>
+                                <input type="number" class="form-control" id="quality_threshold" name="quality_threshold" value="{{ settings.get('quality_threshold', '7') }}" min="1" max="10">
+                                <div class="form-text">Минимальный балл качества (1-10)</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="d-flex justify-content-between">
+                        <a href="{{ url_for('main.dashboard') }}" class="btn btn-outline-secondary">
+                            <i class="bi bi-arrow-left"></i> Назад
+                        </a>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-check-circle"></i> Сохранить настройки
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="bi bi-info-circle"></i> Информация
+                </h5>
+            </div>
+            <div class="card-body">
+                <p><strong>Версия:</strong> 1.0.0</p>
+                <p><strong>База данных:</strong> SQLite</p>
+                <p><strong>Режим:</strong> Разработка</p>
+                <hr>
+                <h6>Поддерживаемые источники:</h6>
+                <ul class="list-unstyled">
+                    <li><i class="bi bi-check text-success"></i> NovelBins</li>
+                    <li><i class="bi bi-check text-success"></i> WebNovel</li>
+                    <li><i class="bi bi-plus text-muted"></i> Другие (в разработке)</li>
+                </ul>
+                <hr>
+                <h6>Поддерживаемые API:</h6>
+                <ul class="list-unstyled">
+                    <li><i class="bi bi-check text-success"></i> Google Gemini</li>
+                    <li><i class="bi bi-check text-success"></i> OpenAI GPT</li>
+                    <li><i class="bi bi-plus text-muted"></i> Claude (в разработке)</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %} 

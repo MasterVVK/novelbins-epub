@@ -1,0 +1,191 @@
+{% extends "base.html" %}
+
+{% block title %}Дашборд - Novel Translator{% endblock %}
+{% block page_title %}Дашборд{% endblock %}
+
+{% block content %}
+<div class="row">
+    <!-- Статистика -->
+    <div class="col-md-3 mb-4">
+        <div class="card stat-card">
+            <div class="card-body text-center">
+                <h3 class="card-title">{{ total_novels }}</h3>
+                <p class="card-text">Всего новелл</p>
+                <i class="bi bi-book fs-1"></i>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-3 mb-4">
+        <div class="card stat-card">
+            <div class="card-body text-center">
+                <h3 class="card-title">{{ total_chapters }}</h3>
+                <p class="card-text">Всего глав</p>
+                <i class="bi bi-file-text fs-1"></i>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-3 mb-4">
+        <div class="card stat-card">
+            <div class="card-body text-center">
+                <h3 class="card-title">{{ translated_chapters }}</h3>
+                <p class="card-text">Переведено</p>
+                <i class="bi bi-translate fs-1"></i>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-3 mb-4">
+        <div class="card stat-card">
+            <div class="card-body text-center">
+                <h3 class="card-title">{{ edited_chapters }}</h3>
+                <p class="card-text">Отредактировано</p>
+                <i class="bi bi-pencil-square fs-1"></i>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <!-- Последние новеллы -->
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="bi bi-book"></i> Последние новеллы
+                </h5>
+            </div>
+            <div class="card-body">
+                {% if novels %}
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>Название</th>
+                                <th>Статус</th>
+                                <th>Прогресс</th>
+                                <th>Действия</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for novel in novels[:5] %}
+                            <tr>
+                                <td>
+                                    <a href="{{ url_for('main.novel_detail', novel_id=novel.id) }}" class="text-decoration-none">
+                                        {{ novel.title }}
+                                    </a>
+                                </td>
+                                <td>
+                                    <span class="badge bg-{{ 'success' if novel.status == 'completed' else 'warning' if novel.status == 'translating' else 'info' }}">
+                                        {{ novel.status }}
+                                    </span>
+                                </td>
+                                <td>
+                                    <div class="progress" style="height: 8px;">
+                                        <div class="progress-bar" style="width: {{ novel.progress_percentage }}%"></div>
+                                    </div>
+                                    <small class="text-muted">{{ novel.progress_percentage }}%</small>
+                                </td>
+                                <td>
+                                    <a href="{{ url_for('main.novel_detail', novel_id=novel.id) }}" class="btn btn-sm btn-outline-primary">
+                                        <i class="bi bi-eye"></i>
+                                    </a>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="text-center py-4">
+                    <i class="bi bi-book text-muted fs-1"></i>
+                    <p class="text-muted mt-2">Нет добавленных новелл</p>
+                    <a href="{{ url_for('main.new_novel') }}" class="btn btn-primary">
+                        <i class="bi bi-plus"></i> Добавить новеллу
+                    </a>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <!-- Активные задачи -->
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="bi bi-list-task"></i> Активные задачи
+                </h5>
+            </div>
+            <div class="card-body">
+                {% if active_tasks %}
+                <div class="list-group list-group-flush">
+                    {% for task in active_tasks %}
+                    <div class="list-group-item">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <h6 class="mb-1">{{ task.task_type }}</h6>
+                                <small class="text-muted">{{ task.novel.title }}</small>
+                            </div>
+                            <span class="badge bg-primary">{{ task.progress|round(1) }}%</span>
+                        </div>
+                        <div class="progress mt-2" style="height: 4px;">
+                            <div class="progress-bar" style="width: {{ task.progress * 100 }}%"></div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="text-center py-4">
+                    <i class="bi bi-check-circle text-muted fs-1"></i>
+                    <p class="text-muted mt-2">Нет активных задач</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Быстрые действия -->
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="bi bi-lightning"></i> Быстрые действия
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-2 mb-3">
+                        <a href="{{ url_for('main.new_novel') }}" class="btn btn-primary w-100">
+                            <i class="bi bi-plus-circle"></i> Добавить новеллу
+                        </a>
+                    </div>
+                    <div class="col-md-2 mb-3">
+                        <a href="{{ url_for('main.novels') }}" class="btn btn-outline-primary w-100">
+                            <i class="bi bi-book"></i> Все новеллы
+                        </a>
+                    </div>
+                    <div class="col-md-2 mb-3">
+                        <a href="{{ url_for('main.prompt_templates') }}" class="btn btn-outline-success w-100">
+                            <i class="bi bi-file-text"></i> Шаблоны
+                        </a>
+                    </div>
+                    <div class="col-md-2 mb-3">
+                        <a href="{{ url_for('main.tasks') }}" class="btn btn-outline-info w-100">
+                            <i class="bi bi-list-task"></i> Задачи
+                        </a>
+                    </div>
+                    <div class="col-md-2 mb-3">
+                        <a href="{{ url_for('main.settings') }}" class="btn btn-outline-secondary w-100">
+                            <i class="bi bi-gear"></i> Настройки
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %} 

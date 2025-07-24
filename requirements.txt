@@ -1,0 +1,41 @@
+# Flask и веб-фреймворк
+Flask==3.0.0
+Flask-SQLAlchemy==3.1.1
+Flask-Migrate==4.0.5
+Flask-Script==2.0.6
+Flask-SocketIO==5.3.6
+Flask-CORS==4.0.0
+Flask-Login==0.6.3
+
+# Асинхронные задачи
+celery==5.3.4
+redis==5.0.1
+
+# База данных
+SQLAlchemy==2.0.23
+alembic==1.13.1
+
+# HTTP клиент и парсинг
+httpx==0.25.2
+httpx-socks==0.8.4
+selenium==4.15.2
+beautifulsoup4==4.12.2
+
+# AI и перевод
+google-generativeai==0.3.2
+openai==1.3.7
+
+# EPUB генерация
+ebooklib==0.18.1
+
+# Утилиты
+python-dotenv==1.0.0
+click==8.1.7
+Werkzeug==3.0.1
+Jinja2==3.1.2
+
+# Разработка
+pytest==7.4.3
+pytest-flask==1.3.0
+black==23.11.0
+flake8==6.1.0 

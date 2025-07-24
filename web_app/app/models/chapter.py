@@ -1,0 +1,65 @@
+from datetime import datetime
+from sqlalchemy import Column, Integer, String, Text, DateTime, Float, ForeignKey, JSON, Boolean
+from sqlalchemy.orm import relationship
+from app import db
+
+
+class Chapter(db.Model):
+    """Модель главы"""
+    __tablename__ = 'chapters'
+
+    id = Column(Integer, primary_key=True)
+    novel_id = Column(Integer, ForeignKey('novels.id'), nullable=False)
+    chapter_number = Column(Integer, nullable=False)
+
+    # Оригинальный контент
+    original_title = Column(String(500))
+    original_text = Column(Text)
+    url = Column(String(500))
+
+    # Статистика
+    word_count_original = Column(Integer, default=0)
+    word_count_translated = Column(Integer, default=0)
+    paragraph_count = Column(Integer, default=0)
+
+    # Статус
+    status = Column(String(50), default='pending')  # pending, parsed, translated, edited, error
+    is_active = Column(Boolean, default=True)  # Для мягкого удаления
+
+    # Метаданные
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Связи
+    novel = relationship('Novel', back_populates='chapters')
+    translations = relationship('Translation', back_populates='chapter', cascade='all, delete-orphan')
+
+    def __repr__(self):
+        return f'<Chapter {self.chapter_number} of {self.novel.title}>'
+
+    @property
+    def current_translation(self):
+        """Текущий перевод"""
+        return self.translations[-1] if self.translations else None
+
+    @property
+    def is_translated(self):
+        """Проверка наличия перевода"""
+        return self.status in ['translated', 'edited']
+
+    @property
+    def is_edited(self):
+        """Проверка наличия редактуры"""
+        return self.status == 'edited'
+    
+    def soft_delete(self):
+        """Мягкое удаление главы (деактивация)"""
+        self.is_active = False
+        self.status = 'deleted'
+        return self
+    
+    def restore(self):
+        """Восстановление главы"""
+        self.is_active = True
+        self.status = 'pending'
+        return self 

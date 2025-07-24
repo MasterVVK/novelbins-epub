@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+
+{% block title %}Редактировать главу {{ chapter.chapter_number }} - Novel Translator{% endblock %}
+{% block page_title %}Редактировать главу {{ chapter.chapter_number }}{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">
+        <h5 class="card-title mb-0">
+            <i class="bi bi-pencil"></i> Редактирование главы
+        </h5>
+    </div>
+    <div class="card-body">
+        <form method="POST">
+            <div class="mb-3">
+                <label for="translated_text" class="form-label">Переведенный текст:</label>
+                <textarea class="form-control" id="translated_text" name="translated_text" rows="20" required>{{ chapter.current_translation.translated_text if chapter.current_translation else '' }}</textarea>
+            </div>
+            
+            <div class="d-flex justify-content-between">
+                <a href="{{ url_for('main.chapter_detail', chapter_id=chapter.id) }}" class="btn btn-outline-secondary">
+                    <i class="bi bi-arrow-left"></i> Назад
+                </a>
+                <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-check-circle"></i> Сохранить
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %} 
