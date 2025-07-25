@@ -9,6 +9,7 @@ from datetime import datetime
 from app import db
 from app.models import Chapter, Novel, Task
 from app.services.translator_service import TranslatorService
+from app.services.log_service import LogService
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +21,9 @@ class EditorService:
         
     def edit_chapter(self, chapter: Chapter) -> bool:
         """Редактирование одной главы"""
-        logger.info(f"📝 Начинаем редактуру главы {chapter.chapter_number}")
+        print(f"✏️ Начинаем редактуру главы {chapter.chapter_number}")
+        LogService.log_info(f"Начинаем редактуру главы {chapter.chapter_number}", 
+                          novel_id=chapter.novel_id, chapter_id=chapter.id)
         
         # Получаем переведенный текст из последнего перевода
         from app.models import Translation
@@ -29,7 +32,8 @@ class EditorService:
         ).order_by(Translation.created_at.desc()).first()
         
         if not latest_translation or not latest_translation.translated_text:
-            logger.error(f"❌ Глава {chapter.chapter_number}: нет переведенного текста")
+            LogService.log_error(f"Глава {chapter.chapter_number}: нет переведенного текста", 
+                               novel_id=chapter.novel_id, chapter_id=chapter.id)
             return False
             
         start_time = time.time()
@@ -40,28 +44,34 @@ class EditorService:
             strategy = self.analyze_text_quality(original_text)
             quality_score = strategy.get('quality_score', 5)
             
-            logger.info(f"📊 Оценка качества главы {chapter.chapter_number}: {quality_score}/10")
+            print(f"📊 Оценка качества главы {chapter.chapter_number}: {quality_score}/10")
+            LogService.log_info(f"Оценка качества главы {chapter.chapter_number}: {quality_score}/10", 
+                              novel_id=chapter.novel_id, chapter_id=chapter.id)
             
             edited_text = original_text
             
             # Этап 2: Улучшение стиля
             if strategy.get('needs_style'):
                 edited_text = self.improve_text_style(edited_text)
-                logger.info(f"✅ Глава {chapter.chapter_number}: стилистика улучшена")
+                LogService.log_info(f"Глава {chapter.chapter_number}: стилистика улучшена", 
+                                  novel_id=chapter.novel_id, chapter_id=chapter.id)
                 
             # Этап 3: Работа с диалогами
             if strategy.get('needs_dialogue') and ('—' in edited_text or '«' in edited_text):
                 edited_text = self.polish_dialogues(edited_text)
-                logger.info(f"✅ Глава {chapter.chapter_number}: диалоги отполированы")
+                LogService.log_info(f"Глава {chapter.chapter_number}: диалоги отполированы", 
+                                  novel_id=chapter.novel_id, chapter_id=chapter.id)
                 
             # Этап 4: Финальная полировка
             if strategy.get('needs_polish'):
                 edited_text = self.final_polish(edited_text)
-                logger.info(f"✅ Глава {chapter.chapter_number}: финальная полировка завершена")
+                LogService.log_info(f"Глава {chapter.chapter_number}: финальная полировка завершена", 
+                                  novel_id=chapter.novel_id, chapter_id=chapter.id)
                 
             # Валидация результата
             if not self.validate_edit(original_text, edited_text):
-                logger.error(f"❌ Глава {chapter.chapter_number}: валидация не пройдена")
+                LogService.log_error(f"Глава {chapter.chapter_number}: валидация не пройдена", 
+                                   novel_id=chapter.novel_id, chapter_id=chapter.id)
                 return False
                 
             editing_time = time.time() - start_time
@@ -69,11 +79,14 @@ class EditorService:
             # Сохранение результата
             self.save_edited_chapter(chapter, edited_text, editing_time, quality_score, strategy)
             
-            logger.info(f"✅ Глава {chapter.chapter_number} отредактирована за {editing_time:.1f} сек")
+            print(f"✅ Глава {chapter.chapter_number} отредактирована за {editing_time:.1f} сек")
+            LogService.log_info(f"Глава {chapter.chapter_number} отредактирована за {editing_time:.1f} сек", 
+                              novel_id=chapter.novel_id, chapter_id=chapter.id)
             return True
             
         except Exception as e:
-            logger.error(f"❌ Ошибка редактуры главы {chapter.chapter_number}: {e}")
+            LogService.log_error(f"Ошибка редактуры главы {chapter.chapter_number}: {e}", 
+                               novel_id=chapter.novel_id, chapter_id=chapter.id)
             return False
             
     def analyze_text_quality(self, text: str) -> Dict:
@@ -145,7 +158,7 @@ class EditorService:
             result = self.translator.translator.extract_terms(text, prompt, {})
             return result if result else text
         except Exception as e:
-            logger.error(f"❌ Ошибка улучшения стиля: {e}")
+            LogService.log_error(f"Ошибка улучшения стиля: {e}")
             return text
             
     def polish_dialogues(self, text: str) -> str:
@@ -164,7 +177,7 @@ class EditorService:
             result = self.translator.translator.extract_terms(text, prompt, {})
             return result if result else text
         except Exception as e:
-            logger.error(f"❌ Ошибка полировки диалогов: {e}")
+            LogService.log_error(f"Ошибка полировки диалогов: {e}")
             return text
             
     def final_polish(self, text: str) -> str:
@@ -183,24 +196,24 @@ class EditorService:
             result = self.translator.translator.extract_terms(text, prompt, {})
             return result if result else text
         except Exception as e:
-            logger.error(f"❌ Ошибка финальной полировки: {e}")
+            LogService.log_error(f"Ошибка финальной полировки: {e}")
             return text
             
     def validate_edit(self, original: str, edited: str) -> bool:
         """Валидация результата редактуры"""
         # Проверяем, что текст не стал слишком коротким
         if len(edited) < len(original) * 0.5:
-            logger.warning("⚠️ Отредактированный текст слишком короткий")
+            LogService.log_warning("Отредактированный текст слишком короткий")
             return False
             
         # Проверяем, что текст не стал слишком длинным
         if len(edited) > len(original) * 2.0:
-            logger.warning("⚠️ Отредактированный текст слишком длинный")
+            LogService.log_warning("Отредактированный текст слишком длинный")
             return False
             
         # Проверяем, что текст не пустой
         if not edited or len(edited.strip()) < 100:
-            logger.warning("⚠️ Отредактированный текст слишком короткий или пустой")
+            LogService.log_warning("Отредактированный текст слишком короткий или пустой")
             return False
             
         return True
@@ -229,8 +242,10 @@ class EditorService:
             chapter.status = 'edited'
             db.session.commit()
             
-            logger.info(f"✅ Глава {chapter.chapter_number} сохранена как отредактированная")
+            LogService.log_info(f"Глава {chapter.chapter_number} сохранена как отредактированная", 
+                              novel_id=chapter.novel_id, chapter_id=chapter.id)
             
         except Exception as e:
-            logger.error(f"❌ Ошибка сохранения отредактированной главы {chapter.chapter_number}: {e}")
+            LogService.log_error(f"Ошибка сохранения отредактированной главы {chapter.chapter_number}: {e}", 
+                               novel_id=chapter.novel_id, chapter_id=chapter.id)
             db.session.rollback() 

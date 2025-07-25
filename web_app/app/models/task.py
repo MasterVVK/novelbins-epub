@@ -40,6 +40,7 @@ class Task(db.Model):
     # Связи
     novel = relationship('Novel', back_populates='tasks')
     chapter = relationship('Chapter')
+    logs = relationship('LogEntry', back_populates='task', cascade='all, delete-orphan')
 
     def __repr__(self):
         return f'<Task {self.task_type} for {self.novel.title}>'

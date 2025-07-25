@@ -1,0 +1,415 @@
+{% extends "base.html" %}
+
+{% block title %}Логи - Novel Translator{% endblock %}
+{% block page_title %}Логи системы{% endblock %}
+
+{% block content %}
+<div class="row">
+    <!-- Статистика -->
+    <div class="col-md-12 mb-4">
+        <div class="row">
+            <div class="col-md-2">
+                <div class="card stat-card">
+                    <div class="card-body text-center">
+                        <h5 class="card-title" id="total-logs">-</h5>
+                        <p class="card-text">Всего логов</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-2">
+                <div class="card stat-card">
+                    <div class="card-body text-center">
+                        <h5 class="card-title text-danger" id="error-logs">-</h5>
+                        <p class="card-text">Ошибки</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-2">
+                <div class="card stat-card">
+                    <div class="card-body text-center">
+                        <h5 class="card-title text-warning" id="warning-logs">-</h5>
+                        <p class="card-text">Предупреждения</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-2">
+                <div class="card stat-card">
+                    <div class="card-body text-center">
+                        <h5 class="card-title text-info" id="info-logs">-</h5>
+                        <p class="card-text">Информация</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-2">
+                <div class="card stat-card">
+                    <div class="card-body text-center">
+                        <h5 class="card-title text-success" id="recent-logs">-</h5>
+                        <p class="card-text">За 24 часа</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-2">
+                <div class="card stat-card">
+                    <div class="card-body text-center">
+                        <button class="btn btn-outline-light btn-sm" onclick="clearOldLogs()">
+                            <i class="bi bi-trash"></i> Очистить старые
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Фильтры -->
+    <div class="col-md-12 mb-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="bi bi-funnel"></i> Фильтры
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-2">
+                        <label for="level-filter" class="form-label">Уровень</label>
+                        <select class="form-select" id="level-filter">
+                            <option value="">Все уровни</option>
+                            <option value="ERROR">Ошибки</option>
+                            <option value="WARNING">Предупреждения</option>
+                            <option value="INFO">Информация</option>
+                            <option value="DEBUG">Отладка</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <label for="task-filter" class="form-label">Задача</label>
+                        <select class="form-select" id="task-filter">
+                            <option value="">Все задачи</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <label for="novel-filter" class="form-label">Новелла</label>
+                        <select class="form-select" id="novel-filter">
+                            <option value="">Все новеллы</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <label for="hours-filter" class="form-label">Часы</label>
+                        <select class="form-select" id="hours-filter">
+                            <option value="1">1 час</option>
+                            <option value="6">6 часов</option>
+                            <option value="24" selected>24 часа</option>
+                            <option value="168">7 дней</option>
+                            <option value="720">30 дней</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <label for="limit-filter" class="form-label">Лимит</label>
+                        <select class="form-select" id="limit-filter">
+                            <option value="50">50</option>
+                            <option value="100" selected>100</option>
+                            <option value="200">200</option>
+                            <option value="500">500</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">&nbsp;</label>
+                        <div>
+                            <button class="btn btn-primary" onclick="loadLogs()">
+                                <i class="bi bi-search"></i> Применить
+                            </button>
+                            <button class="btn btn-outline-secondary" onclick="resetFilters()">
+                                <i class="bi bi-arrow-clockwise"></i> Сброс
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Логи -->
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="card-title mb-0">
+                    <i class="bi bi-list-ul"></i> Логи
+                    <span class="badge bg-primary ms-2" id="logs-count">0</span>
+                </h5>
+                <div>
+                    <button class="btn btn-outline-success btn-sm" onclick="toggleAutoRefresh()">
+                        <i class="bi bi-play-circle" id="auto-refresh-icon"></i>
+                        <span id="auto-refresh-text">Автообновление</span>
+                    </button>
+                    <button class="btn btn-outline-primary btn-sm" onclick="loadLogs()">
+                        <i class="bi bi-arrow-clockwise"></i> Обновить
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div id="logs-container" style="max-height: 600px; overflow-y: auto;">
+                    <div class="text-center py-5">
+                        <i class="bi bi-hourglass-split text-muted fs-1"></i>
+                        <h4 class="text-muted mt-3">Загрузка логов...</h4>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let autoRefreshInterval = null;
+let isAutoRefreshEnabled = false;
+
+// Инициализация при загрузке страницы
+document.addEventListener('DOMContentLoaded', function() {
+    loadStats();
+    loadLogs();
+    loadFilters();
+    setupWebSocket();
+});
+
+// Загрузка статистики
+function loadStats() {
+    fetch('/api/logs/stats')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                document.getElementById('total-logs').textContent = data.stats.total;
+                document.getElementById('error-logs').textContent = data.stats.errors;
+                document.getElementById('warning-logs').textContent = data.stats.warnings;
+                document.getElementById('info-logs').textContent = data.stats.info;
+                document.getElementById('recent-logs').textContent = data.stats.recent_24h;
+            }
+        })
+        .catch(error => console.error('Ошибка загрузки статистики:', error));
+}
+
+// Загрузка логов
+function loadLogs() {
+    const level = document.getElementById('level-filter').value;
+    const taskId = document.getElementById('task-filter').value;
+    const novelId = document.getElementById('novel-filter').value;
+    const hours = document.getElementById('hours-filter').value;
+    const limit = document.getElementById('limit-filter').value;
+
+    let url = '/api/logs/recent?hours=' + hours + '&limit=' + limit;
+    if (level) url += '&level=' + level;
+    if (taskId) url += '&task_id=' + taskId;
+    if (novelId) url += '&novel_id=' + novelId;
+
+    fetch(url)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                displayLogs(data.logs);
+                document.getElementById('logs-count').textContent = data.count;
+            } else {
+                console.error('Ошибка загрузки логов:', data.error);
+            }
+        })
+        .catch(error => console.error('Ошибка загрузки логов:', error));
+}
+
+// Отображение логов
+function displayLogs(logs) {
+    const container = document.getElementById('logs-container');
+    
+    if (logs.length === 0) {
+        container.innerHTML = `
+            <div class="text-center py-5">
+                <i class="bi bi-inbox text-muted fs-1"></i>
+                <h4 class="text-muted mt-3">Логи не найдены</h4>
+                <p class="text-muted">Попробуйте изменить фильтры</p>
+            </div>
+        `;
+        return;
+    }
+
+    const logsHtml = logs.map(log => {
+        const levelClass = log.is_error ? 'text-danger' : 
+                          log.is_warning ? 'text-warning' : 
+                          log.is_info ? 'text-info' : 'text-muted';
+        
+        const levelIcon = log.is_error ? 'bi-exclamation-triangle' :
+                         log.is_warning ? 'bi-exclamation-circle' :
+                         log.is_info ? 'bi-info-circle' : 'bi-dash-circle';
+        
+        const time = new Date(log.created_at).toLocaleString('ru-RU');
+        
+        return `
+            <div class="log-entry border-bottom py-2 ${levelClass}">
+                <div class="d-flex justify-content-between align-items-start">
+                    <div class="flex-grow-1">
+                        <div class="d-flex align-items-center mb-1">
+                            <i class="bi ${levelIcon} me-2"></i>
+                            <span class="badge bg-${log.is_error ? 'danger' : log.is_warning ? 'warning' : 'info'} me-2">${log.level}</span>
+                            <small class="text-muted">${time}</small>
+                        </div>
+                        <div class="log-message">${escapeHtml(log.message)}</div>
+                        ${log.module ? `<small class="text-muted">Модуль: ${log.module}</small>` : ''}
+                        ${log.function ? `<small class="text-muted ms-2">Функция: ${log.function}</small>` : ''}
+                    </div>
+                    <div class="ms-2">
+                        ${log.task_id ? `<span class="badge bg-secondary me-1">Задача ${log.task_id}</span>` : ''}
+                        ${log.novel_id ? `<span class="badge bg-primary me-1">Новелла ${log.novel_id}</span>` : ''}
+                        ${log.chapter_id ? `<span class="badge bg-success">Глава ${log.chapter_id}</span>` : ''}
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    container.innerHTML = logsHtml;
+}
+
+// Загрузка фильтров
+function loadFilters() {
+            // Загрузка задач
+        fetch('/api/tasks')
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.tasks) {
+                    const taskFilter = document.getElementById('task-filter');
+                    data.tasks.forEach(task => {
+                        if (task && task.id) {
+                            const option = document.createElement('option');
+                            option.value = task.id;
+                            option.textContent = `Задача ${task.id} (${task.task_type || 'unknown'})`;
+                            taskFilter.appendChild(option);
+                        }
+                    });
+                }
+            })
+            .catch(error => console.error('Ошибка загрузки задач:', error));
+
+        // Загрузка новелл
+        fetch('/api/novels')
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.novels) {
+                    const novelFilter = document.getElementById('novel-filter');
+                    data.novels.forEach(novel => {
+                        if (novel && novel.id) {
+                            const option = document.createElement('option');
+                            option.value = novel.id;
+                            option.textContent = novel.title || 'Без названия';
+                            novelFilter.appendChild(option);
+                        }
+                    });
+                }
+            })
+            .catch(error => console.error('Ошибка загрузки новелл:', error));
+}
+
+// Сброс фильтров
+function resetFilters() {
+    document.getElementById('level-filter').value = '';
+    document.getElementById('task-filter').value = '';
+    document.getElementById('novel-filter').value = '';
+    document.getElementById('hours-filter').value = '24';
+    document.getElementById('limit-filter').value = '100';
+    loadLogs();
+}
+
+// Переключение автообновления
+function toggleAutoRefresh() {
+    if (isAutoRefreshEnabled) {
+        clearInterval(autoRefreshInterval);
+        isAutoRefreshEnabled = false;
+        document.getElementById('auto-refresh-icon').className = 'bi bi-play-circle';
+        document.getElementById('auto-refresh-text').textContent = 'Автообновление';
+    } else {
+        autoRefreshInterval = setInterval(loadLogs, 5000); // Обновление каждые 5 секунд
+        isAutoRefreshEnabled = true;
+        document.getElementById('auto-refresh-icon').className = 'bi bi-pause-circle';
+        document.getElementById('auto-refresh-text').textContent = 'Остановить';
+    }
+}
+
+// Очистка старых логов
+function clearOldLogs() {
+    if (!confirm('Удалить логи старше 30 дней?')) return;
+    
+    fetch('/api/logs/clear', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ days: 30 })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            alert(`Удалено ${data.deleted_count} старых логов`);
+            loadStats();
+            loadLogs();
+        } else {
+            alert('Ошибка: ' + data.error);
+        }
+    })
+    .catch(error => {
+        console.error('Ошибка очистки логов:', error);
+        alert('Ошибка очистки логов');
+    });
+}
+
+// Настройка WebSocket
+function setupWebSocket() {
+    socket.on('log_entry', function(logData) {
+        // Добавляем новый лог в начало списка
+        const container = document.getElementById('logs-container');
+        const logHtml = `
+            <div class="log-entry border-bottom py-2 ${logData.is_error ? 'text-danger' : logData.is_warning ? 'text-warning' : 'text-info'}" style="animation: fadeIn 0.5s;">
+                <div class="d-flex justify-content-between align-items-start">
+                    <div class="flex-grow-1">
+                        <div class="d-flex align-items-center mb-1">
+                            <i class="bi ${logData.is_error ? 'bi-exclamation-triangle' : logData.is_warning ? 'bi-exclamation-circle' : 'bi-info-circle'} me-2"></i>
+                            <span class="badge bg-${logData.is_error ? 'danger' : logData.is_warning ? 'warning' : 'info'} me-2">${logData.level}</span>
+                            <small class="text-muted">${new Date(logData.created_at).toLocaleString('ru-RU')}</small>
+                        </div>
+                        <div class="log-message">${escapeHtml(logData.message)}</div>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        container.insertAdjacentHTML('afterbegin', logHtml);
+        
+        // Удаляем старые логи, если их слишком много
+        const logEntries = container.querySelectorAll('.log-entry');
+        if (logEntries.length > 100) {
+            logEntries[logEntries.length - 1].remove();
+        }
+        
+        // Обновляем счетчик
+        const currentCount = parseInt(document.getElementById('logs-count').textContent);
+        document.getElementById('logs-count').textContent = currentCount + 1;
+    });
+}
+
+// Экранирование HTML
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+</script>
+
+<style>
+.log-entry {
+    transition: background-color 0.3s ease;
+}
+
+.log-entry:hover {
+    background-color: rgba(0,0,0,0.05);
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+</style>
+{% endblock %} 

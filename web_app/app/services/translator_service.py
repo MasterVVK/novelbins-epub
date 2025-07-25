@@ -12,6 +12,7 @@ from httpx_socks import SyncProxyTransport
 from app.models import Chapter, Translation, GlossaryItem, PromptTemplate
 from app import db
 from app.services.settings_service import SettingsService
+from app.services.log_service import LogService
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +78,7 @@ class LLMTranslator:
 
     def make_request(self, system_prompt: str, user_prompt: str, temperature: float = None) -> Optional[str]:
         """Базовый метод для запросов к API с умной ротацией ключей"""
-        logger.info(f"🚀 Начинаем запрос к API Gemini (модель: {self.config.model_name})")
+        LogService.log_info(f"Начинаем запрос к API Gemini (модель: {self.config.model_name})")
         
         generation_config = {
             "temperature": temperature or self.config.temperature,
@@ -87,20 +88,20 @@ class LLMTranslator:
         }
 
         max_attempts = len(self.config.api_keys) * 2
-        logger.info(f"🔄 Максимум попыток: {max_attempts}, доступно ключей: {len(self.config.api_keys)}")
+        LogService.log_info(f"Максимум попыток: {max_attempts}, доступно ключей: {len(self.config.api_keys)}")
 
         for attempt in range(max_attempts):
             # Если текущий ключ в списке неработающих, переключаемся
             if self.current_key_index in self.failed_keys:
-                logger.info(f"🔄 Ключ #{self.current_key_index + 1} помечен как неработающий, переключаемся")
+                LogService.log_info(f"Ключ #{self.current_key_index + 1} помечен как неработающий, переключаемся")
                 self.switch_to_next_key()
                 continue
 
             try:
-                logger.info(f"📤 Попытка {attempt + 1}: используем ключ #{self.current_key_index + 1} из {len(self.config.api_keys)}")
+                LogService.log_info(f"Попытка {attempt + 1}: используем ключ #{self.current_key_index + 1} из {len(self.config.api_keys)}")
                 print(f"   Используем ключ #{self.current_key_index + 1} из {len(self.config.api_keys)}")
 
-                logger.info(f"🌐 Отправляем запрос к {self.api_url}")
+                LogService.log_info(f"Отправляем запрос к {self.api_url}")
                 response = self.client.post(
                     self.api_url,
                     params={"key": self.current_key},
@@ -116,48 +117,48 @@ class LLMTranslator:
                     }
                 )
 
-                logger.info(f"📥 Получен ответ от API, статус: {response.status_code}")
+                LogService.log_info(f"Получен ответ от API, статус: {response.status_code}")
                 
                 if response.status_code == 200:
                     data = response.json()
-                    logger.info(f"✅ Успешный ответ от API, структура: {list(data.keys())}")
+                    LogService.log_info(f"Успешный ответ от API, структура: {list(data.keys())}")
                     
                     if 'candidates' in data and data['candidates']:
                         content = data['candidates'][0]['content']
                         if 'parts' in content and content['parts']:
                             result_text = content['parts'][0]['text']
-                            logger.info(f"✅ Получен текст ответа, длина: {len(result_text)} символов")
+                            LogService.log_info(f"Получен текст ответа, длина: {len(result_text)} символов")
                             return result_text
                     
-                    logger.warning(f"⚠️ Неожиданный формат ответа: {data}")
+                    LogService.log_warning(f"Неожиданный формат ответа: {data}")
                     print(f"   ⚠️ Неожиданный формат ответа: {data}")
                     self.mark_key_as_failed()
                     
                 elif response.status_code == 429:  # Rate limit
-                    logger.warning(f"⏳ Rate limit для ключа #{self.current_key_index + 1}")
+                    LogService.log_warning(f"Rate limit для ключа #{self.current_key_index + 1}")
                     print(f"   ⏳ Rate limit для ключа #{self.current_key_index + 1}")
                     self.mark_key_as_failed()
                     
                 elif response.status_code == 400:  # Bad request
-                    logger.error(f"❌ Ошибка запроса для ключа #{self.current_key_index + 1}: {response.text}")
+                    LogService.log_error(f"Ошибка запроса для ключа #{self.current_key_index + 1}: {response.text}")
                     print(f"   ❌ Ошибка запроса для ключа #{self.current_key_index + 1}: {response.text}")
                     self.mark_key_as_failed()
                     
                 else:
-                    logger.error(f"❌ HTTP {response.status_code} для ключа #{self.current_key_index + 1}")
+                    LogService.log_error(f"HTTP {response.status_code} для ключа #{self.current_key_index + 1}")
                     print(f"   ❌ HTTP {response.status_code} для ключа #{self.current_key_index + 1}")
                     self.mark_key_as_failed()
 
             except Exception as e:
-                logger.error(f"❌ Ошибка для ключа #{self.current_key_index + 1}: {e}", exc_info=True)
+                LogService.log_error(f"Ошибка для ключа #{self.current_key_index + 1}: {e}")
                 print(f"   ❌ Ошибка для ключа #{self.current_key_index + 1}: {e}")
                 self.mark_key_as_failed()
 
             # Пауза перед следующей попыткой
-            logger.info(f"⏳ Пауза 2 секунды перед следующей попыткой")
+            LogService.log_info(f"Пауза 2 секунды перед следующей попыткой")
             time.sleep(2)
 
-        logger.error("❌ Все ключи исчерпаны")
+        LogService.log_error("Все ключи исчерпаны")
         print("   ❌ Все ключи исчерпаны")
         return None
 
@@ -292,44 +293,56 @@ class TranslatorService:
 
     def translate_chapter(self, chapter: Chapter) -> bool:
         """Перевод главы с использованием шаблона промпта и глоссария"""
-        logger.info(f"🔄 Начинаем перевод главы {chapter.chapter_number}: {chapter.original_title}")
+        LogService.log_info(f"Начинаем перевод главы {chapter.chapter_number}: {chapter.original_title}", 
+                          novel_id=chapter.novel_id, chapter_id=chapter.id)
         print(f"🔄 Перевод главы {chapter.chapter_number}: {chapter.original_title}")
         
         try:
             # Получаем шаблон промпта для новеллы
-            logger.info(f"📋 Получаем шаблон промпта для главы {chapter.chapter_number}")
+            LogService.log_info(f"Получаем шаблон промпта для главы {chapter.chapter_number}", 
+                              novel_id=chapter.novel_id, chapter_id=chapter.id)
             prompt_template = chapter.novel.get_prompt_template()
             if not prompt_template:
-                logger.error(f"❌ Не найден шаблон промпта для главы {chapter.chapter_number}")
+                LogService.log_error(f"Не найден шаблон промпта для главы {chapter.chapter_number}", 
+                                   novel_id=chapter.novel_id, chapter_id=chapter.id)
                 print("❌ Не найден шаблон промпта")
                 return False
             
-            logger.info(f"✅ Шаблон промпта получен: {prompt_template.name}")
+            LogService.log_info(f"Шаблон промпта получен: {prompt_template.name}", 
+                              novel_id=chapter.novel_id, chapter_id=chapter.id)
             
             # Создаем контекст перевода
-            logger.info(f"🔧 Создаем контекст перевода для главы {chapter.chapter_number}")
+            LogService.log_info(f"Создаем контекст перевода для главы {chapter.chapter_number}", 
+                              novel_id=chapter.novel_id, chapter_id=chapter.id)
             context = TranslationContext(chapter.novel_id)
             context_prompt = context.build_context_prompt()
-            logger.info(f"✅ Контекст перевода создан, длина: {len(context_prompt)} символов")
+            LogService.log_info(f"Контекст перевода создан, длина: {len(context_prompt)} символов", 
+                              novel_id=chapter.novel_id, chapter_id=chapter.id)
             
             # Подготавливаем текст для перевода
-            logger.info(f"📝 Подготавливаем текст для перевода главы {chapter.chapter_number}")
+            LogService.log_info(f"Подготавливаем текст для перевода главы {chapter.chapter_number}", 
+                              novel_id=chapter.novel_id, chapter_id=chapter.id)
             text_to_translate = self.preprocess_text(chapter.original_text)
-            logger.info(f"✅ Текст подготовлен, длина: {len(text_to_translate)} символов")
+            LogService.log_info(f"Текст подготовлен, длина: {len(text_to_translate)} символов", 
+                              novel_id=chapter.novel_id, chapter_id=chapter.id)
             
             # Разбиваем длинный текст на части
-            logger.info(f"✂️ Разбиваем текст главы {chapter.chapter_number} на части")
+            LogService.log_info(f"Разбиваем текст главы {chapter.chapter_number} на части", 
+                              novel_id=chapter.novel_id, chapter_id=chapter.id)
             text_parts = self.split_long_text(text_to_translate)
-            logger.info(f"✅ Текст разбит на {len(text_parts)} частей")
+            LogService.log_info(f"Текст разбит на {len(text_parts)} частей", 
+                              novel_id=chapter.novel_id, chapter_id=chapter.id)
             
             translated_parts = []
             
             for i, part in enumerate(text_parts):
-                logger.info(f"🔄 Перевод части {i+1}/{len(text_parts)} главы {chapter.chapter_number}")
+                LogService.log_info(f"Перевод части {i+1}/{len(text_parts)} главы {chapter.chapter_number}", 
+                                  novel_id=chapter.novel_id, chapter_id=chapter.id)
                 print(f"   📝 Перевод части {i+1}/{len(text_parts)}")
                 
                 # Переводим часть
-                logger.info(f"📤 Отправляем запрос на перевод части {i+1}")
+                LogService.log_info(f"Отправляем запрос на перевод части {i+1}", 
+                                  novel_id=chapter.novel_id, chapter_id=chapter.id)
                 translated_part = self.translator.translate_text(
                     part, 
                     prompt_template.translation_prompt,
@@ -337,56 +350,72 @@ class TranslatorService:
                 )
                 
                 if not translated_part:
-                    logger.error(f"❌ Ошибка перевода части {i+1} главы {chapter.chapter_number}")
+                    LogService.log_error(f"Ошибка перевода части {i+1} главы {chapter.chapter_number}", 
+                                       novel_id=chapter.novel_id, chapter_id=chapter.id)
                     print(f"   ❌ Ошибка перевода части {i+1}")
                     return False
                 
-                logger.info(f"✅ Часть {i+1} переведена успешно, длина: {len(translated_part)} символов")
+                LogService.log_info(f"Часть {i+1} переведена успешно, длина: {len(translated_part)} символов", 
+                                  novel_id=chapter.novel_id, chapter_id=chapter.id)
                 translated_parts.append(translated_part)
                 time.sleep(1)  # Пауза между частями
             
             # Объединяем части
-            logger.info(f"🔗 Объединяем переведенные части главы {chapter.chapter_number}")
+            LogService.log_info(f"Объединяем переведенные части главы {chapter.chapter_number}", 
+                              novel_id=chapter.novel_id, chapter_id=chapter.id)
             full_translation = "\n\n".join(translated_parts)
-            logger.info(f"✅ Части объединены, общая длина: {len(full_translation)} символов")
+            LogService.log_info(f"Части объединены, общая длина: {len(full_translation)} символов", 
+                              novel_id=chapter.novel_id, chapter_id=chapter.id)
             
             # Извлекаем заголовок и основной текст
-            logger.info(f"📄 Извлекаем заголовок и основной текст главы {chapter.chapter_number}")
+            LogService.log_info(f"Извлекаем заголовок и основной текст главы {chapter.chapter_number}", 
+                              novel_id=chapter.novel_id, chapter_id=chapter.id)
             title, content = self.extract_title_and_content(full_translation)
-            logger.info(f"✅ Заголовок: '{title}', длина контента: {len(content)} символов")
+            LogService.log_info(f"Заголовок: '{title}', длина контента: {len(content)} символов", 
+                              novel_id=chapter.novel_id, chapter_id=chapter.id)
             
             # Валидируем перевод
-            logger.info(f"🔍 Валидируем перевод главы {chapter.chapter_number}")
+            LogService.log_info(f"Валидируем перевод главы {chapter.chapter_number}", 
+                              novel_id=chapter.novel_id, chapter_id=chapter.id)
             validation = self.validate_translation(chapter.original_text, content, chapter.chapter_number)
             if validation['critical']:
-                logger.error(f"⚠️ Критические проблемы в переводе главы {chapter.chapter_number}: {validation['critical_issues']}")
+                LogService.log_error(f"Критические проблемы в переводе главы {chapter.chapter_number}: {validation['critical_issues']}", 
+                                   novel_id=chapter.novel_id, chapter_id=chapter.id)
                 print(f"   ⚠️ Критические проблемы в переводе: {validation['critical_issues']}")
                 return False
             
-            logger.info(f"✅ Валидация пройдена, качество: {self.calculate_quality_score(validation)}")
+            LogService.log_info(f"Валидация пройдена, качество: {self.calculate_quality_score(validation)}", 
+                              novel_id=chapter.novel_id, chapter_id=chapter.id)
             
             # Генерируем резюме
             summary = None
             if prompt_template.summary_prompt:
-                logger.info(f"📝 Генерируем резюме для главы {chapter.chapter_number}")
+                LogService.log_info(f"Генерируем резюме для главы {chapter.chapter_number}", 
+                                  novel_id=chapter.novel_id, chapter_id=chapter.id)
                 summary = self.translator.generate_summary(content, prompt_template.summary_prompt)
                 if summary:
-                    logger.info(f"✅ Резюме сгенерировано, длина: {len(summary)} символов")
+                    LogService.log_info(f"Резюме сгенерировано, длина: {len(summary)} символов", 
+                                      novel_id=chapter.novel_id, chapter_id=chapter.id)
                 else:
-                    logger.warning(f"⚠️ Не удалось сгенерировать резюме для главы {chapter.chapter_number}")
+                    LogService.log_warning(f"Не удалось сгенерировать резюме для главы {chapter.chapter_number}", 
+                                         novel_id=chapter.novel_id, chapter_id=chapter.id)
             
             # Извлекаем новые термины
             if prompt_template.terms_extraction_prompt:
-                logger.info(f"🔍 Извлекаем новые термины из главы {chapter.chapter_number}")
+                LogService.log_info(f"Извлекаем новые термины из главы {chapter.chapter_number}", 
+                                  novel_id=chapter.novel_id, chapter_id=chapter.id)
                 new_terms = self.extract_new_terms(content, prompt_template.terms_extraction_prompt, context.glossary)
                 if new_terms:
-                    logger.info(f"✅ Найдено {len(new_terms)} новых терминов")
+                    LogService.log_info(f"Найдено {len(new_terms)} новых терминов", 
+                                      novel_id=chapter.novel_id, chapter_id=chapter.id)
                     self.save_new_terms(new_terms, chapter.novel_id, chapter.chapter_number)
                 else:
-                    logger.info(f"ℹ️ Новых терминов не найдено в главе {chapter.chapter_number}")
+                    LogService.log_info(f"Новых терминов не найдено в главе {chapter.chapter_number}", 
+                                      novel_id=chapter.novel_id, chapter_id=chapter.id)
             
             # Сохраняем перевод
-            logger.info(f"💾 Сохраняем перевод главы {chapter.chapter_number} в базу данных")
+            LogService.log_info(f"Сохраняем перевод главы {chapter.chapter_number} в базу данных", 
+                              novel_id=chapter.novel_id, chapter_id=chapter.id)
             translation = Translation(
                 chapter_id=chapter.id,
                 translated_title=title,
@@ -410,16 +439,19 @@ class TranslatorService:
             if novel:
                 translated_count = Chapter.query.filter_by(novel_id=chapter.novel_id, status='translated', is_active=True).count()
                 novel.translated_chapters = translated_count
-                logger.info(f"📊 Обновлен счетчик переведенных глав: {translated_count}")
+                LogService.log_info(f"Обновлен счетчик переведенных глав: {translated_count}", 
+                                  novel_id=chapter.novel_id, chapter_id=chapter.id)
             
             db.session.commit()
             
-            logger.info(f"✅ Глава {chapter.chapter_number} переведена и сохранена успешно")
+            LogService.log_info(f"Глава {chapter.chapter_number} переведена и сохранена успешно", 
+                              novel_id=chapter.novel_id, chapter_id=chapter.id)
             print(f"   ✅ Глава {chapter.chapter_number} переведена успешно")
             return True
             
         except Exception as e:
-            logger.error(f"❌ Ошибка перевода главы {chapter.chapter_number}: {e}", exc_info=True)
+            LogService.log_error(f"Ошибка перевода главы {chapter.chapter_number}: {e}", 
+                               novel_id=chapter.novel_id, chapter_id=chapter.id)
             print(f"   ❌ Ошибка перевода главы {chapter.chapter_number}: {e}")
             db.session.rollback()
             return False

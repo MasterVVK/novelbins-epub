@@ -49,9 +49,13 @@
                             </span>
                         </td>
                         <td>
-                            <a href="{{ url_for('main.novel_detail', novel_id=task.novel.id) }}" class="text-decoration-none">
-                                {{ task.novel.title }}
-                            </a>
+                            {% if task.novel %}
+                                <a href="{{ url_for('main.novel_detail', novel_id=task.novel.id) }}" class="text-decoration-none">
+                                    {{ task.novel.title or 'Без названия' }}
+                                </a>
+                            {% else %}
+                                <span class="text-muted">Новелла удалена</span>
+                            {% endif %}
                         </td>
                         <td>
                             <span class="badge bg-{{ 'success' if task.status == 'completed' else 'danger' if task.status == 'failed' else 'warning' if task.status == 'running' else 'secondary' }}">

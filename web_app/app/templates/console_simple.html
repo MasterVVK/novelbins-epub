@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+
+{% block title %}Консоль - Novel Translator{% endblock %}
+
+{% block page_title %}Консоль системы{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="bi bi-terminal"></i> Консольный вывод
+                </h5>
+            </div>
+            <div class="card-body">
+                <div id="console-output" style="height: 400px; background-color: #1e1e1e; color: #ffffff; font-family: monospace; padding: 15px; overflow-y: auto;">
+                    <div class="text-center text-muted">
+                        <i class="bi bi-terminal fs-1"></i>
+                        <h4 class="mt-3">Консоль пуста</h4>
+                        <p>Сообщения появятся здесь в реальном времени</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Простой тест консоли
+console.log('Консольная страница загружена');
+</script>
+{% endblock %} 

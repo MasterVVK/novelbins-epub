@@ -1,0 +1,161 @@
+{% extends "base.html" %}
+
+{% block title %}Консоль - Novel Translator{% endblock %}
+
+{% block page_title %}Консоль системы{% endblock %}
+
+{% block content %}
+<div class="row">
+    <!-- Статистика -->
+    <div class="col-12 mb-4">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="card-title mb-0">
+                    <i class="bi bi-speedometer2"></i> Статистика консоли
+                </h5>
+                <div class="btn-group" role="group">
+                    <button id="clear-console" class="btn btn-outline-warning btn-sm">
+                        <i class="bi bi-trash"></i> Очистить
+                    </button>
+                    <button id="refresh-stats" class="btn btn-outline-primary btn-sm">
+                        <i class="bi bi-arrow-clockwise"></i> Обновить
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-3">
+                        <div class="text-center">
+                            <h4 id="total-logs" class="text-primary">0</h4>
+                            <small class="text-muted">Всего сообщений</small>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="text-center">
+                            <h4 id="info-logs" class="text-info">0</h4>
+                            <small class="text-muted">Информация</small>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="text-center">
+                            <h4 id="warning-logs" class="text-warning">0</h4>
+                            <small class="text-muted">Предупреждения</small>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="text-center">
+                            <h4 id="error-logs" class="text-danger">0</h4>
+                            <small class="text-muted">Ошибки</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Консоль -->
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="bi bi-terminal"></i> Консольный вывод
+                </h5>
+            </div>
+            <div class="card-body">
+                <div id="console-output" style="height: 500px; background-color: #1e1e1e; color: #ffffff; font-family: 'Courier New', monospace; padding: 15px; overflow-y: auto; border-radius: 5px;">
+                    <div class="text-center text-muted">
+                        <i class="bi bi-terminal fs-1"></i>
+                        <h4 class="mt-3">Консоль пуста</h4>
+                        <p>Сообщения появятся здесь в реальном времени</p>
+                        <p class="small">Запустите парсинг или перевод для просмотра логов</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Загрузка статистики
+function loadStats() {
+    fetch('/api/console/stats')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                const stats = data.stats;
+                document.getElementById('total-logs').textContent = stats.total;
+                document.getElementById('info-logs').textContent = stats.levels.INFO || 0;
+                document.getElementById('warning-logs').textContent = stats.levels.WARNING || 0;
+                document.getElementById('error-logs').textContent = stats.levels.ERROR || 0;
+            }
+        })
+        .catch(error => console.error('Ошибка загрузки статистики:', error));
+}
+
+// Загрузка логов
+function loadLogs() {
+    fetch('/api/console/logs?limit=100')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.logs.length > 0) {
+                const output = document.getElementById('console-output');
+                output.innerHTML = data.logs.map(log => {
+                    const timestamp = new Date(log.timestamp).toLocaleTimeString();
+                    const levelClass = log.level.toLowerCase();
+                    return `
+                        <div style="margin-bottom: 5px; padding: 2px 0; border-bottom: 1px solid #333;">
+                            <span style="color: #888; font-size: 12px; margin-right: 10px;">${timestamp}</span>
+                            <span style="display: inline-block; width: 80px; text-align: center; border-radius: 3px; font-size: 11px; font-weight: bold; margin-right: 10px; background-color: ${log.level === 'ERROR' ? '#dc3545' : log.level === 'WARNING' ? '#ffc107' : '#007bff'}; color: ${log.level === 'WARNING' ? 'black' : 'white'};">${log.level}</span>
+                            <span style="color: #17a2b8; font-size: 12px; margin-right: 10px;">[${log.source}]</span>
+                            <span style="color: #ffffff;">${log.message}</span>
+                        </div>
+                    `;
+                }).join('');
+                output.scrollTop = output.scrollHeight;
+            }
+        })
+        .catch(error => console.error('Ошибка загрузки логов:', error));
+}
+
+// Очистка консоли
+document.getElementById('clear-console').addEventListener('click', function() {
+    if (confirm('Очистить консольный буфер?')) {
+        fetch('/api/console/clear', { method: 'POST' })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    document.getElementById('console-output').innerHTML = `
+                        <div class="text-center text-muted">
+                            <i class="bi bi-terminal fs-1"></i>
+                            <h4 class="mt-3">Консоль очищена</h4>
+                            <p>Сообщения появятся здесь в реальном времени</p>
+                        </div>
+                    `;
+                    loadStats();
+                }
+            })
+            .catch(error => console.error('Ошибка очистки:', error));
+    }
+});
+
+// Обновление статистики
+document.getElementById('refresh-stats').addEventListener('click', function() {
+    loadStats();
+    loadLogs();
+});
+
+// Инициализация
+document.addEventListener('DOMContentLoaded', function() {
+    loadStats();
+    loadLogs();
+    
+    // Обновление каждые 5 секунд
+    setInterval(function() {
+        loadStats();
+        loadLogs();
+    }, 5000);
+});
+</script>
+{% endblock %} 

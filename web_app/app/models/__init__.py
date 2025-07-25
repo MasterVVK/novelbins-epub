@@ -5,6 +5,7 @@ from .glossary import GlossaryItem
 from .task import Task
 from .settings import SystemSettings
 from .prompt_template import PromptTemplate
+from .log_entry import LogEntry
 
 __all__ = [
     'Novel',
@@ -13,5 +14,6 @@ __all__ = [
     'GlossaryItem',
     'Task',
     'SystemSettings',
-    'PromptTemplate'
+    'PromptTemplate',
+    'LogEntry'
 ]

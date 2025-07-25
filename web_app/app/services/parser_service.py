@@ -15,6 +15,7 @@ from selenium.webdriver.chrome.options import Options
 from app.models import Novel, Chapter, Task
 from app import db
 from app.services.settings_service import SettingsService
+from app.services.log_service import LogService
 
 # Настраиваем логгер
 logger = logging.getLogger(__name__)
@@ -63,32 +64,32 @@ class WebParserService:
 
     def parse_novel_chapters(self, novel: Novel) -> List[dict]:
         """Парсинг всех глав новеллы с помощью requests (новая структура сайта)"""
-        logger.info(f"🔍 Парсинг новеллы: {novel.title}")
+        LogService.log_info(f"Парсинг новеллы: {novel.title}", novel_id=novel.id)
         
         # Исправляем URL - добавляем слеш в конце если его нет
         novel_url = novel.source_url
         if not novel_url.endswith('/'):
             novel_url += '/'
         
-        logger.info(f"📖 URL: {novel_url}")
+        LogService.log_info(f"URL: {novel_url}", novel_id=novel.id)
 
         try:
             # Загружаем страницу с помощью requests
-            logger.info("📄 Загрузка страницы новеллы...")
+            LogService.log_info("Загрузка страницы новеллы...", novel_id=novel.id)
             headers = {
                 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
             }
             response = requests.get(novel_url, headers=headers, timeout=30)
             response.raise_for_status()
-            logger.info("✅ Страница загружена")
+            LogService.log_info("Страница загружена", novel_id=novel.id)
 
             # Парсим HTML
             soup = BeautifulSoup(response.text, 'html.parser')
             
             # Ищем все ссылки на главы
-            logger.info("🔍 Поиск ссылок на главы...")
+            LogService.log_info("Поиск ссылок на главы...", novel_id=novel.id)
             chapter_links = soup.find_all('a', href=re.compile(r'/chapter/\d+'))
-            logger.info(f"✅ Найдено ссылок на главы: {len(chapter_links)}")
+            LogService.log_info(f"Найдено ссылок на главы: {len(chapter_links)}", novel_id=novel.id)
 
             all_chapters = []
             # Используем настройки из конфигурации новеллы
@@ -119,21 +120,21 @@ class WebParserService:
             
             # Берем только первые max_chapters глав
             all_chapters = temp_chapters[:max_chapters]
-            logger.info(f"📋 Выбрано первых {len(all_chapters)} глав из {len(temp_chapters)} найденных")
+            LogService.log_info(f"Выбрано первых {len(all_chapters)} глав из {len(temp_chapters)} найденных", novel_id=novel.id)
 
             # Сортируем по номеру
             all_chapters.sort(key=lambda x: x['number'])
-            logger.info(f"\n✅ Всего найдено глав: {len(all_chapters)}")
+            LogService.log_info(f"Всего найдено глав: {len(all_chapters)}", novel_id=novel.id)
 
             return all_chapters
 
         except Exception as e:
-            logger.error(f"❌ Ошибка при парсинге глав: {e}")
+            LogService.log_error(f"Ошибка при парсинге глав: {e}", novel_id=novel.id)
             return []
 
     def parse_chapter_content(self, chapter_url: str, chapter_number: int) -> Optional[str]:
         """Парсинг содержимого главы с помощью requests"""
-        logger.info(f"📖 Загрузка главы {chapter_number}: {chapter_url}")
+        LogService.log_info(f"Загрузка главы {chapter_number}: {chapter_url}")
 
         try:
             # Загружаем страницу главы
@@ -149,7 +150,7 @@ class WebParserService:
             # Ищем контейнер с контентом
             content_div = soup.find('div', class_='page-content-wrapper')
             if not content_div:
-                logger.error("❌ Контейнер контента не найден")
+                LogService.log_error("Контейнер контента не найден")
                 return None
 
             # Удаляем лишние элементы
@@ -174,12 +175,12 @@ class WebParserService:
             content = '\n\n'.join(paragraphs)
             word_count = len(content.split())
 
-            logger.info(f"✅ Извлечено {len(paragraphs)} параграфов, {word_count} слов")
+            LogService.log_info(f"Извлечено {len(paragraphs)} параграфов, {word_count} слов")
 
             return content
 
         except Exception as e:
-            logger.error(f"❌ Ошибка при загрузке главы {chapter_number}: {e}")
+            LogService.log_error(f"Ошибка при загрузке главы {chapter_number}: {e}")
             return None
 
     def parse_novel(self, novel_id: int, task_id: int = None) -> bool:
@@ -188,7 +189,7 @@ class WebParserService:
             # Получаем новеллу
             novel = Novel.query.get(novel_id)
             if not novel:
-                logger.error(f"❌ Новелла {novel_id} не найдена")
+                LogService.log_error(f"Новелла {novel_id} не найдена", novel_id=novel_id, task_id=task_id)
                 return False
 
             # Получаем задачу
@@ -201,21 +202,27 @@ class WebParserService:
                 task.status = 'running'
                 db.session.commit()
 
-            logger.info(f"🚀 Начинаем парсинг новеллы: {novel.title}")
+            LogService.log_info(f"Начинаем парсинг новеллы: {novel.title}", novel_id=novel_id, task_id=task_id)
+            print(f"🚀 Начинаем парсинг новеллы: {novel.title}")
+            print(f"📊 Задача #{task_id}: Парсинг новеллы '{novel.title}'")
 
             # Парсим все главы
-            logger.info("🔍 Начинаем парсинг списка глав...")
+            LogService.log_info("Начинаем парсинг списка глав...", novel_id=novel_id, task_id=task_id)
+            print(f"🔍 Поиск глав для новеллы '{novel.title}'...")
             chapters_data = self.parse_novel_chapters(novel)
             if not chapters_data:
-                logger.error("❌ Не удалось получить список глав")
+                LogService.log_error("Не удалось получить список глав", novel_id=novel_id, task_id=task_id)
                 return False
 
-            logger.info(f"✅ Найдено глав для парсинга: {len(chapters_data)}")
+            LogService.log_info(f"Найдено глав для парсинга: {len(chapters_data)}", novel_id=novel_id, task_id=task_id)
+            print(f"📚 Найдено {len(chapters_data)} глав для парсинга")
 
             # Парсим содержимое каждой главы
             success_count = 0
             for i, chapter_data in enumerate(chapters_data):
-                logger.info(f"📝 Обработка главы {i+1}/{len(chapters_data)}: {chapter_data['title']}")
+                LogService.log_info(f"Обработка главы {i+1}/{len(chapters_data)}: {chapter_data['title']}", 
+                                  novel_id=novel_id, task_id=task_id)
+                print(f"📖 Обработка главы {i+1}/{len(chapters_data)}: {chapter_data['title']}")
 
                 # Проверяем, не существует ли уже активная глава
                 existing_chapter = Chapter.query.filter_by(
@@ -225,14 +232,17 @@ class WebParserService:
                 ).first()
 
                 if existing_chapter:
-                    logger.info(f"⏭️ Глава {chapter_data['number']} уже существует и активна")
+                    LogService.log_info(f"Глава {chapter_data['number']} уже существует и активна", 
+                                      novel_id=novel_id, task_id=task_id)
                     continue
 
                 # Парсим содержимое
-                logger.info(f"📖 Загрузка содержимого главы {chapter_data['number']}...")
+                LogService.log_info(f"Загрузка содержимого главы {chapter_data['number']}...", 
+                                  novel_id=novel_id, task_id=task_id)
                 content = self.parse_chapter_content(chapter_data['url'], chapter_data['number'])
                 if not content:
-                    logger.warning(f"⚠️ Не удалось загрузить содержимое главы {chapter_data['number']}")
+                    LogService.log_warning(f"Не удалось загрузить содержимое главы {chapter_data['number']}", 
+                                         novel_id=novel_id, task_id=task_id)
                     continue
 
                 # Создаем главу в БД
@@ -246,7 +256,8 @@ class WebParserService:
                 )
                 db.session.add(chapter)
                 success_count += 1
-                logger.info(f"✅ Глава {chapter_data['number']} сохранена в БД")
+                LogService.log_info(f"Глава {chapter_data['number']} сохранена в БД", 
+                                  novel_id=novel_id, task_id=task_id, chapter_id=chapter.id)
 
                 # Обновляем прогресс
                 if task:
@@ -257,7 +268,7 @@ class WebParserService:
                 # Задержка между запросами
                 delay = novel.config.get('request_delay', 1.0) if novel.config else 1.0
                 if delay > 0:
-                    logger.info(f"⏱️ Пауза {delay} секунд...")
+                    LogService.log_info(f"Пауза {delay} секунд...", novel_id=novel_id, task_id=task_id)
                     time.sleep(delay)
 
             # Обновляем статистику новеллы
@@ -274,11 +285,12 @@ class WebParserService:
                 task.progress = 100
                 db.session.commit()
 
-            logger.info(f"✅ Парсинг завершен: {success_count}/{len(chapters_data)} глав обработано")
+            LogService.log_info(f"Парсинг завершен: {success_count}/{len(chapters_data)} глав обработано", 
+                              novel_id=novel_id, task_id=task_id)
             return True
 
         except Exception as e:
-            logger.error(f"❌ Ошибка при парсинге новеллы: {e}")
+            LogService.log_error(f"Ошибка при парсинге новеллы: {e}", novel_id=novel_id, task_id=task_id)
             
             # Обновляем статус задачи
             task = Task.query.filter_by(novel_id=novel_id, task_type='parse').first()
@@ -286,5 +298,4 @@ class WebParserService:
                 task.status = 'failed'
                 db.session.commit()
 
-            return False 
             return False 

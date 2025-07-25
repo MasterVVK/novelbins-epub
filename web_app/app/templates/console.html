@@ -1,0 +1,392 @@
+{% extends "base.html" %}
+
+{% block title %}Консоль - Novel Translator{% endblock %}
+
+{% block page_title %}Консоль системы{% endblock %}
+
+{% block content %}
+<div class="row">
+    <!-- Статистика -->
+    <div class="col-12 mb-4">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="card-title mb-0">
+                    <i class="bi bi-speedometer2"></i> Статистика консоли
+                </h5>
+                <div class="btn-group" role="group">
+                    <button id="clear-console" class="btn btn-outline-warning btn-sm">
+                        <i class="bi bi-trash"></i> Очистить
+                    </button>
+                    <button id="toggle-auto-scroll" class="btn btn-outline-primary btn-sm active">
+                        <i class="bi bi-arrow-down-circle"></i> Автоскролл
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-3">
+                        <div class="text-center">
+                            <h4 id="total-logs" class="text-primary">0</h4>
+                            <small class="text-muted">Всего сообщений</small>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="text-center">
+                            <h4 id="info-logs" class="text-info">0</h4>
+                            <small class="text-muted">Информация</small>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="text-center">
+                            <h4 id="warning-logs" class="text-warning">0</h4>
+                            <small class="text-muted">Предупреждения</small>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="text-center">
+                            <h4 id="error-logs" class="text-danger">0</h4>
+                            <small class="text-muted">Ошибки</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Фильтры -->
+    <div class="col-12 mb-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="bi bi-funnel"></i> Фильтры
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-3">
+                        <label for="level-filter" class="form-label">Уровень</label>
+                        <select id="level-filter" class="form-select">
+                            <option value="">Все уровни</option>
+                            <option value="INFO">Информация</option>
+                            <option value="WARNING">Предупреждения</option>
+                            <option value="ERROR">Ошибки</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label for="source-filter" class="form-label">Источник</label>
+                        <select id="source-filter" class="form-select">
+                            <option value="">Все источники</option>
+                            <option value="console">Консоль</option>
+                            <option value="parser">Парсер</option>
+                            <option value="translator">Переводчик</option>
+                            <option value="editor">Редактор</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label for="limit-filter" class="form-label">Лимит</label>
+                        <select id="limit-filter" class="form-select">
+                            <option value="50">50 сообщений</option>
+                            <option value="100" selected>100 сообщений</option>
+                            <option value="200">200 сообщений</option>
+                            <option value="500">500 сообщений</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">&nbsp;</label>
+                        <div>
+                            <button id="apply-filters" class="btn btn-primary">
+                                <i class="bi bi-search"></i> Применить
+                            </button>
+                            <button id="reset-filters" class="btn btn-outline-secondary">
+                                <i class="bi bi-arrow-clockwise"></i> Сброс
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Консоль -->
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="card-title mb-0">
+                    <i class="bi bi-terminal"></i> Консольный вывод
+                </h5>
+                <div class="btn-group" role="group">
+                    <button id="pause-console" class="btn btn-outline-secondary btn-sm">
+                        <i class="bi bi-pause-circle"></i> Пауза
+                    </button>
+                    <button id="resume-console" class="btn btn-outline-success btn-sm" style="display: none;">
+                        <i class="bi bi-play-circle"></i> Возобновить
+                    </button>
+                </div>
+            </div>
+            <div class="card-body p-0">
+                <div id="console-output" class="console-window">
+                    <div class="console-placeholder">
+                        <i class="bi bi-terminal text-muted fs-1"></i>
+                        <h4 class="text-muted mt-3">Консоль пуста</h4>
+                        <p class="text-muted">Сообщения появятся здесь в реальном времени</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.console-window {
+    height: 600px;
+    background-color: #1e1e1e;
+    color: #ffffff;
+    font-family: 'Courier New', monospace;
+    font-size: 14px;
+    overflow-y: auto;
+    padding: 15px;
+    border-radius: 0 0 0.375rem 0.375rem;
+}
+
+.console-placeholder {
+    text-align: center;
+    padding-top: 200px;
+}
+
+.console-message {
+    margin-bottom: 5px;
+    padding: 2px 0;
+    border-bottom: 1px solid #333;
+}
+
+.console-message:last-child {
+    border-bottom: none;
+}
+
+.console-timestamp {
+    color: #888;
+    font-size: 12px;
+    margin-right: 10px;
+}
+
+.console-level {
+    display: inline-block;
+    width: 80px;
+    text-align: center;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: bold;
+    margin-right: 10px;
+}
+
+.console-level.info {
+    background-color: #007bff;
+    color: white;
+}
+
+.console-level.warning {
+    background-color: #ffc107;
+    color: black;
+}
+
+.console-level.error {
+    background-color: #dc3545;
+    color: white;
+}
+
+.console-source {
+    color: #17a2b8;
+    font-size: 12px;
+    margin-right: 10px;
+}
+
+.console-text {
+    color: #ffffff;
+}
+
+.console-text.error {
+    color: #ff6b6b;
+}
+
+.console-text.warning {
+    color: #ffd93d;
+}
+
+.console-text.info {
+    color: #6bcf7f;
+}
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let consoleBuffer = [];
+let isPaused = false;
+let autoScroll = true;
+let eventSource = null;
+
+// Инициализация
+document.addEventListener('DOMContentLoaded', function() {
+    loadConsoleStats();
+    loadConsoleLogs();
+    startEventStream();
+    
+    // Обновление каждые 5 секунд
+    setInterval(loadConsoleStats, 5000);
+});
+
+// Загрузка статистики
+function loadConsoleStats() {
+    fetch('/api/console/stats')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                const stats = data.stats;
+                document.getElementById('total-logs').textContent = stats.total;
+                document.getElementById('info-logs').textContent = stats.levels.INFO || 0;
+                document.getElementById('warning-logs').textContent = stats.levels.WARNING || 0;
+                document.getElementById('error-logs').textContent = stats.levels.ERROR || 0;
+            }
+        })
+        .catch(error => console.error('Ошибка загрузки статистики:', error));
+}
+
+// Загрузка консольных логов
+function loadConsoleLogs() {
+    const level = document.getElementById('level-filter').value;
+    const source = document.getElementById('source-filter').value;
+    const limit = document.getElementById('limit-filter').value;
+    
+    let url = `/api/console/logs?limit=${limit}`;
+    if (level) url += `&level=${level}`;
+    if (source) url += `&source=${source}`;
+    
+    fetch(url)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                consoleBuffer = data.logs;
+                renderConsoleOutput();
+            }
+        })
+        .catch(error => console.error('Ошибка загрузки логов:', error));
+}
+
+// Рендеринг консольного вывода
+function renderConsoleOutput() {
+    const output = document.getElementById('console-output');
+    
+    if (consoleBuffer.length === 0) {
+        output.innerHTML = `
+            <div class="console-placeholder">
+                <i class="bi bi-terminal text-muted fs-1"></i>
+                <h4 class="text-muted mt-3">Консоль пуста</h4>
+                <p class="text-muted">Сообщения появятся здесь в реальном времени</p>
+            </div>
+        `;
+        return;
+    }
+    
+    output.innerHTML = consoleBuffer.map(log => {
+        const timestamp = new Date(log.timestamp).toLocaleTimeString();
+        const levelClass = log.level.toLowerCase();
+        const textClass = log.level.toLowerCase();
+        
+        return `
+            <div class="console-message">
+                <span class="console-timestamp">${timestamp}</span>
+                <span class="console-level ${levelClass}">${log.level}</span>
+                <span class="console-source">[${log.source}]</span>
+                <span class="console-text ${textClass}">${escapeHtml(log.message)}</span>
+            </div>
+        `;
+    }).join('');
+    
+    if (autoScroll) {
+        output.scrollTop = output.scrollHeight;
+    }
+}
+
+// Запуск EventSource для реального времени
+function startEventStream() {
+    if (eventSource) {
+        eventSource.close();
+    }
+    
+    eventSource = new EventSource('/api/console/stream');
+    
+    eventSource.onmessage = function(event) {
+        if (!isPaused) {
+            const log = JSON.parse(event.data);
+            consoleBuffer.push(log);
+            
+            // Ограничиваем размер буфера на клиенте
+            if (consoleBuffer.length > 500) {
+                consoleBuffer.shift();
+            }
+            
+            renderConsoleOutput();
+        }
+    };
+    
+    eventSource.onerror = function(error) {
+        console.error('EventSource error:', error);
+        setTimeout(startEventStream, 5000); // Переподключение через 5 секунд
+    };
+}
+
+// Обработчики событий
+document.getElementById('clear-console').addEventListener('click', function() {
+    if (confirm('Очистить консольный буфер?')) {
+        fetch('/api/console/clear', { method: 'POST' })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    consoleBuffer = [];
+                    renderConsoleOutput();
+                    loadConsoleStats();
+                }
+            })
+            .catch(error => console.error('Ошибка очистки:', error));
+    }
+});
+
+document.getElementById('toggle-auto-scroll').addEventListener('click', function() {
+    autoScroll = !autoScroll;
+    this.classList.toggle('active');
+    
+    if (autoScroll) {
+        const output = document.getElementById('console-output');
+        output.scrollTop = output.scrollHeight;
+    }
+});
+
+document.getElementById('pause-console').addEventListener('click', function() {
+    isPaused = true;
+    this.style.display = 'none';
+    document.getElementById('resume-console').style.display = 'inline-block';
+});
+
+document.getElementById('resume-console').addEventListener('click', function() {
+    isPaused = false;
+    this.style.display = 'none';
+    document.getElementById('pause-console').style.display = 'inline-block';
+});
+
+document.getElementById('apply-filters').addEventListener('click', loadConsoleLogs);
+
+document.getElementById('reset-filters').addEventListener('click', function() {
+    document.getElementById('level-filter').value = '';
+    document.getElementById('source-filter').value = '';
+    document.getElementById('limit-filter').value = '100';
+    loadConsoleLogs();
+});
+
+// Вспомогательная функция для экранирования HTML
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+</script>
+{% endblock %} 

@@ -408,8 +408,8 @@ class PromptTemplateService:
         if data.get('max_tokens') is not None:
             try:
                 tokens = int(data['max_tokens'])
-                if tokens < 1000 or tokens > 50000:
-                    errors.append('Максимальное количество токенов должно быть от 1000 до 50000')
+                if tokens < 1000 or tokens > 128000:
+                    errors.append('Максимальное количество токенов должно быть от 1000 до 128000')
             except ValueError:
                 errors.append('Максимальное количество токенов должно быть числом')
         

@@ -4,6 +4,7 @@ from app import db, socketio
 from app.services.translator_service import TranslatorService
 from app.services.parser_service import WebParserService
 from app.services.editor_service import EditorService
+from app.services.log_service import LogService
 import threading
 import time
 import logging
@@ -498,16 +499,18 @@ def start_editing(novel_id):
                         success = editor_service.edit_chapter(fresh_chapter)
                         if success:
                             success_count += 1
-                            logger.info(f"✅ Глава {fresh_chapter.chapter_number} отредактирована")
+                            LogService.log_info(f"✅ Глава {fresh_chapter.chapter_number} отредактирована", 
+                                              novel_id=novel_id, chapter_id=fresh_chapter.id)
                         else:
-                            logger.error(f"❌ Ошибка редактуры главы {fresh_chapter.chapter_number}")
+                            LogService.log_error(f"❌ Ошибка редактуры главы {fresh_chapter.chapter_number}", 
+                                               novel_id=novel_id, chapter_id=fresh_chapter.id)
                         
                         time.sleep(2)  # Пауза между главами
                         
                     except Exception as e:
-                        logger.error(f"❌ Ошибка редактуры главы {i}: {e}")
+                        LogService.log_error(f"❌ Ошибка редактуры главы {i}: {e}", novel_id=novel_id)
                         import traceback
-                        logger.error(f"📄 Traceback: {traceback.format_exc()}")
+                        LogService.log_error(f"📄 Traceback: {traceback.format_exc()}", novel_id=novel_id)
                         continue
                 
                 # Обновляем счетчик отредактированных глав
@@ -517,7 +520,7 @@ def start_editing(novel_id):
                         novel_obj.edited_chapters = success_count
                         db.session.add(novel_obj)
                         db.session.commit()
-                        logger.info(f"📊 Обновлен счетчик отредактированных глав: {success_count}")
+                        LogService.log_info(f"📊 Обновлен счетчик отредактированных глав: {success_count}", novel_id=novel_id)
                 
                 # Завершаем задачу
                 if success_count == total_chapters:
@@ -525,12 +528,12 @@ def start_editing(novel_id):
                 else:
                     task.complete(f"Редактура завершена с ошибками: {success_count}/{total_chapters} глав")
                 
-                logger.info(f"✅ Редактура завершена: {success_count}/{total_chapters} глав")
+                LogService.log_info(f"✅ Редактура завершена: {success_count}/{total_chapters} глав", novel_id=novel_id)
                 
             except Exception as e:
-                logger.error(f"❌ Критическая ошибка редактуры: {e}")
+                LogService.log_error(f"❌ Критическая ошибка редактуры: {e}", novel_id=novel_id)
                 import traceback
-                logger.error(f"❌ Traceback: {traceback.format_exc()}")
+                LogService.log_error(f"❌ Traceback: {traceback.format_exc()}", novel_id=novel_id)
                 
                 # Получаем свежий объект задачи в новом контексте сессии
                 task_id = task.id
@@ -538,7 +541,7 @@ def start_editing(novel_id):
                 if fresh_task:
                     fresh_task.fail(f"Критическая ошибка: {e}")
                 else:
-                    logger.error(f"❌ Не удалось найти задачу {task_id} для обновления статуса")
+                    LogService.log_error(f"❌ Не удалось найти задачу {task_id} для обновления статуса", novel_id=novel_id)
 
     # Запускаем редактуру в фоновом потоке
     import threading
@@ -547,7 +550,7 @@ def start_editing(novel_id):
     thread.daemon = True
     thread.start()
 
-    logger.info(f"🎯 Редактура запущена в фоновом потоке для {len(chapters)} глав")
+    LogService.log_info(f"🎯 Редактура запущена в фоновом потоке для {len(chapters)} глав", novel_id=novel_id)
     flash(f'Редактура запущена для {len(chapters)} глав', 'success')
     return redirect(url_for('main.novel_detail', novel_id=novel_id))
 
@@ -727,7 +730,8 @@ def tasks():
     # Автоматически очищаем зависшие задачи
     cleanup_hanging_tasks()
     
-    tasks = Task.query.order_by(Task.created_at.desc()).limit(50).all()
+    # Загружаем задачи с связанными новеллами
+    tasks = Task.query.options(db.joinedload(Task.novel)).order_by(Task.created_at.desc()).limit(50).all()
     return render_template('tasks.html', tasks=tasks)
 
 
@@ -822,15 +826,32 @@ def clear_all_tasks():
     return redirect(url_for('main.tasks'))
 
 
+@main_bp.route('/logs')
+def logs():
+    """Страница просмотра логов"""
+    return render_template('logs.html')
+
+@main_bp.route('/console-test')
+def console_test():
+    """Страница консоли"""
+    return render_template('console_working.html')
+
+
 @main_bp.route('/settings', methods=['GET', 'POST'])
 def settings():
     """Настройки системы"""
     if request.method == 'POST':
+        # Валидация max_tokens
+        max_tokens = int(request.form.get('max_tokens', 24000))
+        if max_tokens < 1000 or max_tokens > 128000:
+            flash('Максимальное количество токенов должно быть от 1000 до 128000', 'error')
+            return redirect(url_for('main.settings'))
+        
         # Обновление настроек
         settings_data = {
             'default_translation_model': request.form.get('default_translation_model'),
             'default_temperature': float(request.form.get('default_temperature', 0.1)),
-            'max_tokens': int(request.form.get('max_tokens', 24000)),
+            'max_tokens': max_tokens,
             'max_chapters': int(request.form.get('max_chapters', 10)),
             'request_delay': float(request.form.get('request_delay', 1.0))
         }

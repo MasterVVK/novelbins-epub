@@ -110,6 +110,16 @@
                                 <i class="bi bi-gear"></i> Настройки
                             </a>
                         </li>
+                                                   <li class="nav-item">
+                               <a class="nav-link {{ 'active' if request.endpoint == 'main.logs' }}" href="{{ url_for('main.logs') }}">
+                                   <i class="bi bi-journal-text"></i> Логи
+                               </a>
+                           </li>
+                           <li class="nav-item">
+                               <a class="nav-link {{ 'active' if request.endpoint == 'main.console_test' }}" href="{{ url_for('main.console_test') }}">
+                                   <i class="bi bi-terminal"></i> Консоль
+                               </a>
+                           </li>
                     </ul>
                 </div>
             </nav>
