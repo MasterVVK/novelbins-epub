@@ -24,7 +24,6 @@ class Chapter(db.Model):
 
     # Статус
     status = Column(String(50), default='pending')  # pending, parsed, translated, edited, error
-    is_active = Column(Boolean, default=True)  # Для мягкого удаления
 
     # Метаданные
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -33,6 +32,7 @@ class Chapter(db.Model):
     # Связи
     novel = relationship('Novel', back_populates='chapters')
     translations = relationship('Translation', back_populates='chapter', cascade='all, delete-orphan')
+    prompt_history = relationship('PromptHistory', back_populates='chapter', cascade='all, delete-orphan')
 
     def __repr__(self):
         return f'<Chapter {self.chapter_number} of {self.novel.title}>'
@@ -60,16 +60,4 @@ class Chapter(db.Model):
     @property
     def is_edited(self):
         """Проверка наличия редактуры"""
-        return self.status == 'edited'
-    
-    def soft_delete(self):
-        """Мягкое удаление главы (деактивация)"""
-        self.is_active = False
-        self.status = 'deleted'
-        return self
-    
-    def restore(self):
-        """Восстановление главы"""
-        self.is_active = True
-        self.status = 'pending'
-        return self 
+        return self.status == 'edited' 

@@ -17,6 +17,58 @@ from app.services.log_service import LogService
 logger = logging.getLogger(__name__)
 
 
+def preprocess_chapter_text(text: str) -> str:
+    """Предобработка текста главы для избежания проблем с токенизацией"""
+    
+    # Словарь замен для звуковых эффектов
+    # Если 3 и более повторений - заменяем на короткую версию с многоточием
+    sound_effects = {
+        r'W[oO]{3,}': 'Wooo...',
+        r'A[hH]{3,}': 'Ahhh...',
+        r'E[eE]{3,}': 'Eeee...',
+        r'O[hH]{3,}': 'Ohhh...',
+        r'U[uU]{3,}': 'Uuuu...',
+        r'Y[aA]{3,}': 'Yaaa...',
+        r'N[oO]{3,}': 'Nooo...',
+        r'H[aA]{3,}': 'Haaa...',
+        r'R[rR]{3,}': 'Rrrr...',
+        r'S[sS]{3,}': 'Ssss...',
+        r'Z[zZ]{3,}': 'Zzzz...',
+        # Дополнительные паттерны
+        r'M[mM]{3,}': 'Mmm...',
+        r'G[rR]{3,}': 'Grrr...',
+        r'B[rR]{3,}': 'Brrr...',
+    }
+
+    # Счётчик замен для отладки
+    replacements_made = 0
+
+    # Применяем замены
+    for pattern, replacement in sound_effects.items():
+        text, count = re.subn(pattern, replacement, text, flags=re.IGNORECASE)
+        replacements_made += count
+
+    # Дополнительно: обработка любых других повторяющихся букв
+    # Если встречается любая буква повторенная 5+ раз
+    def replace_any_long_repetition(match):
+        full_match = match.group(0)
+        if len(full_match) > 5:
+            # Берём первую букву, повторяем 3 раза и добавляем многоточие
+            first_char = full_match[0]
+            return first_char * 3 + '...'
+        return full_match
+
+    # Обрабатываем любые другие длинные повторения
+    text, count = re.subn(r'(\w)\1{4,}', replace_any_long_repetition, text)
+    replacements_made += count
+
+    # Логирование изменений
+    if replacements_made > 0:
+        logger.info(f"Применена предобработка звуковых эффектов ({replacements_made} замен)")
+
+    return text
+
+
 class TranslatorConfig:
     """Конфигурация переводчика"""
     def __init__(self, api_keys: List[str] = None, proxy_url: Optional[str] = None, 
@@ -35,7 +87,10 @@ class LLMTranslator:
     def __init__(self, config: TranslatorConfig):
         self.config = config
         self.current_key_index = 0
-        self.failed_keys = set()
+        self.failed_keys = set()  # Множество неработающих ключей
+        self.full_cycles_without_success = 0  # Счётчик полных циклов без успеха
+        self.last_finish_reason = None  # Сохраняем причину завершения
+        self.save_prompt_history = True  # Настройка сохранения истории промптов
 
         # HTTP клиент с увеличенным таймаутом
         timeout_config = httpx.Timeout(
@@ -49,7 +104,7 @@ class LLMTranslator:
             self.transport = SyncProxyTransport.from_url(config.proxy_url)
             self.client = httpx.Client(transport=self.transport, timeout=timeout_config)
         else:
-            self.client = httpx.Client(timeout=timeout_config)
+            self.client = httpx.Client(transport=self.transport, timeout=timeout_config)
 
         self.api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{config.model_name}:generateContent"
 
@@ -76,6 +131,30 @@ class LLMTranslator:
         """Проверяем, все ли ключи неработающие"""
         return len(self.failed_keys) == len(self.config.api_keys)
 
+    def set_save_prompt_history(self, save: bool):
+        """Включение/выключение сохранения истории промптов"""
+        self.save_prompt_history = save
+        LogService.log_info(f"Сохранение истории промптов: {'включено' if save else 'отключено'}")
+
+    def get_prompt_history_status(self) -> bool:
+        """Получение статуса сохранения истории промптов"""
+        return self.save_prompt_history
+
+    def handle_full_cycle_failure(self):
+        """Обработка ситуации, когда все ключи неработающие"""
+        self.full_cycles_without_success += 1
+        print(f"  ⚠️  Полный цикл без успеха #{self.full_cycles_without_success}")
+        
+        if self.full_cycles_without_success >= 3:
+            print(f"  ❌ 3 полных цикла без успеха. Ожидание 5 минут...")
+            time.sleep(300)  # 5 минут
+            self.reset_failed_keys()
+            self.full_cycles_without_success = 0
+        else:
+            print(f"  ⏳ Ожидание 30 секунд перед повторной попыткой...")
+            time.sleep(30)
+            self.reset_failed_keys()
+
     def make_request(self, system_prompt: str, user_prompt: str, temperature: float = None) -> Optional[str]:
         """Базовый метод для запросов к API с умной ротацией ключей"""
         LogService.log_info(f"Начинаем запрос к API Gemini (модель: {self.config.model_name})")
@@ -87,21 +166,24 @@ class LLMTranslator:
             "maxOutputTokens": self.config.max_output_tokens
         }
 
-        max_attempts = len(self.config.api_keys) * 2
-        LogService.log_info(f"Максимум попыток: {max_attempts}, доступно ключей: {len(self.config.api_keys)}")
+        attempts = 0
+        max_attempts = len(self.config.api_keys) * 3  # 3 полных круга максимум
 
-        for attempt in range(max_attempts):
+        while attempts < max_attempts:
             # Если текущий ключ в списке неработающих, переключаемся
             if self.current_key_index in self.failed_keys:
-                LogService.log_info(f"Ключ #{self.current_key_index + 1} помечен как неработающий, переключаемся")
                 self.switch_to_next_key()
-                continue
+
+                # Проверяем после КАЖДОГО переключения
+                if self.all_keys_failed():
+                    self.handle_full_cycle_failure()
+                    attempts = 0  # Сбрасываем счётчик попыток после ожидания
+                    continue
 
             try:
-                LogService.log_info(f"Попытка {attempt + 1}: используем ключ #{self.current_key_index + 1} из {len(self.config.api_keys)}")
+                LogService.log_info(f"Попытка {attempts + 1}: используем ключ #{self.current_key_index + 1} из {len(self.config.api_keys)}")
                 print(f"   Используем ключ #{self.current_key_index + 1} из {len(self.config.api_keys)}")
 
-                LogService.log_info(f"Отправляем запрос к {self.api_url}")
                 response = self.client.post(
                     self.api_url,
                     params={"key": self.current_key},
@@ -117,63 +199,260 @@ class LLMTranslator:
                     }
                 )
 
-                LogService.log_info(f"Получен ответ от API, статус: {response.status_code}")
-                
                 if response.status_code == 200:
                     data = response.json()
-                    LogService.log_info(f"Успешный ответ от API, структура: {list(data.keys())}")
-                    
-                    if 'candidates' in data and data['candidates']:
-                        content = data['candidates'][0]['content']
-                        if 'parts' in content and content['parts']:
-                            result_text = content['parts'][0]['text']
+
+                    # Детальная диагностика ответа
+                    candidates = data.get("candidates", [])
+
+                    # Выводим информацию об использовании токенов
+                    if "usageMetadata" in data:
+                        usage = data["usageMetadata"]
+                        LogService.log_info(f"Использование токенов: prompt={usage.get('promptTokenCount', 'N/A')}, candidates={usage.get('candidatesTokenCount', 'N/A')}, total={usage.get('totalTokenCount', 'N/A')}")
+
+                    # Проверяем обратную связь по промпту
+                    if "promptFeedback" in data:
+                        feedback = data["promptFeedback"]
+                        if feedback.get("blockReason"):
+                            LogService.log_error(f"Промпт заблокирован: {feedback['blockReason']}")
+                            print(f"  ❌ Промпт заблокирован: {feedback['blockReason']}")
+                            return None
+
+                    if candidates:
+                        candidate = candidates[0]
+
+                        # Проверяем причину блокировки кандидата
+                        if candidate.get("finishReason") == "SAFETY":
+                            LogService.log_warning(f"Ответ заблокирован фильтрами безопасности")
+                            print(f"  ⚠️  Ответ заблокирован фильтрами безопасности")
+                            return None
+
+                        # Проверяем причину завершения
+                        finish_reason = candidate.get("finishReason")
+                        self.last_finish_reason = finish_reason
+
+                        if finish_reason == "MAX_TOKENS":
+                            LogService.log_warning(f"Ответ обрезан из-за лимита токенов")
+                            print(f"  ⚠️  ВНИМАНИЕ: Ответ обрезан из-за лимита токенов!")
+
+                        content = candidate.get("content", {})
+                        parts = content.get("parts", [])
+
+                        if parts and parts[0].get("text"):
+                            # Успешный запрос - сбрасываем счётчик неудачных циклов
+                            self.full_cycles_without_success = 0
+                            result_text = parts[0].get("text", "")
                             LogService.log_info(f"Получен текст ответа, длина: {len(result_text)} символов")
+                            
+                            # Сохраняем успешный промпт в историю
+                            if self.save_prompt_history and getattr(self, 'current_chapter_id', None):
+                                try:
+                                    from app.models import PromptHistory
+                                    PromptHistory.save_prompt(
+                                        chapter_id=self.current_chapter_id,
+                                        prompt_type=getattr(self, 'current_prompt_type', 'translation'),
+                                        system_prompt=system_prompt,
+                                        user_prompt=user_prompt,
+                                        response=result_text,
+                                        api_key_index=self.current_key_index,
+                                        model_used=self.config.model_name,
+                                        temperature=temperature or self.config.temperature,
+                                        tokens_used=usage.get('totalTokenCount') if 'usageMetadata' in data else None,
+                                        finish_reason=finish_reason,
+                                        execution_time=time.time() - getattr(self, 'request_start_time', time.time())
+                                    )
+                                    LogService.log_info(f"Промпт сохранен в историю (тип: {getattr(self, 'current_prompt_type', 'translation')})")
+                                except Exception as e:
+                                    LogService.log_warning(f"Не удалось сохранить промпт в историю: {e}")
+                            elif not self.save_prompt_history:
+                                LogService.log_info("Сохранение истории промптов отключено")
+                            elif not getattr(self, 'current_chapter_id', None):
+                                LogService.log_warning("Не удалось сохранить промпт: chapter_id не установлен")
+                            
                             return result_text
-                    
-                    LogService.log_warning(f"Неожиданный формат ответа: {data}")
-                    print(f"   ⚠️ Неожиданный формат ответа: {data}")
-                    self.mark_key_as_failed()
-                    
-                elif response.status_code == 429:  # Rate limit
+                        else:
+                            LogService.log_warning(f"Пустой ответ от API")
+                            print(f"  ⚠️  Пустой ответ от API")
+                    else:
+                        LogService.log_warning(f"Нет кандидатов в ответе")
+                        print(f"  ⚠️  Нет кандидатов в ответе")
+
+                elif response.status_code == 429:
                     LogService.log_warning(f"Rate limit для ключа #{self.current_key_index + 1}")
-                    print(f"   ⏳ Rate limit для ключа #{self.current_key_index + 1}")
-                    self.mark_key_as_failed()
+                    print(f"  ⚠️  Лимит исчерпан для ключа #{self.current_key_index + 1}")
                     
-                elif response.status_code == 400:  # Bad request
-                    LogService.log_error(f"Ошибка запроса для ключа #{self.current_key_index + 1}: {response.text}")
-                    print(f"   ❌ Ошибка запроса для ключа #{self.current_key_index + 1}: {response.text}")
-                    self.mark_key_as_failed()
+                    # Попробуем получить детали из ответа
+                    try:
+                        error_data = response.json()
+                        if "error" in error_data:
+                            error_msg = error_data["error"].get("message", "")
+                            LogService.log_info(f"Детали rate limit: {error_msg}")
+                    except:
+                        pass
                     
-                else:
-                    LogService.log_error(f"HTTP {response.status_code} для ключа #{self.current_key_index + 1}")
-                    print(f"   ❌ HTTP {response.status_code} для ключа #{self.current_key_index + 1}")
                     self.mark_key_as_failed()
+                    self.switch_to_next_key()
+
+                elif response.status_code >= 500:
+                    # Серверные ошибки (500, 502, 503) - проблема на стороне Google
+                    LogService.log_warning(f"Серверная ошибка Google ({response.status_code}). Ожидание 30 секунд...")
+                    print(f"  ⚠️  Серверная ошибка Google ({response.status_code}). Ожидание 30 секунд...")
+                    time.sleep(30)
+                    
+                    # Повторная попытка с тем же ключом
+                    retry_response = self.client.post(
+                        self.api_url,
+                        params={"key": self.current_key},
+                        headers={"Content-Type": "application/json"},
+                        json={
+                            "generationConfig": generation_config,
+                            "contents": [{
+                                "parts": [
+                                    {"text": system_prompt},
+                                    {"text": user_prompt}
+                                ]
+                            }]
+                        }
+                    )
+
+                    if retry_response.status_code == 200:
+                        LogService.log_info(f"Повторная попытка успешна!")
+                        print(f"  ✅ Повторная попытка успешна!")
+                        response = retry_response
+                        continue  # Переходим к обработке успешного ответа
+                    elif retry_response.status_code >= 500:
+                        LogService.log_error(f"Серверная ошибка сохраняется. Пробуем другой ключ...")
+                        print(f"  ❌ Серверная ошибка сохраняется. Пробуем другой ключ...")
+                        self.switch_to_next_key()
+                    else:
+                        response = retry_response
+                        # Продолжаем обработку ниже
+
+                # Для клиентских ошибок (4xx) - проблема с ключом или запросом
+                elif response.status_code >= 400 and response.status_code < 500:
+                    LogService.log_error(f"Клиентская ошибка {response.status_code} для ключа #{self.current_key_index + 1}")
+                    print(f"  ❌ Клиентская ошибка {response.status_code} для ключа #{self.current_key_index + 1}")
+                    
+                    # Выводим детали ошибки
+                    try:
+                        error_data = response.json()
+                        if "error" in error_data:
+                            error_details = error_data['error']
+                            LogService.log_error(f"Сообщение: {error_details.get('message', 'нет сообщения')}")
+                            LogService.log_error(f"Код: {error_details.get('code', 'нет кода')}")
+                    except:
+                        LogService.log_error(f"Тело ответа: {response.text[:200]}...")
+                    
+                    # Помечаем ключ как проблемный только для 401, 403
+                    if response.status_code in [401, 403]:
+                        self.mark_key_as_failed()
+                    self.switch_to_next_key()
+
+            except httpx.TimeoutException as e:
+                LogService.log_warning(f"Таймаут запроса: {e}")
+                print(f"  ⚠️  Таймаут запроса: {e}")
+                print(f"     Ожидание 10 секунд перед повторной попыткой...")
+                time.sleep(10)
+
+                # НЕ помечаем ключ как неработающий при таймауте
+                # Просто пробуем ещё раз
+                attempts += 1
+
+                # Если слишком много таймаутов подряд, меняем ключ
+                if attempts % 3 == 0:
+                    LogService.log_info(f"Много таймаутов, пробуем другой ключ...")
+                    print(f"     Много таймаутов, пробуем другой ключ...")
+                    self.switch_to_next_key()
+
+            except httpx.NetworkError as e:
+                LogService.log_warning(f"Сетевая ошибка: {e}")
+                print(f"  ⚠️  Сетевая ошибка: {e}")
+                print(f"     Проверьте подключение к интернету/прокси")
+                time.sleep(5)
+                attempts += 1
 
             except Exception as e:
-                LogService.log_error(f"Ошибка для ключа #{self.current_key_index + 1}: {e}")
-                print(f"   ❌ Ошибка для ключа #{self.current_key_index + 1}: {e}")
-                self.mark_key_as_failed()
+                LogService.log_error(f"Ошибка запроса: {e}")
+                print(f"  ❌ Ошибка запроса: {e}")
 
-            # Пауза перед следующей попыткой
-            LogService.log_info(f"Пауза 2 секунды перед следующей попыткой")
-            time.sleep(2)
+                # Обрабатываем разные типы ошибок
+                error_str = str(e).lower()
 
-        LogService.log_error("Все ключи исчерпаны")
-        print("   ❌ Все ключи исчерпаны")
-        return None
+                if any(x in error_str for x in ['timeout', 'timed out', 'connection', 'network']):
+                    # Сетевые проблемы - НЕ вина ключа
+                    LogService.log_info(f"Похоже на сетевую проблему. Ожидание 10 секунд...")
+                    print(f"     Похоже на сетевую проблему. Ожидание 10 секунд...")
+                    time.sleep(10)
+                    attempts += 1
+                else:
+                    # Другие ошибки - возможно проблема с ключом
+                    self.mark_key_as_failed()
+                    self.switch_to_next_key()
+                    attempts += 1
 
-    def translate_text(self, text: str, system_prompt: str, context: str = "") -> Optional[str]:
+            attempts += 1
+
+        # Если дошли сюда, значит превысили максимум попыток
+        LogService.log_error(f"Не удалось выполнить запрос после {max_attempts} попыток")
+        print(f"  ❌ Не удалось выполнить запрос после {max_attempts} попыток")
+        
+        # Сохраняем неудачный промпт в историю
+        if self.save_prompt_history and getattr(self, 'current_chapter_id', None):
+            try:
+                from app.models import PromptHistory
+                PromptHistory.save_prompt(
+                    chapter_id=self.current_chapter_id,
+                    prompt_type=getattr(self, 'current_prompt_type', 'translation'),
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    response=None,
+                    api_key_index=self.current_key_index,
+                    model_used=self.config.model_name,
+                    temperature=temperature or self.config.temperature,
+                    success=False,
+                    error_message=f"Не удалось выполнить запрос после {max_attempts} попыток",
+                    execution_time=time.time() - getattr(self, 'request_start_time', time.time())
+                )
+                LogService.log_info(f"Неудачный промпт сохранен в историю (тип: {getattr(self, 'current_prompt_type', 'translation')})")
+            except Exception as e:
+                LogService.log_warning(f"Не удалось сохранить неудачный промпт в историю: {e}")
+        elif not self.save_prompt_history:
+            LogService.log_info("Сохранение истории промптов отключено")
+        elif not getattr(self, 'current_chapter_id', None):
+            LogService.log_warning("Не удалось сохранить неудачный промпт: chapter_id не установлен")
+        
+        raise Exception(f"Не удалось выполнить запрос после {max_attempts} попыток")
+
+    def translate_text(self, text: str, system_prompt: str, context: str = "", chapter_id: int = None) -> Optional[str]:
         """Перевод текста с использованием кастомного промпта"""
+        self.current_chapter_id = chapter_id
+        # Не перезаписываем current_prompt_type, если он уже установлен
+        if not hasattr(self, 'current_prompt_type') or self.current_prompt_type == 'translation':
+            self.current_prompt_type = 'translation'
+        self.request_start_time = time.time()
+        
         user_prompt = f"{context}\n\nТЕКСТ ДЛЯ ПЕРЕВОДА:\n{text}"
         return self.make_request(system_prompt, user_prompt)
 
-    def generate_summary(self, text: str, summary_prompt: str) -> Optional[str]:
+    def generate_summary(self, text: str, summary_prompt: str, chapter_id: int = None) -> Optional[str]:
         """Генерация резюме главы"""
+        self.current_chapter_id = chapter_id
+        # Не перезаписываем current_prompt_type, если он уже установлен
+        if not hasattr(self, 'current_prompt_type') or self.current_prompt_type == 'translation':
+            self.current_prompt_type = 'summary'
+        self.request_start_time = time.time()
+        
         user_prompt = f"ТЕКСТ ГЛАВЫ:\n{text}"
         return self.make_request(summary_prompt, user_prompt, temperature=0.3)
 
-    def extract_terms(self, text: str, extraction_prompt: str, existing_glossary: Dict) -> Optional[str]:
+    def extract_terms(self, text: str, extraction_prompt: str, existing_glossary: Dict, chapter_id: int = None) -> Optional[str]:
         """Извлечение новых терминов из текста"""
+        self.current_chapter_id = chapter_id
+        # Не перезаписываем current_prompt_type, если он уже установлен
+        if not hasattr(self, 'current_prompt_type') or self.current_prompt_type == 'translation':
+            self.current_prompt_type = 'terms_extraction'
+        self.request_start_time = time.time()
+        
         glossary_text = self.format_glossary_for_prompt(existing_glossary)
         user_prompt = f"СУЩЕСТВУЮЩИЙ ГЛОССАРИЙ:\n{glossary_text}\n\nТЕКСТ ДЛЯ АНАЛИЗА:\n{text}"
         return self.make_request(extraction_prompt, user_prompt, temperature=0.2)
@@ -289,6 +568,11 @@ class TranslatorService:
         
         logger.info("🔧 Создаем LLMTranslator")
         self.translator = LLMTranslator(self.config)
+        
+        # Настройка сохранения истории промптов из конфигурации
+        save_history = config.get('save_prompt_history', True) if config else True
+        self.translator.set_save_prompt_history(save_history)
+        
         logger.info("✅ TranslatorService инициализирован успешно")
 
     def translate_chapter(self, chapter: Chapter) -> bool:
@@ -346,7 +630,8 @@ class TranslatorService:
                 translated_part = self.translator.translate_text(
                     part, 
                     prompt_template.translation_prompt,
-                    context_prompt
+                    context_prompt,
+                    chapter.id
                 )
                 
                 if not translated_part:
@@ -392,7 +677,7 @@ class TranslatorService:
             if prompt_template.summary_prompt:
                 LogService.log_info(f"Генерируем резюме для главы {chapter.chapter_number}", 
                                   novel_id=chapter.novel_id, chapter_id=chapter.id)
-                summary = self.translator.generate_summary(content, prompt_template.summary_prompt)
+                summary = self.translator.generate_summary(content, prompt_template.summary_prompt, chapter.id)
                 if summary:
                     LogService.log_info(f"Резюме сгенерировано, длина: {len(summary)} символов", 
                                       novel_id=chapter.novel_id, chapter_id=chapter.id)
@@ -404,7 +689,7 @@ class TranslatorService:
             if prompt_template.terms_extraction_prompt:
                 LogService.log_info(f"Извлекаем новые термины из главы {chapter.chapter_number}", 
                                   novel_id=chapter.novel_id, chapter_id=chapter.id)
-                new_terms = self.extract_new_terms(content, prompt_template.terms_extraction_prompt, context.glossary)
+                new_terms = self.extract_new_terms(content, prompt_template.terms_extraction_prompt, context.glossary, chapter.id)
                 if new_terms:
                     LogService.log_info(f"Найдено {len(new_terms)} новых терминов", 
                                       novel_id=chapter.novel_id, chapter_id=chapter.id)
@@ -437,7 +722,7 @@ class TranslatorService:
             from app.models import Novel
             novel = Novel.query.get(chapter.novel_id)
             if novel:
-                translated_count = Chapter.query.filter_by(novel_id=chapter.novel_id, status='translated', is_active=True).count()
+                translated_count = Chapter.query.filter_by(novel_id=chapter.novel_id, status='translated').count()
                 novel.translated_chapters = translated_count
                 LogService.log_info(f"Обновлен счетчик переведенных глав: {translated_count}", 
                                   novel_id=chapter.novel_id, chapter_id=chapter.id)
@@ -458,6 +743,9 @@ class TranslatorService:
 
     def preprocess_text(self, text: str) -> str:
         """Предобработка текста для перевода (сохраняет структуру абзацев)"""
+        # Применяем обработку звуковых эффектов
+        text = preprocess_chapter_text(text)
+        
         # Сохраняем двойные переносы строк (абзацы)
         text = text.replace('\n\n', '§PARAGRAPH_BREAK§')
         
@@ -582,12 +870,12 @@ class TranslatorService:
         
         return max(1, min(10, int(score)))
 
-    def extract_new_terms(self, text: str, extraction_prompt: str, existing_glossary: Dict) -> Optional[Dict]:
+    def extract_new_terms(self, text: str, extraction_prompt: str, existing_glossary: Dict, chapter_id: int = None) -> Optional[Dict]:
         """Извлечение новых терминов из переведенного текста"""
         logger.info(f"🔍 Начинаем извлечение терминов из текста длиной {len(text)} символов")
         logger.info(f"📋 Используем промпт: {extraction_prompt[:200]}...")
         
-        result = self.translator.extract_terms(text, extraction_prompt, existing_glossary)
+        result = self.translator.extract_terms(text, extraction_prompt, existing_glossary, chapter_id)
         if not result:
             logger.warning("❌ Не удалось извлечь термины - пустой результат")
             return None
@@ -685,8 +973,7 @@ class TranslatorService:
                 # Проверяем, нет ли уже такого термина
                 existing = GlossaryItem.query.filter_by(
                     novel_id=novel_id,
-                    english_term=eng,
-                    is_active=True
+                    english_term=eng
                 ).first()
                 
                 if not existing:

@@ -224,11 +224,10 @@ class WebParserService:
                                   novel_id=novel_id, task_id=task_id)
                 print(f"📖 Обработка главы {i+1}/{len(chapters_data)}: {chapter_data['title']}")
 
-                # Проверяем, не существует ли уже активная глава
+                # Проверяем, не существует ли уже глава
                 existing_chapter = Chapter.query.filter_by(
                     novel_id=novel_id,
-                    chapter_number=chapter_data['number'],
-                    is_active=True
+                    chapter_number=chapter_data['number']
                 ).first()
 
                 if existing_chapter:

@@ -47,7 +47,7 @@ class EPUBService:
         from app import db
 
         # Получаем главы новеллы
-        query = Chapter.query.filter_by(novel_id=novel_id, is_active=True)
+        query = Chapter.query.filter_by(novel_id=novel_id)
         
         if chapter_numbers:
             query = query.filter(Chapter.chapter_number.in_(chapter_numbers))

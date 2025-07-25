@@ -216,7 +216,7 @@ def novel_detail(novel_id):
     novel = Novel.query.get_or_404(novel_id)
     db.session.refresh(novel)
     
-    chapters = Chapter.query.filter_by(novel_id=novel_id, is_active=True).order_by(Chapter.chapter_number).all()
+    chapters = Chapter.query.filter_by(novel_id=novel_id).order_by(Chapter.chapter_number).all()
     
     # Получаем задачи для новеллы (включая EPUB)
     tasks = Task.query.filter_by(novel_id=novel_id).order_by(Task.updated_at.desc()).all()
@@ -311,7 +311,7 @@ def start_translation(novel_id):
     chapters = Chapter.query.filter(
         Chapter.novel_id == novel_id,
         Chapter.status != 'translated',
-        Chapter.is_active == True
+        Chapter.id.isnot(None)
     ).order_by(Chapter.chapter_number).all()
 
     # Отладочная информация
@@ -420,7 +420,7 @@ def start_editing(novel_id):
     chapters = Chapter.query.filter_by(
         novel_id=novel_id,
         status='translated',
-        is_active=True
+
     ).order_by(Chapter.chapter_number).all()
 
     logger.info(f"🔍 Найдено глав для редактуры: {len(chapters)}")
@@ -651,14 +651,98 @@ def download_epub(novel_id):
 @main_bp.route('/chapters/<int:chapter_id>')
 def chapter_detail(chapter_id):
     """Детальная страница главы"""
-    chapter = Chapter.query.filter_by(id=chapter_id, is_active=True).first_or_404()
-    return render_template('chapter_detail.html', chapter=chapter)
+    chapter = Chapter.query.get_or_404(chapter_id)
+    
+    # Загружаем историю промптов для главы
+    prompt_history = []
+    prompt_groups = {}
+    
+    try:
+        from app.models import PromptHistory
+        prompt_history = PromptHistory.query.filter_by(
+            chapter_id=chapter_id
+        ).order_by(PromptHistory.created_at.desc()).all()
+        
+        # Группируем промпты по категориям
+        translation_prompts = []
+        editing_prompts = []
+        
+        for prompt in prompt_history:
+            if prompt.prompt_type in ['translation', 'summary', 'terms_extraction']:
+                translation_prompts.append(prompt)
+            elif prompt.prompt_type.startswith('editing_'):
+                editing_prompts.append(prompt)
+            else:
+                # Для неизвестных типов добавляем в перевод
+                translation_prompts.append(prompt)
+        
+        # Создаем структуру для шаблона
+        prompt_groups = {
+            'translation': translation_prompts,
+            'editing': editing_prompts
+        }
+        
+
+    except Exception as e:
+        # Если таблица не существует или другая ошибка, просто показываем главу без истории промптов
+        print(f"Предупреждение: Не удалось загрузить историю промптов: {e}")
+        prompt_history = []
+        prompt_groups = {}
+    
+    return render_template('chapter_detail.html', 
+                         chapter=chapter, 
+                         prompt_history=prompt_history,
+                         prompt_groups=prompt_groups)
+
+
+@main_bp.route('/api/chapters/<int:chapter_id>/prompt-history')
+def api_chapter_prompt_history(chapter_id):
+    """API для получения истории промптов главы"""
+    chapter = Chapter.query.get_or_404(chapter_id)
+    
+    history_data = []
+    
+    try:
+        from app.models import PromptHistory
+        prompt_history = PromptHistory.query.filter_by(
+            chapter_id=chapter_id
+        ).order_by(PromptHistory.created_at.desc()).all()
+        
+        # Преобразуем в JSON
+        for prompt in prompt_history:
+            history_data.append({
+                'id': prompt.id,
+                'prompt_type': prompt.prompt_type,
+                'system_prompt': prompt.system_prompt,
+                'user_prompt': prompt.user_prompt,
+                'response': prompt.response,
+                'success': prompt.success,
+                'error_message': prompt.error_message,
+                'api_key_index': prompt.api_key_index,
+                'model_used': prompt.model_used,
+                'temperature': prompt.temperature,
+                'tokens_used': prompt.tokens_used,
+                'finish_reason': prompt.finish_reason,
+                'execution_time': prompt.execution_time,
+                'created_at': prompt.created_at.isoformat() if prompt.created_at else None
+            })
+    except Exception as e:
+        # Если таблица не существует или другая ошибка, возвращаем пустой список
+        print(f"Предупреждение: Не удалось загрузить историю промптов: {e}")
+        history_data = []
+    
+    return jsonify({
+        'chapter_id': chapter_id,
+        'chapter_number': chapter.chapter_number,
+        'total_prompts': len(history_data),
+        'prompt_history': history_data
+    })
 
 
 @main_bp.route('/chapters/<int:chapter_id>/edit', methods=['GET', 'POST'])
 def edit_chapter(chapter_id):
     """Редактирование главы"""
-    chapter = Chapter.query.filter_by(id=chapter_id, is_active=True).first_or_404()
+    chapter = Chapter.query.get_or_404(chapter_id)
 
     if request.method == 'POST':
         translated_text = request.form.get('translated_text')
@@ -684,44 +768,21 @@ def edit_chapter(chapter_id):
 @main_bp.route('/chapters/<int:chapter_id>/delete', methods=['POST'])
 def delete_chapter(chapter_id):
     """Удаление главы"""
-    chapter = Chapter.query.filter_by(id=chapter_id, is_active=True).first_or_404()
+    chapter = Chapter.query.get_or_404(chapter_id)
     
     # Получаем информацию для сообщения
     novel_id = chapter.novel_id
     chapter_number = chapter.chapter_number
     
-    # Используем мягкое удаление (деактивация)
-    chapter.soft_delete()
+    # Полное удаление главы (включая промпты)
+    db.session.delete(chapter)
     db.session.commit()
     
-    flash(f'Глава {chapter_number} успешно удалена', 'success')
+    flash(f'Глава {chapter_number} и вся связанная история промптов успешно удалены', 'success')
     return redirect(url_for('main.novel_detail', novel_id=novel_id))
 
 
-@main_bp.route('/chapters/<int:chapter_id>/restore', methods=['POST'])
-def restore_chapter(chapter_id):
-    """Восстановление главы"""
-    chapter = Chapter.query.filter_by(id=chapter_id, is_active=False).first_or_404()
-    
-    # Получаем информацию для сообщения
-    novel_id = chapter.novel_id
-    chapter_number = chapter.chapter_number
-    
-    # Восстанавливаем главу
-    chapter.restore()
-    db.session.commit()
-    
-    flash(f'Глава {chapter_number} успешно восстановлена', 'success')
-    return redirect(url_for('main.novel_detail', novel_id=novel_id))
 
-
-@main_bp.route('/novels/<int:novel_id>/deleted-chapters')
-def deleted_chapters(novel_id):
-    """Страница удаленных глав новеллы"""
-    novel = Novel.query.get_or_404(novel_id)
-    deleted_chapters = Chapter.query.filter_by(novel_id=novel_id, is_active=False).order_by(Chapter.chapter_number).all()
-    
-    return render_template('deleted_chapters.html', novel=novel, chapters=deleted_chapters)
 
 
 @main_bp.route('/tasks')

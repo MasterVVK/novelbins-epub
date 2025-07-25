@@ -41,7 +41,7 @@ class EditorService:
         
         try:
             # Этап 1: Анализ качества
-            strategy = self.analyze_text_quality(original_text)
+            strategy = self.analyze_text_quality(original_text, chapter.id)
             quality_score = strategy.get('quality_score', 5)
             
             print(f"📊 Оценка качества главы {chapter.chapter_number}: {quality_score}/10")
@@ -52,19 +52,19 @@ class EditorService:
             
             # Этап 2: Улучшение стиля
             if strategy.get('needs_style'):
-                edited_text = self.improve_text_style(edited_text)
+                edited_text = self.improve_text_style(edited_text, chapter.id)
                 LogService.log_info(f"Глава {chapter.chapter_number}: стилистика улучшена", 
                                   novel_id=chapter.novel_id, chapter_id=chapter.id)
                 
             # Этап 3: Работа с диалогами
             if strategy.get('needs_dialogue') and ('—' in edited_text or '«' in edited_text):
-                edited_text = self.polish_dialogues(edited_text)
+                edited_text = self.polish_dialogues(edited_text, chapter.id)
                 LogService.log_info(f"Глава {chapter.chapter_number}: диалоги отполированы", 
                                   novel_id=chapter.novel_id, chapter_id=chapter.id)
                 
             # Этап 4: Финальная полировка
             if strategy.get('needs_polish'):
-                edited_text = self.final_polish(edited_text)
+                edited_text = self.final_polish(edited_text, chapter.id)
                 LogService.log_info(f"Глава {chapter.chapter_number}: финальная полировка завершена", 
                                   novel_id=chapter.novel_id, chapter_id=chapter.id)
                 
@@ -89,7 +89,7 @@ class EditorService:
                                novel_id=chapter.novel_id, chapter_id=chapter.id)
             return False
             
-    def analyze_text_quality(self, text: str) -> Dict:
+    def analyze_text_quality(self, text: str, chapter_id: int = None) -> Dict:
         """Анализ качества текста"""
         prompt = f"""Проанализируй качество этого переведенного текста и определи стратегию редактуры:
 
@@ -104,7 +104,14 @@ class EditorService:
 ОПИСАНИЕ: [краткое описание проблем]"""
 
         try:
-            result = self.translator.translator.extract_terms(text, prompt, {})
+            # Устанавливаем тип промпта для анализа качества
+            if chapter_id:
+                self.translator.translator.current_chapter_id = chapter_id
+                self.translator.translator.current_prompt_type = 'editing_analysis'
+                self.translator.translator.request_start_time = time.time()
+            
+            # Используем translate_text для анализа качества
+            result = self.translator.translator.translate_text(text, prompt, "", chapter_id)
             if not result:
                 return {'quality_score': 5, 'needs_style': True, 'needs_dialogue': True, 'needs_polish': True}
                 
@@ -142,7 +149,7 @@ class EditorService:
             logger.error(f"❌ Ошибка анализа качества: {e}")
             return {'quality_score': 5, 'needs_style': True, 'needs_dialogue': True, 'needs_polish': True}
             
-    def improve_text_style(self, text: str) -> str:
+    def improve_text_style(self, text: str, chapter_id: int = None) -> str:
         """Улучшение стиля текста"""
         prompt = f"""Улучши стиль этого переведенного текста. Сделай его более читаемым и литературным:
 
@@ -155,13 +162,19 @@ class EditorService:
 - Не меняй имена и термины"""
 
         try:
-            result = self.translator.translator.extract_terms(text, prompt, {})
+            # Устанавливаем тип промпта для улучшения стиля
+            if chapter_id:
+                self.translator.translator.current_chapter_id = chapter_id
+                self.translator.translator.current_prompt_type = 'editing_style'
+                self.translator.translator.request_start_time = time.time()
+            
+            result = self.translator.translator.translate_text(text, prompt, "", chapter_id)
             return result if result else text
         except Exception as e:
             LogService.log_error(f"Ошибка улучшения стиля: {e}")
             return text
             
-    def polish_dialogues(self, text: str) -> str:
+    def polish_dialogues(self, text: str, chapter_id: int = None) -> str:
         """Полировка диалогов"""
         prompt = f"""Отполируй диалоги в этом тексте. Сделай их более естественными:
 
@@ -174,13 +187,19 @@ class EditorService:
 - Не меняй смысл реплик"""
 
         try:
-            result = self.translator.translator.extract_terms(text, prompt, {})
+            # Устанавливаем тип промпта для полировки диалогов
+            if chapter_id:
+                self.translator.translator.current_chapter_id = chapter_id
+                self.translator.translator.current_prompt_type = 'editing_dialogue'
+                self.translator.translator.request_start_time = time.time()
+            
+            result = self.translator.translator.translate_text(text, prompt, "", chapter_id)
             return result if result else text
         except Exception as e:
             LogService.log_error(f"Ошибка полировки диалогов: {e}")
             return text
             
-    def final_polish(self, text: str) -> str:
+    def final_polish(self, text: str, chapter_id: int = None) -> str:
         """Финальная полировка"""
         prompt = f"""Сделай финальную полировку этого текста:
 
@@ -193,7 +212,13 @@ class EditorService:
 - Сохрани все важные детали"""
 
         try:
-            result = self.translator.translator.extract_terms(text, prompt, {})
+            # Устанавливаем тип промпта для финальной полировки
+            if chapter_id:
+                self.translator.translator.current_chapter_id = chapter_id
+                self.translator.translator.current_prompt_type = 'editing_final'
+                self.translator.translator.request_start_time = time.time()
+            
+            result = self.translator.translator.translate_text(text, prompt, "", chapter_id)
             return result if result else text
         except Exception as e:
             LogService.log_error(f"Ошибка финальной полировки: {e}")

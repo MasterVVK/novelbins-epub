@@ -6,6 +6,7 @@ from .task import Task
 from .settings import SystemSettings
 from .prompt_template import PromptTemplate
 from .log_entry import LogEntry
+from .prompt_history import PromptHistory
 
 __all__ = [
     'Novel',
@@ -15,5 +16,6 @@ __all__ = [
     'Task',
     'SystemSettings',
     'PromptTemplate',
-    'LogEntry'
+    'LogEntry',
+    'PromptHistory'
 ]

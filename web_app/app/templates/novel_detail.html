@@ -269,9 +269,7 @@
                 <a href="{{ url_for('main.novel_glossary', novel_id=novel.id) }}" class="btn btn-outline-info w-100 mb-2">
                     <i class="bi bi-translate"></i> Глоссарий
                 </a>
-                <a href="{{ url_for('main.deleted_chapters', novel_id=novel.id) }}" class="btn btn-outline-warning w-100 mb-2">
-                    <i class="bi bi-trash"></i> Удаленные главы
-                </a>
+
                 <a href="{{ url_for('main.novels') }}" class="btn btn-outline-secondary w-100">
                     <i class="bi bi-arrow-left"></i> К списку новелл
                 </a>
@@ -305,7 +303,7 @@
             </div>
             <div class="modal-body">
                 <p>Вы уверены, что хотите удалить главу {{ chapter.chapter_number }}?</p>
-                <p class="text-muted">Глава будет скрыта, но может быть восстановлена позже.</p>
+                <p class="text-muted">Глава будет полностью удалена вместе со всей историей промптов. Восстановление невозможно.</p>
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
