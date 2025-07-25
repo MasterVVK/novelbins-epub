@@ -216,6 +216,9 @@ def novel_detail(novel_id):
     db.session.refresh(novel)
     
     chapters = Chapter.query.filter_by(novel_id=novel_id, is_active=True).order_by(Chapter.chapter_number).all()
+    
+    # Получаем задачи для новеллы (включая EPUB)
+    tasks = Task.query.filter_by(novel_id=novel_id).order_by(Task.updated_at.desc()).all()
 
     # Отладочная информация
     print(f"🔍 Страница новеллы '{novel.title}' - конфигурация: {novel.config}")
@@ -227,7 +230,7 @@ def novel_detail(novel_id):
             print(f"   config тип: {type(novel.config)}")
             print(f"   config значение: {novel.config}")
 
-    return render_template('novel_detail.html', novel=novel, chapters=chapters)
+    return render_template('novel_detail.html', novel=novel, chapters=chapters, tasks=tasks)
 
 
 @main_bp.route('/novels/<int:novel_id>/parse', methods=['POST'])
@@ -552,19 +555,94 @@ def start_editing(novel_id):
 @main_bp.route('/novels/<int:novel_id>/epub', methods=['POST'])
 def generate_epub(novel_id):
     """Генерация EPUB"""
+    from app.services.epub_service import EPUBService
+    
     novel = Novel.query.get_or_404(novel_id)
 
     # Создаем задачу генерации EPUB
     task = Task(
         novel_id=novel_id,
         task_type='generate_epub',
-        priority=2
+        priority=2,
+        status='running'
     )
     db.session.add(task)
     db.session.commit()
 
-    flash('Генерация EPUB запущена (заглушка)', 'success')
+    def generate_epub_task():
+        """Фоновая задача генерации EPUB"""
+        try:
+            # Создаем контекст приложения для фонового потока
+            with current_app.app_context():
+                epub_service = EPUBService(current_app)
+                
+                # Получаем главы для EPUB
+                chapters = epub_service.get_edited_chapters_from_db(novel_id)
+                
+                if not chapters:
+                    task.status = 'failed'
+                    task.error_message = 'Нет переведенных глав для создания EPUB'
+                    db.session.commit()
+                    return
+
+                # Создаем EPUB
+                epub_path = epub_service.create_epub(novel_id, chapters)
+                
+                # Обновляем статус задачи
+                task.status = 'completed'
+                task.result = {'epub_path': epub_path}
+                db.session.commit()
+                
+                logger.info(f"EPUB создан успешно: {epub_path}")
+                
+        except Exception as e:
+            logger.error(f"Ошибка при создании EPUB: {e}")
+            task.status = 'failed'
+            task.error_message = str(e)
+            db.session.commit()
+
+    # Запускаем задачу в фоновом потоке
+    thread = threading.Thread(target=generate_epub_task)
+    thread.daemon = True
+    thread.start()
+
+    flash('Генерация EPUB запущена в фоновом режиме', 'success')
     return redirect(url_for('main.novel_detail', novel_id=novel_id))
+
+
+@main_bp.route('/novels/<int:novel_id>/epub/download')
+def download_epub(novel_id):
+    """Скачивание созданного EPUB файла"""
+    from flask import send_file
+    from pathlib import Path
+    
+    # Ищем последнюю завершенную задачу генерации EPUB
+    task = Task.query.filter_by(
+        novel_id=novel_id,
+        task_type='generate_epub',
+        status='completed'
+    ).order_by(Task.updated_at.desc()).first()
+    
+    if not task or not task.result or 'epub_path' not in task.result:
+        flash('EPUB файл не найден. Сначала создайте EPUB.', 'error')
+        return redirect(url_for('main.novel_detail', novel_id=novel_id))
+    
+    epub_path = Path(task.result['epub_path'])
+    
+    if not epub_path.exists():
+        flash('EPUB файл не найден на диске.', 'error')
+        return redirect(url_for('main.novel_detail', novel_id=novel_id))
+    
+    # Получаем название новеллы для имени файла
+    novel = Novel.query.get(novel_id)
+    filename = f"{novel.title.replace(' ', '_')}.epub" if novel else epub_path.name
+    
+    return send_file(
+        epub_path,
+        as_attachment=True,
+        download_name=filename,
+        mimetype='application/epub+zip'
+    )
 
 
 @main_bp.route('/chapters/<int:chapter_id>')
