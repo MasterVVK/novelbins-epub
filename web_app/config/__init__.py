@@ -19,6 +19,12 @@ class Config:
     UPLOAD_FOLDER = 'uploads'
     MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB
 
+    # Логирование
+    LOG_LEVEL = os.environ.get('LOG_LEVEL', 'INFO')
+    LOG_FILE = os.environ.get('LOG_FILE', 'logs/app.log')
+    LOG_MAX_SIZE = 10 * 1024 * 1024  # 10MB
+    LOG_BACKUP_COUNT = 5
+
     # Настройки перевода
     DEFAULT_TRANSLATION_MODEL = 'gemini-2.5-flash-preview-05-20'
     DEFAULT_TEMPERATURE = 0.1
@@ -38,19 +44,21 @@ class Config:
     # API ключи
     GEMINI_API_KEYS = os.environ.get('GEMINI_API_KEYS', '').split(',')
     GEMINI_API_KEYS = [key.strip() for key in GEMINI_API_KEYS if key.strip()]
-    OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
+    OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 
 
 class DevelopmentConfig(Config):
     """Конфигурация для разработки"""
     DEBUG = True
     SQLALCHEMY_ECHO = True
+    LOG_LEVEL = 'DEBUG'
 
 
 class ProductionConfig(Config):
     """Конфигурация для продакшена"""
     DEBUG = False
     SQLALCHEMY_ECHO = False
+    LOG_LEVEL = 'WARNING'
 
 
 class TestingConfig(Config):
@@ -58,6 +66,7 @@ class TestingConfig(Config):
     TESTING = True
     SQLALCHEMY_DATABASE_URI = 'sqlite:///:memory:'
     WTF_CSRF_ENABLED = False
+    LOG_LEVEL = 'DEBUG'
 
 
 config = {

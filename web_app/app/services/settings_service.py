@@ -68,4 +68,9 @@ class SettingsService:
         """Проверить, есть ли API ключи"""
         gemini_keys = SettingsService.get_gemini_api_keys()
         openai_key = SettingsService.get_openai_api_key()
-        return bool(gemini_keys or openai_key) 
+        return bool(gemini_keys or openai_key)
+    
+    @staticmethod
+    def get_proxy_url() -> Optional[str]:
+        """Получить URL прокси"""
+        return SystemSettings.get_setting('proxy_url') 

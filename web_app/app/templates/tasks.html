@@ -60,9 +60,9 @@
                         </td>
                         <td>
                             <div class="progress" style="height: 8px; width: 100px;">
-                                <div class="progress-bar" style="width: {{ task.progress * 100 }}%"></div>
+                                <div class="progress-bar" style="width: {{ task.progress }}%"></div>
                             </div>
-                            <small class="text-muted">{{ (task.progress * 100)|round(1) }}%</small>
+                            <small class="text-muted">{{ task.progress|round(1) }}%</small>
                         </td>
                         <td>{{ task.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
                         <td>

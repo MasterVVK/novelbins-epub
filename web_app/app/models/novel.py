@@ -45,8 +45,15 @@ class Novel(db.Model):
         return f'<Novel {self.title}>'
 
     @property
+    def parsing_progress_percentage(self):
+        """Процент завершения парсинга"""
+        if self.total_chapters == 0:
+            return 0
+        return round((self.parsed_chapters / self.total_chapters) * 100, 1)
+
+    @property
     def progress_percentage(self):
-        """Процент завершения"""
+        """Процент завершения перевода"""
         if self.total_chapters == 0:
             return 0
         return round((self.translated_chapters / self.total_chapters) * 100, 1)

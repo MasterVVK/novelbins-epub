@@ -12,19 +12,62 @@
     </div>
     <div class="card-body">
         <div class="row">
-            <div class="col-md-6">
-                <h6>Оригинальный текст:</h6>
+            <div class="col-md-4">
+                <h6>Исходный текст (англ.):</h6>
                 <div class="border rounded p-3 bg-light" style="max-height: 400px; overflow-y: auto;">
                     {{ chapter.original_text or 'Текст не загружен' }}
+                    {% if chapter.original_text %}
+                        <hr>
+                        <small class="text-muted">
+                            <strong>Длина:</strong> {{ chapter.original_text|length }} символов<br>
+                            <strong>Слов:</strong> {{ chapter.word_count_original or 'N/A' }}<br>
+                            <strong>Параграфов:</strong> {{ chapter.paragraph_count or 'N/A' }}
+                        </small>
+                    {% endif %}
                 </div>
             </div>
-            <div class="col-md-6">
-                <h6>Перевод:</h6>
+            <div class="col-md-4">
+                <h6>Перевод (рус.):</h6>
                 <div class="border rounded p-3 bg-light" style="max-height: 400px; overflow-y: auto;">
                     {% if chapter.current_translation %}
                         {{ chapter.current_translation.translated_text }}
+                        <hr>
+                        <small class="text-muted">
+                            <strong>Тип:</strong> {{ chapter.current_translation.translation_type or 'initial' }}<br>
+                            <strong>API:</strong> {{ chapter.current_translation.api_used or 'gemini' }}<br>
+                            <strong>Длина:</strong> {{ chapter.current_translation.translated_text|length }} символов<br>
+                            {% if chapter.current_translation.translation_time %}
+                                <strong>Время:</strong> {{ chapter.current_translation.translation_time }}с
+                            {% endif %}
+                        </small>
                     {% else %}
                         Перевод не выполнен
+                    {% endif %}
+                </div>
+            </div>
+            <div class="col-md-4">
+                <h6>Редактура (рус.):</h6>
+                <div class="border rounded p-3 bg-light" style="max-height: 400px; overflow-y: auto;">
+                    {% if chapter.edited_translation %}
+                        {{ chapter.edited_translation.translated_text }}
+                        <hr>
+                        <small class="text-muted">
+                            <strong>Тип:</strong> {{ chapter.edited_translation.translation_type or 'edited' }}<br>
+                            <strong>API:</strong> {{ chapter.edited_translation.api_used or 'gemini-editor' }}<br>
+                            <strong>Длина:</strong> {{ chapter.edited_translation.translated_text|length }} символов<br>
+                            {% if chapter.edited_translation.quality_score %}
+                                <strong>Качество:</strong> {{ chapter.edited_translation.quality_score }}/10<br>
+                            {% endif %}
+                            {% if chapter.edited_translation.translation_time %}
+                                <strong>Время:</strong> {{ chapter.edited_translation.translation_time }}с
+                            {% endif %}
+                        </small>
+                    {% else %}
+                        {% if chapter.status == 'edited' %}
+                            <span class="text-success">✅ Отредактировано</span>
+                        {% else %}
+                            <span class="text-muted">Редактура не выполнена</span>
+                        {% endif %}
                     {% endif %}
                 </div>
             </div>

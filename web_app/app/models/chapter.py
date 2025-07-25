@@ -39,8 +39,18 @@ class Chapter(db.Model):
 
     @property
     def current_translation(self):
-        """Текущий перевод"""
-        return self.translations[-1] if self.translations else None
+        """Текущий перевод (исходный, не отредактированный)"""
+        # Ищем последний перевод, который НЕ является редактурой
+        for trans in reversed(self.translations):
+            if trans.translation_type != 'edited':
+                return trans
+        return None
+
+    @property
+    def edited_translation(self):
+        """Отредактированная версия"""
+        edited_translations = [t for t in self.translations if t.translation_type == 'edited']
+        return edited_translations[-1] if edited_translations else None
 
     @property
     def is_translated(self):

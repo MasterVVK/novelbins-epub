@@ -33,23 +33,47 @@
                     </span>
                 </div>
                 
+                <!-- Прогресс по этапам -->
                 <div class="mb-3">
-                    <small class="text-muted">Прогресс перевода:</small>
-                    <div class="progress" style="height: 8px;">
-                        <div class="progress-bar" style="width: {{ novel.progress_percentage }}%"></div>
+                    <!-- Парсинг -->
+                    <div class="mb-2">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <small class="text-muted">
+                                <i class="bi bi-download text-primary"></i> Парсинг
+                            </small>
+                            <small class="text-muted">{{ novel.parsed_chapters }}/{{ novel.total_chapters }}</small>
+                        </div>
+                        <div class="progress" style="height: 6px;">
+                            <div class="progress-bar bg-primary" style="width: {{ novel.parsing_progress_percentage }}%"></div>
+                        </div>
                     </div>
-                    <small class="text-muted">{{ novel.progress_percentage }}% ({{ novel.translated_chapters }}/{{ novel.total_chapters }})</small>
-                </div>
-                
-                {% if novel.edited_chapters > 0 %}
-                <div class="mb-3">
-                    <small class="text-muted">Прогресс редактуры:</small>
-                    <div class="progress" style="height: 8px;">
-                        <div class="progress-bar bg-success" style="width: {{ novel.editing_progress_percentage }}%"></div>
+                    
+                    <!-- Перевод -->
+                    <div class="mb-2">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <small class="text-muted">
+                                <i class="bi bi-translate text-success"></i> Перевод
+                            </small>
+                            <small class="text-muted">{{ novel.translated_chapters }}/{{ novel.total_chapters }}</small>
+                        </div>
+                        <div class="progress" style="height: 6px;">
+                            <div class="progress-bar bg-success" style="width: {{ novel.progress_percentage }}%"></div>
+                        </div>
                     </div>
-                    <small class="text-muted">{{ novel.editing_progress_percentage }}% ({{ novel.edited_chapters }}/{{ novel.translated_chapters }})</small>
+                    
+                    <!-- Редактура -->
+                    <div class="mb-2">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <small class="text-muted">
+                                <i class="bi bi-pencil-square text-warning"></i> Редактура
+                            </small>
+                            <small class="text-muted">{{ novel.edited_chapters }}/{{ novel.translated_chapters if novel.translated_chapters > 0 else novel.total_chapters }}</small>
+                        </div>
+                        <div class="progress" style="height: 6px;">
+                            <div class="progress-bar bg-warning" style="width: {{ novel.editing_progress_percentage }}%"></div>
+                        </div>
+                    </div>
                 </div>
-                {% endif %}
                 
                 <div class="d-flex justify-content-between align-items-center">
                     <small class="text-muted">{{ novel.created_at.strftime('%d.%m.%Y') }}</small>

@@ -1,9 +1,16 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, current_app
-from app.models import Novel, Chapter, Task, SystemSettings, PromptTemplate
+from app.models import Novel, Chapter, Task, PromptTemplate, SystemSettings
 from app import db, socketio
 from app.services.translator_service import TranslatorService
 from app.services.parser_service import WebParserService
+from app.services.editor_service import EditorService
 import threading
+import time
+import logging
+from datetime import datetime
+from app import create_app
+
+logger = logging.getLogger(__name__)
 
 main_bp = Blueprint('main', __name__)
 
@@ -245,27 +252,31 @@ def start_parsing(novel_id):
 
     # Запускаем парсинг в отдельном потоке
     def parse_novel():
-        try:
-            print(f"🔄 Запуск парсинга для новеллы {novel_id}")
-            parser = WebParserService()
-            print(f"🔧 Парсер создан, начинаем парсинг...")
-            success = parser.parse_novel(novel_id, task_id=task.id)
-            print(f"✅ Парсинг завершен: {'успешно' if success else 'с ошибкой'}")
-            
-            # Обновляем статус задачи (на случай, если парсер не обновил)
-            if success:
-                task.status = 'completed'
-                task.progress = 100
-            else:
+        # Создаем контекст приложения для фонового потока
+        app = create_app()
+        with app.app_context():
+            try:
+                app.logger.info(f"🔄 Запуск парсинга для новеллы {novel_id}")
+                parser = WebParserService()
+                app.logger.info(f"🔧 Парсер создан, начинаем парсинг...")
+                success = parser.parse_novel(novel_id, task_id=task.id)
+                app.logger.info(f"✅ Парсинг завершен: {'успешно' if success else 'с ошибкой'}")
+                
+                # Обновляем статус задачи (на случай, если парсер не обновил)
+                if success:
+                    task.status = 'completed'
+                    task.progress = 100
+                else:
+                    task.status = 'failed'
+                
+                db.session.commit()
+                app.logger.info(f"📊 Статус задачи обновлен: {task.status}")
+                
+            except Exception as e:
+                app.logger.error(f"❌ Ошибка при парсинге: {e}")
                 task.status = 'failed'
-            
-            db.session.commit()
-            print(f"📊 Статус задачи обновлен: {task.status}")
-            
-        except Exception as e:
-            print(f"❌ Ошибка при парсинге: {e}")
-            task.status = 'failed'
-            db.session.commit()
+                task.error_message = str(e)
+                db.session.commit()
 
     # Запускаем парсинг в фоновом режиме
     import threading
@@ -292,11 +303,17 @@ def start_translation(novel_id):
         return redirect(url_for('main.novel_detail', novel_id=novel_id))
 
     # Получаем главы для перевода
-    chapters = Chapter.query.filter_by(
-        novel_id=novel_id,
-        status='parsed',
-        is_active=True
+    # Изменяем логику: переводим все главы, которые НЕ имеют статус 'translated'
+    chapters = Chapter.query.filter(
+        Chapter.novel_id == novel_id,
+        Chapter.status != 'translated',
+        Chapter.is_active == True
     ).order_by(Chapter.chapter_number).all()
+
+    # Отладочная информация
+    print(f"🔍 Найдено глав для перевода: {len(chapters)}")
+    for ch in chapters:
+        print(f"  - Глава {ch.chapter_number}: {ch.original_title} (статус: {ch.status})")
 
     if not chapters:
         flash('Нет глав для перевода', 'warning')
@@ -314,44 +331,72 @@ def start_translation(novel_id):
     db.session.commit()
 
     # Запускаем перевод в отдельном потоке
+    task_id = task.id
+    prompt_template_id = prompt_template.id
+    chapter_ids = [ch.id for ch in chapters]
     def translate_novel():
-        try:
-            from app.services.translator_service import TranslatorService
-            
-            translator = TranslatorService()
-            total_chapters = len(chapters)
-            
-            for i, chapter in enumerate(chapters):
-                try:
-                    # Обновляем прогресс
-                    progress = (i / total_chapters) * 100
-                    task.update_progress(progress / 100, f"Перевод главы {chapter.chapter_number}")
-                    emit_task_update(task.id, progress, 'running')
-                    
-                    # Переводим главу
-                    success = translator.translate_chapter(chapter)
-                    if not success:
-                        task.fail(f"Ошибка перевода главы {chapter.chapter_number}")
-                        return
-                    
-                    time.sleep(2)  # Пауза между главами
-                    
-                except Exception as e:
-                    task.fail(f"Ошибка перевода главы {chapter.chapter_number}: {e}")
+        # Создаем контекст приложения для фонового потока
+        app = create_app()
+        with app.app_context():
+            try:
+                from app.services.translator_service import TranslatorService
+                
+                # Получаем свежие копии объектов из базы данных
+                task = Task.query.get(task_id)
+                novel = Novel.query.get(novel_id)
+                prompt_template = PromptTemplate.query.get(prompt_template_id)
+                chapters = [Chapter.query.get(cid) for cid in chapter_ids]
+                
+                if not task or not novel or not prompt_template:
+                    print("❌ Не удалось получить объекты из базы данных")
                     return
-            
-            # Завершаем задачу
-            task.complete({
-                'translated_chapters': total_chapters,
-                'novel_id': novel_id,
-                'template_used': prompt_template.name
-            })
-            novel.update_stats()
-            emit_task_update(task.id, 100, 'completed')
-            
-        except Exception as e:
-            task.fail(f"Ошибка перевода: {e}")
-            emit_task_update(task.id, 0, 'failed')
+                
+                translator = TranslatorService()
+                total_chapters = len(chapters)
+                print(f"🔄 Начинаем перевод {total_chapters} глав")
+                
+                for i, chapter in enumerate(chapters):
+                    try:
+                        print(f"📝 Переводим главу {i+1}/{total_chapters}: {chapter.chapter_number}")
+                        # Получаем свежую копию главы из базы данных
+                        chapter = Chapter.query.get(chapter.id)
+                        if not chapter:
+                            print(f"❌ Глава {i+1} не найдена в базе данных")
+                            return
+                        
+                        # Обновляем прогресс
+                        progress = (i / total_chapters) * 100
+                        task.update_progress(progress / 100, f"Перевод главы {chapter.chapter_number}")
+                        emit_task_update(task.id, progress, 'running')
+                        
+                        # Переводим главу
+                        success = translator.translate_chapter(chapter)
+                        if not success:
+                            print(f"❌ Ошибка перевода главы {chapter.chapter_number}")
+                            task.fail(f"Ошибка перевода главы {chapter.chapter_number}")
+                            return
+                        
+                        time.sleep(2)  # Пауза между главами
+                        
+                    except Exception as e:
+                        print(f"❌ Ошибка перевода главы {i+1}: {e}")
+                        task.fail(f"Ошибка перевода главы {i+1}: {e}")
+                        return
+                
+                # Завершаем задачу
+                task.complete({
+                    'translated_chapters': total_chapters,
+                    'novel_id': novel_id,
+                    'template_used': prompt_template.name
+                })
+                novel.update_stats()
+                emit_task_update(task.id, 100, 'completed')
+                
+            except Exception as e:
+                print(f"❌ Ошибка перевода: {e}")
+                if 'task' in locals() and task:
+                    task.fail(f"Ошибка перевода: {e}")
+                    emit_task_update(task.id, 0, 'failed')
     
     thread = threading.Thread(target=translate_novel)
     thread.start()
@@ -360,10 +405,12 @@ def start_translation(novel_id):
     return redirect(url_for('main.novel_detail', novel_id=novel_id))
 
 
-@main_bp.route('/novels/<int:novel_id>/edit', methods=['POST'])
+@main_bp.route('/novels/<int:novel_id>/start-editing', methods=['POST'])
 def start_editing(novel_id):
     """Запуск редактуры новеллы"""
+    logger.info(f"🚀 Запрос на редактуру новеллы {novel_id}")
     novel = Novel.query.get_or_404(novel_id)
+    logger.info(f"📖 Найдена новелла: {novel.title}")
 
     # Получаем главы для редактуры
     chapters = Chapter.query.filter_by(
@@ -372,11 +419,133 @@ def start_editing(novel_id):
         is_active=True
     ).order_by(Chapter.chapter_number).all()
 
+    logger.info(f"🔍 Найдено глав для редактуры: {len(chapters)}")
+    for ch in chapters:
+        logger.info(f"  - Глава {ch.chapter_number}: {ch.original_title} (статус: {ch.status})")
+
     if not chapters:
+        logger.warning("❌ Нет глав для редактуры")
         flash('Нет глав для редактуры', 'warning')
         return redirect(url_for('main.novel_detail', novel_id=novel_id))
 
-    flash(f'Редактура запущена для {len(chapters)} глав (заглушка)', 'success')
+    # Создаем задачу редактуры
+    task = Task(
+        novel_id=novel_id,
+        task_type='editing',
+        priority=2
+    )
+    db.session.add(task)
+    db.session.commit()
+
+    def edit_novel(task_id, chapter_ids):
+        logger.info(f"🎯 Фоновый поток редактуры запущен")
+        
+        # Создаем контекст приложения для фонового потока
+        from app import create_app
+        app = create_app()
+        
+        with app.app_context():
+            try:
+                logger.info(f"✅ Контекст приложения создан")
+                logger.info(f"📝 ID глав для редактуры: {chapter_ids}")
+                logger.info(f"📝 ID задачи: {task_id}")
+                
+                # Обновляем статус задачи на running
+                fresh_task = Task.query.get(task_id)
+                if fresh_task:
+                    fresh_task.status = 'running'
+                    fresh_task.started_at = datetime.utcnow()
+                    db.session.add(fresh_task)
+                    db.session.commit()
+                    logger.info(f"✅ Задача {task_id} переведена в статус 'running'")
+                else:
+                    logger.error(f"❌ Не удалось найти задачу {task_id}")
+                    return
+                
+                from app.services.translator_service import TranslatorService
+                from app.services.editor_service import EditorService
+                
+                # Инициализируем сервисы
+                translator_service = TranslatorService()
+                editor_service = EditorService(translator_service)
+                
+                total_chapters = len(chapter_ids)
+                success_count = 0
+                
+                logger.info(f"🚀 Начинаем редактуру {total_chapters} глав")
+                
+                for i, chapter_id in enumerate(chapter_ids, 1):
+                    try:
+                        # Получаем свежий объект главы в новом контексте сессии
+                        fresh_chapter = Chapter.query.get(chapter_id)
+                        if not fresh_chapter:
+                            logger.error(f"❌ Глава с ID {chapter_id} не найдена в базе")
+                            continue
+                        
+                        logger.info(f"📝 Редактируем главу {fresh_chapter.chapter_number} ({i}/{total_chapters})")
+                        
+                        # Обновляем прогресс
+                        progress = (i / total_chapters) * 100
+                        fresh_task = Task.query.get(task_id)
+                        if fresh_task:
+                            fresh_task.update_progress(progress / 100, f"Редактура главы {fresh_chapter.chapter_number}")
+                            emit_task_update(task_id, progress, 'running')
+                        
+                        # Редактируем главу
+                        success = editor_service.edit_chapter(fresh_chapter)
+                        if success:
+                            success_count += 1
+                            logger.info(f"✅ Глава {fresh_chapter.chapter_number} отредактирована")
+                        else:
+                            logger.error(f"❌ Ошибка редактуры главы {fresh_chapter.chapter_number}")
+                        
+                        time.sleep(2)  # Пауза между главами
+                        
+                    except Exception as e:
+                        logger.error(f"❌ Ошибка редактуры главы {i}: {e}")
+                        import traceback
+                        logger.error(f"📄 Traceback: {traceback.format_exc()}")
+                        continue
+                
+                # Обновляем счетчик отредактированных глав
+                if success_count > 0:
+                    novel_obj = Novel.query.get(novel_id)
+                    if novel_obj:
+                        novel_obj.edited_chapters = success_count
+                        db.session.add(novel_obj)
+                        db.session.commit()
+                        logger.info(f"📊 Обновлен счетчик отредактированных глав: {success_count}")
+                
+                # Завершаем задачу
+                if success_count == total_chapters:
+                    task.complete(f"Редактура завершена: {success_count}/{total_chapters} глав")
+                else:
+                    task.complete(f"Редактура завершена с ошибками: {success_count}/{total_chapters} глав")
+                
+                logger.info(f"✅ Редактура завершена: {success_count}/{total_chapters} глав")
+                
+            except Exception as e:
+                logger.error(f"❌ Критическая ошибка редактуры: {e}")
+                import traceback
+                logger.error(f"❌ Traceback: {traceback.format_exc()}")
+                
+                # Получаем свежий объект задачи в новом контексте сессии
+                task_id = task.id
+                fresh_task = Task.query.get(task_id)
+                if fresh_task:
+                    fresh_task.fail(f"Критическая ошибка: {e}")
+                else:
+                    logger.error(f"❌ Не удалось найти задачу {task_id} для обновления статуса")
+
+    # Запускаем редактуру в фоновом потоке
+    import threading
+    chapter_ids = [ch.id for ch in chapters]
+    thread = threading.Thread(target=edit_novel, args=(task.id, chapter_ids))
+    thread.daemon = True
+    thread.start()
+
+    logger.info(f"🎯 Редактура запущена в фоновом потоке для {len(chapters)} глав")
+    flash(f'Редактура запущена для {len(chapters)} глав', 'success')
     return redirect(url_for('main.novel_detail', novel_id=novel_id))
 
 
