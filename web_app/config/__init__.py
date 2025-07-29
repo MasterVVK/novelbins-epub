@@ -27,7 +27,8 @@ class Config:
 
     # Настройки перевода
     DEFAULT_TRANSLATION_MODEL = 'gemini-2.5-flash-preview-05-20'
-    DEFAULT_TEMPERATURE = 0.1
+    DEFAULT_TRANSLATION_TEMPERATURE = 0.1
+    DEFAULT_EDITING_TEMPERATURE = 0.7
     MAX_TOKENS = 24000
 
     # Настройки парсинга

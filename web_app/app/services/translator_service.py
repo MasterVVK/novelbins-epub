@@ -423,7 +423,7 @@ class LLMTranslator:
         
         raise Exception(f"Не удалось выполнить запрос после {max_attempts} попыток")
 
-    def translate_text(self, text: str, system_prompt: str, context: str = "", chapter_id: int = None) -> Optional[str]:
+    def translate_text(self, text: str, system_prompt: str, context: str = "", chapter_id: int = None, temperature: float = None) -> Optional[str]:
         """Перевод текста с использованием кастомного промпта"""
         self.current_chapter_id = chapter_id
         # Не перезаписываем current_prompt_type, если он уже установлен
@@ -432,7 +432,7 @@ class LLMTranslator:
         self.request_start_time = time.time()
         
         user_prompt = f"{context}\n\nТЕКСТ ДЛЯ ПЕРЕВОДА:\n{text}"
-        return self.make_request(system_prompt, user_prompt)
+        return self.make_request(system_prompt, user_prompt, temperature=temperature)
 
     def generate_summary(self, text: str, summary_prompt: str, chapter_id: int = None) -> Optional[str]:
         """Генерация резюме главы"""
@@ -624,14 +624,19 @@ class TranslatorService:
                                   novel_id=chapter.novel_id, chapter_id=chapter.id)
                 print(f"   📝 Перевод части {i+1}/{len(text_parts)}")
                 
+                # Получаем температуру перевода из конфигурации новеллы
+                novel_config = chapter.novel.config or {}
+                translation_temperature = novel_config.get('translation_temperature', 0.1)
+                
                 # Переводим часть
-                LogService.log_info(f"Отправляем запрос на перевод части {i+1}", 
+                LogService.log_info(f"Отправляем запрос на перевод части {i+1} с температурой {translation_temperature}", 
                                   novel_id=chapter.novel_id, chapter_id=chapter.id)
                 translated_part = self.translator.translate_text(
                     part, 
                     prompt_template.translation_prompt,
                     context_prompt,
-                    chapter.id
+                    chapter.id,
+                    temperature=translation_temperature
                 )
                 
                 if not translated_part:

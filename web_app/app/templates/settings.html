@@ -45,14 +45,48 @@
                         </div>
                         <div class="col-md-6">
                             <div class="mb-3">
-                                <label for="default_temperature" class="form-label">Температура</label>
-                                <input type="number" class="form-control" id="default_temperature" name="default_temperature" value="{{ settings.get('default_temperature', '0.1') }}" min="0" max="2" step="0.1">
-                                <div class="form-text">Креативность перевода (0-2)</div>
+                                <label for="default_translation_accuracy_mode" class="form-label">Режим точности перевода</label>
+                                <select class="form-select" id="default_translation_accuracy_mode" name="default_translation_accuracy_mode">
+                                    <option value="maximum" {% if settings.get('default_translation_accuracy_mode') == 'maximum' %}selected{% endif %}>Максимальная точность (0.1)</option>
+                                    <option value="balanced" {% if settings.get('default_translation_accuracy_mode') == 'balanced' or not settings.get('default_translation_accuracy_mode') %}selected{% endif %}>Баланс (0.3)</option>
+                                    <option value="free" {% if settings.get('default_translation_accuracy_mode') == 'free' %}selected{% endif %}>Свободный перевод (0.5)</option>
+                                </select>
+                                <div class="form-text">Автоматически устанавливает точность перевода</div>
                             </div>
                         </div>
                     </div>
                     
                     <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="default_translation_temperature_display" class="form-label">Текущая точность перевода</label>
+                                <input type="text" class="form-control" id="default_translation_temperature_display" readonly 
+                                       value="{{ settings.get('default_translation_temperature', '0.1') }}">
+                                <div class="form-text">Устанавливается автоматически в зависимости от режима точности</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="default_editing_quality_mode" class="form-label">Режим качества редактирования</label>
+                                <select class="form-select" id="default_editing_quality_mode" name="default_editing_quality_mode">
+                                    <option value="fast" {% if settings.get('default_editing_quality_mode') == 'fast' %}selected{% endif %}>Быстро (температура: 0.5)</option>
+                                    <option value="balanced" {% if settings.get('default_editing_quality_mode') == 'balanced' or not settings.get('default_editing_quality_mode') %}selected{% endif %}>Баланс (температура: 0.7)</option>
+                                    <option value="quality" {% if settings.get('default_editing_quality_mode') == 'quality' %}selected{% endif %}>Качество (температура: 0.9)</option>
+                                </select>
+                                <div class="form-text">Автоматически устанавливает температуру редактирования</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="default_editing_temperature_display" class="form-label">Текущая температура редактирования</label>
+                                <input type="text" class="form-control" id="default_editing_temperature_display" readonly 
+                                       value="{{ settings.get('default_editing_temperature', '0.7') }}">
+                                <div class="form-text">Устанавливается автоматически в зависимости от режима качества</div>
+                            </div>
+                        </div>
                         <div class="col-md-6">
                             <div class="mb-3">
                                 <label for="max_tokens" class="form-label">Максимум токенов</label>
@@ -112,6 +146,18 @@
                 <p><strong>База данных:</strong> SQLite</p>
                 <p><strong>Режим:</strong> Разработка</p>
                 <hr>
+                <h6>Настройки AI модели:</h6>
+                <ul class="list-unstyled">
+                    <li><strong>Точность перевода (0-1):</strong></li>
+                    <li>• 0.0-0.2: Максимальная точность</li>
+                    <li>• 0.3-0.5: Баланс точности и читаемости</li>
+                    <li>• 0.6-1.0: Более свободный перевод</li>
+                    <li><strong>Режим редактирования:</strong></li>
+                    <li>• Быстро (0.5): Быстрая редактура</li>
+                    <li>• Баланс (0.7): Оптимальное качество</li>
+                    <li>• Качество (0.9): Максимальное качество</li>
+                </ul>
+                <hr>
                 <h6>Поддерживаемые источники:</h6>
                 <ul class="list-unstyled">
                     <li><i class="bi bi-check text-success"></i> NovelBins</li>
@@ -129,4 +175,38 @@
         </div>
     </div>
 </div>
+
+<script>
+// Автоматическое обновление точности перевода при выборе режима
+document.getElementById('default_translation_accuracy_mode').addEventListener('change', function() {
+    const mode = this.value;
+    const temperatureDisplay = document.getElementById('default_translation_temperature_display');
+    
+    const temperatureMap = {
+        'maximum': 0.1,
+        'balanced': 0.3,
+        'free': 0.5
+    };
+    
+    if (temperatureMap[mode]) {
+        temperatureDisplay.value = temperatureMap[mode];
+    }
+});
+
+// Автоматическое обновление температуры редактирования при выборе режима качества
+document.getElementById('default_editing_quality_mode').addEventListener('change', function() {
+    const mode = this.value;
+    const temperatureDisplay = document.getElementById('default_editing_temperature_display');
+    
+    const temperatureMap = {
+        'fast': 0.5,
+        'balanced': 0.7,
+        'quality': 0.9
+    };
+    
+    if (temperatureMap[mode]) {
+        temperatureDisplay.value = temperatureMap[mode];
+    }
+});
+</script>
 {% endblock %} 

@@ -62,9 +62,30 @@
                         </div>
                         <div class="col-md-6">
                             <div class="mb-3">
-                                <label for="temperature" class="form-label">Температура</label>
-                                <input type="number" class="form-control" id="temperature" name="temperature" value="0.1" min="0" max="2" step="0.1">
-                                <div class="form-text">Креативность перевода (0-2)</div>
+                                <label for="translation_temperature" class="form-label">Точность перевода</label>
+                                <input type="number" class="form-control" id="translation_temperature" name="translation_temperature" value="0.1" min="0" max="1" step="0.1">
+                                <div class="form-text">Точность перевода (0-1). 0 = максимальная точность, 1 = более свободный перевод</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="editing_quality_mode" class="form-label">Режим качества редактирования</label>
+                                <select class="form-select" id="editing_quality_mode" name="editing_quality_mode">
+                                    <option value="fast">Быстро (температура: 0.5)</option>
+                                    <option value="balanced" selected>Баланс (температура: 0.7)</option>
+                                    <option value="quality">Качество (температура: 0.9)</option>
+                                </select>
+                                <div class="form-text">Автоматически устанавливает температуру редактирования</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="editing_temperature_display" class="form-label">Текущая температура редактирования</label>
+                                <input type="text" class="form-control" id="editing_temperature_display" readonly value="0.7">
+                                <div class="form-text">Устанавливается автоматически в зависимости от режима качества</div>
                             </div>
                         </div>
                     </div>
@@ -82,4 +103,22 @@
         </div>
     </div>
 </div>
+
+<script>
+// Автоматическое обновление температуры редактирования при выборе режима качества
+document.getElementById('editing_quality_mode').addEventListener('change', function() {
+    const mode = this.value;
+    const temperatureDisplay = document.getElementById('editing_temperature_display');
+    
+    const temperatureMap = {
+        'fast': 0.5,
+        'balanced': 0.7,
+        'quality': 0.9
+    };
+    
+    if (temperatureMap[mode]) {
+        temperatureDisplay.value = temperatureMap[mode];
+    }
+});
+</script>
 {% endblock %} 

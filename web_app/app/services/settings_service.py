@@ -27,9 +27,24 @@ class SettingsService:
         return SystemSettings.get_setting('default_model', 'gemini-2.5-flash-preview-05-20')
     
     @staticmethod
+    def get_default_translation_temperature() -> float:
+        """Получить температуру перевода по умолчанию"""
+        return float(SystemSettings.get_setting('default_translation_temperature', '0.1'))
+    
+    @staticmethod
+    def get_default_editing_temperature() -> float:
+        """Получить температуру редактирования по умолчанию"""
+        return float(SystemSettings.get_setting('default_editing_temperature', '0.7'))
+    
+    @staticmethod
+    def get_default_editing_quality_mode() -> str:
+        """Получить режим качества редактирования по умолчанию"""
+        return SystemSettings.get_setting('default_editing_quality_mode', 'balanced')
+    
+    @staticmethod
     def get_default_temperature() -> float:
-        """Получить температуру по умолчанию"""
-        return float(SystemSettings.get_setting('default_temperature', '0.1'))
+        """Получить температуру по умолчанию (для обратной совместимости)"""
+        return SettingsService.get_default_translation_temperature()
     
     @staticmethod
     def get_max_tokens() -> int:

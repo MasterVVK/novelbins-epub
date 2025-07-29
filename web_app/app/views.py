@@ -65,6 +65,15 @@ def new_novel():
             flash('Заполните все обязательные поля', 'error')
             return redirect(url_for('main.new_novel'))
 
+        # Вычисляем температуру редактирования на основе режима качества
+        editing_quality_mode = request.form.get('editing_quality_mode', 'balanced')
+        editing_temperature_map = {
+            'fast': 0.5,
+            'balanced': 0.7,
+            'quality': 0.9
+        }
+        editing_temperature = editing_temperature_map.get(editing_quality_mode, 0.7)
+        
         novel = Novel(
             title=title,
             source_url=source_url,
@@ -73,7 +82,9 @@ def new_novel():
                 'max_chapters': int(request.form.get('max_chapters', 10)),
                 'request_delay': float(request.form.get('request_delay', 1.0)),
                 'translation_model': request.form.get('translation_model', 'gemini-2.5-flash-preview-05-20'),
-                'temperature': float(request.form.get('temperature', 0.1))
+                'translation_temperature': float(request.form.get('translation_temperature', 0.1)),
+                'editing_temperature': editing_temperature,
+                'editing_quality_mode': editing_quality_mode
             }
         )
 
@@ -130,14 +141,24 @@ def edit_novel(novel_id):
         max_chapters = request.form.get('max_chapters')
         request_delay = request.form.get('request_delay')
         translation_model = request.form.get('translation_model')
-        temperature = request.form.get('temperature')
+        translation_temperature = request.form.get('translation_temperature')
+        editing_quality_mode = request.form.get('editing_quality_mode')
+        
+        # Вычисляем температуру редактирования на основе режима качества
+        editing_temperature_map = {
+            'fast': 0.5,
+            'balanced': 0.7,
+            'quality': 0.9
+        }
+        editing_temperature = editing_temperature_map.get(editing_quality_mode, 0.7)
         
         # Отладочная информация
         print(f"🔍 Данные формы для '{novel.title}':")
         print(f"   max_chapters: {max_chapters} (тип: {type(max_chapters)})")
         print(f"   request_delay: {request_delay} (тип: {type(request_delay)})")
         print(f"   translation_model: {translation_model}")
-        print(f"   temperature: {temperature}")
+        print(f"   translation_temperature: {translation_temperature}")
+        print(f"   editing_quality_mode: {editing_quality_mode} -> editing_temperature: {editing_temperature}")
         print(f"   Старая конфигурация: {novel.config}")
         
         # Обновляем конфигурацию с проверкой значений
@@ -145,7 +166,9 @@ def edit_novel(novel_id):
             'max_chapters': int(max_chapters) if max_chapters else 10,
             'request_delay': float(request_delay) if request_delay else 1.0,
             'translation_model': translation_model or 'gemini-2.5-flash-preview-05-20',
-            'temperature': float(temperature) if temperature else 0.1
+            'translation_temperature': float(translation_temperature) if translation_temperature else 0.1,
+            'editing_temperature': float(editing_temperature) if editing_temperature else 0.7,
+            'editing_quality_mode': editing_quality_mode or 'balanced'
         }
         
         # Принудительно обновляем поле config
@@ -908,13 +931,35 @@ def settings():
             flash('Максимальное количество токенов должно быть от 1000 до 128000', 'error')
             return redirect(url_for('main.settings'))
         
+        # Вычисляем температуру перевода на основе режима точности
+        translation_accuracy_mode = request.form.get('default_translation_accuracy_mode', 'balanced')
+        translation_temperature_map = {
+            'maximum': 0.1,
+            'balanced': 0.3,
+            'free': 0.5
+        }
+        translation_temperature = translation_temperature_map.get(translation_accuracy_mode, 0.3)
+        
+        # Вычисляем температуру редактирования на основе режима качества
+        editing_quality_mode = request.form.get('default_editing_quality_mode', 'balanced')
+        editing_temperature_map = {
+            'fast': 0.5,
+            'balanced': 0.7,
+            'quality': 0.9
+        }
+        editing_temperature = editing_temperature_map.get(editing_quality_mode, 0.7)
+        
         # Обновление настроек
         settings_data = {
             'default_translation_model': request.form.get('default_translation_model'),
-            'default_temperature': float(request.form.get('default_temperature', 0.1)),
+            'default_translation_temperature': translation_temperature,
+            'default_translation_accuracy_mode': translation_accuracy_mode,
+            'default_editing_temperature': editing_temperature,
+            'default_editing_quality_mode': editing_quality_mode,
             'max_tokens': max_tokens,
             'max_chapters': int(request.form.get('max_chapters', 10)),
-            'request_delay': float(request.form.get('request_delay', 1.0))
+            'request_delay': float(request.form.get('request_delay', 1.0)),
+            'quality_threshold': int(request.form.get('quality_threshold', 7))
         }
         
         # Сохраняем настройки
@@ -934,9 +979,9 @@ def settings():
     settings_dict = {}
     for setting in SystemSettings.query.all():
         try:
-            if setting.key in ['default_temperature', 'request_delay']:
+            if setting.key in ['default_translation_temperature', 'default_editing_temperature', 'request_delay']:
                 settings_dict[setting.key] = float(setting.value)
-            elif setting.key in ['max_tokens', 'max_chapters']:
+            elif setting.key in ['max_tokens', 'max_chapters', 'quality_threshold']:
                 settings_dict[setting.key] = int(setting.value)
             else:
                 settings_dict[setting.key] = setting.value
