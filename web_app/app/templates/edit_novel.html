@@ -66,9 +66,19 @@
                             <div class="mb-3">
                                 <label for="max_chapters" class="form-label">Максимум глав</label>
                                 <!-- Отладка: max_chapters = {{ novel.config.max_chapters if novel.config and novel.config.max_chapters else 'НЕТ ЗНАЧЕНИЯ' }} -->
-                                <input type="number" class="form-control" id="max_chapters" name="max_chapters" 
-                                       value="{{ novel.config.max_chapters if novel.config and novel.config.max_chapters else 10 }}" 
-                                       min="1" max="100">
+                                <div class="input-group">
+                                    <input type="number" class="form-control" id="max_chapters" name="max_chapters" 
+                                           value="{{ novel.config.max_chapters if novel.config and novel.config.max_chapters else 10 }}" 
+                                           min="1" max="100" 
+                                           {{ 'disabled style="background-color: #e9ecef;"' if novel.config and novel.config.all_chapters else '' }}>
+                                </div>
+                                <div class="form-check mt-2">
+                                    <input class="form-check-input" type="checkbox" id="all_chapters" name="all_chapters" value="true"
+                                           {{ 'checked' if novel.config and novel.config.all_chapters else '' }}>
+                                    <label class="form-check-label" for="all_chapters">
+                                        Все главы (игнорировать ограничение)
+                                    </label>
+                                </div>
                                 <div class="form-text">Текущее значение: {{ novel.config.max_chapters if novel.config and novel.config.max_chapters else 'не установлено' }}</div>
                             </div>
                         </div>
@@ -177,5 +187,21 @@ document.getElementById('editing_quality_mode').addEventListener('change', funct
         temperatureDisplay.value = temperatureMap[mode];
     }
 });
+
+// Обработка чекбокса "все главы"
+const allChaptersCheckbox = document.getElementById('all_chapters');
+const maxChaptersInput = document.getElementById('max_chapters');
+
+if (allChaptersCheckbox && maxChaptersInput) {
+    allChaptersCheckbox.addEventListener('change', function() {
+        if (this.checked) {
+            maxChaptersInput.disabled = true;
+            maxChaptersInput.style.backgroundColor = '#e9ecef';
+        } else {
+            maxChaptersInput.disabled = false;
+            maxChaptersInput.style.backgroundColor = '';
+        }
+    });
+}
 </script>
 {% endblock %} 

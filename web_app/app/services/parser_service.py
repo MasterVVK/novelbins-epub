@@ -1,10 +1,13 @@
 """
 Сервис парсинга глав для веб-приложения
+Обновлен для использования новой системы парсеров
 """
 import time
 import re
 import logging
 import requests
+import sys
+import os
 from bs4 import BeautifulSoup
 from typing import List, Optional
 from selenium import webdriver
@@ -16,6 +19,18 @@ from app.models import Novel, Chapter, Task
 from app import db
 from app.services.settings_service import SettingsService
 from app.services.log_service import LogService
+
+# Добавляем путь к новой системе парсеров
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+sys.path.insert(0, project_root)
+
+try:
+    from parsers import create_parser_from_url, detect_source, get_available_sources
+    PARSERS_AVAILABLE = True
+    LogService.log_info("✅ Новая система парсеров загружена успешно")
+except ImportError as e:
+    LogService.log_warning(f"⚠️ Новая система парсеров недоступна: {e}")
+    PARSERS_AVAILABLE = False
 
 # Настраиваем логгер
 logger = logging.getLogger(__name__)
@@ -63,17 +78,86 @@ class WebParserService:
         return int(match.group(1)) if match else 0
 
     def parse_novel_chapters(self, novel: Novel) -> List[dict]:
-        """Парсинг всех глав новеллы с помощью requests (новая структура сайта)"""
-        LogService.log_info(f"Парсинг новеллы: {novel.title}", novel_id=novel.id)
+        """Парсинг всех глав новеллы с использованием новой системы парсеров"""
+        LogService.log_info(f"🚀 Начинаем парсинг новеллы: {novel.title}", novel_id=novel.id)
         
-        # Исправляем URL - добавляем слеш в конце если его нет
         novel_url = novel.source_url
-        if not novel_url.endswith('/'):
-            novel_url += '/'
+        LogService.log_info(f"📖 URL: {novel_url}", novel_id=novel.id)
         
-        LogService.log_info(f"URL: {novel_url}", novel_id=novel.id)
+        # Пробуем использовать новую систему парсеров
+        if PARSERS_AVAILABLE:
+            return self._parse_with_new_system(novel, novel_url)
+        else:
+            LogService.log_warning("⚠️ Используется устаревший парсер", novel_id=novel.id)
+            return self._parse_with_legacy_system(novel, novel_url)
 
+    def _parse_with_new_system(self, novel: Novel, novel_url: str) -> List[dict]:
+        """Парсинг с использованием новой системы парсеров"""
         try:
+            LogService.log_info("🔍 Определение источника...", novel_id=novel.id)
+            
+            # Определяем источник
+            detected_source = detect_source(novel_url)
+            source_type = novel.source_type if novel.source_type else detected_source
+            
+            LogService.log_info(f"📚 Источник: {source_type} (определен: {detected_source})", novel_id=novel.id)
+            
+            # Создаем парсер
+            parser = create_parser_from_url(novel_url)
+            if not parser:
+                LogService.log_error(f"❌ Не удалось создать парсер для {source_type}", novel_id=novel.id)
+                return self._parse_with_legacy_system(novel, novel_url)
+            
+            LogService.log_info(f"✅ Парсер создан: {parser.source_name}", novel_id=novel.id)
+            
+            # Получаем список глав
+            LogService.log_info("📖 Получение списка глав...", novel_id=novel.id)
+            chapters = parser.get_chapter_list(novel_url)
+            
+            if not chapters:
+                LogService.log_error("❌ Список глав пуст", novel_id=novel.id)
+                return []
+            
+            LogService.log_info(f"📑 Найдено глав: {len(chapters)}", novel_id=novel.id)
+            
+            # Применяем ограничение по количеству глав
+            all_chapters_enabled = novel.config.get('all_chapters', False) if novel.config else False
+            
+            if all_chapters_enabled:
+                limited_chapters = chapters
+                LogService.log_info(f"📊 Выбрано все главы: {len(chapters)} глав", novel_id=novel.id)
+            else:
+                max_chapters = novel.config.get('max_chapters', 10) if novel.config else 10
+                limited_chapters = chapters[:max_chapters]
+                LogService.log_info(f"📊 Выбрано для обработки: {len(limited_chapters)} из {len(chapters)} глав", novel_id=novel.id)
+            
+            # Конвертируем в формат, ожидаемый веб-приложением
+            result_chapters = []
+            for i, chapter in enumerate(limited_chapters, 1):
+                result_chapters.append({
+                    'url': chapter['url'],
+                    'title': chapter['title'],
+                    'number': chapter.get('number', i)
+                })
+            
+            # Закрываем парсер
+            parser.close()
+            
+            LogService.log_info(f"✅ Парсинг завершен успешно: {len(result_chapters)} глав", novel_id=novel.id)
+            return result_chapters
+            
+        except Exception as e:
+            LogService.log_error(f"❌ Ошибка в новой системе парсеров: {e}", novel_id=novel.id)
+            # Откат к старой системе при ошибке
+            return self._parse_with_legacy_system(novel, novel_url)
+
+    def _parse_with_legacy_system(self, novel: Novel, novel_url: str) -> List[dict]:
+        """Устаревший парсер для обратной совместимости"""
+        try:
+            # Исправляем URL - добавляем слеш в конце если его нет
+            if not novel_url.endswith('/'):
+                novel_url += '/'
+            
             # Загружаем страницу с помощью requests
             LogService.log_info("Загрузка страницы новеллы...", novel_id=novel.id)
             headers = {
@@ -93,6 +177,7 @@ class WebParserService:
 
             all_chapters = []
             # Используем настройки из конфигурации новеллы
+            all_chapters_enabled = novel.config.get('all_chapters', False) if novel.config else False
             max_chapters = novel.config.get('max_chapters', 10) if novel.config else 10
 
             # Собираем все главы сначала
@@ -118,9 +203,13 @@ class WebParserService:
             # Сортируем по номеру главы
             temp_chapters.sort(key=lambda x: x['number'])
             
-            # Берем только первые max_chapters глав
-            all_chapters = temp_chapters[:max_chapters]
-            LogService.log_info(f"Выбрано первых {len(all_chapters)} глав из {len(temp_chapters)} найденных", novel_id=novel.id)
+            # Применяем ограничение по количеству глав
+            if all_chapters_enabled:
+                all_chapters = temp_chapters
+                LogService.log_info(f"Выбрано все главы: {len(all_chapters)} глав", novel_id=novel.id)
+            else:
+                all_chapters = temp_chapters[:max_chapters]
+                LogService.log_info(f"Выбрано первых {len(all_chapters)} глав из {len(temp_chapters)} найденных", novel_id=novel.id)
 
             # Сортируем по номеру
             all_chapters.sort(key=lambda x: x['number'])
@@ -133,8 +222,47 @@ class WebParserService:
             return []
 
     def parse_chapter_content(self, chapter_url: str, chapter_number: int) -> Optional[str]:
-        """Парсинг содержимого главы с помощью requests"""
-        LogService.log_info(f"Загрузка главы {chapter_number}: {chapter_url}")
+        """Парсинг содержимого главы с использованием новой системы парсеров"""
+        LogService.log_info(f"📄 Загрузка главы {chapter_number}: {chapter_url}")
+        
+        # Пробуем использовать новую систему парсеров
+        if PARSERS_AVAILABLE:
+            return self._parse_chapter_with_new_system(chapter_url, chapter_number)
+        else:
+            LogService.log_warning("⚠️ Используется устаревший парсер для главы", chapter_id=chapter_number)
+            return self._parse_chapter_with_legacy_system(chapter_url, chapter_number)
+
+    def _parse_chapter_with_new_system(self, chapter_url: str, chapter_number: int) -> Optional[str]:
+        """Парсинг содержимого главы с новой системой"""
+        try:
+            # Создаем парсер для URL главы
+            parser = create_parser_from_url(chapter_url)
+            if not parser:
+                LogService.log_warning(f"⚠️ Не удалось создать парсер для главы {chapter_number}, используем legacy", chapter_id=chapter_number)
+                return self._parse_chapter_with_legacy_system(chapter_url, chapter_number)
+            
+            # Получаем содержимое главы
+            chapter_data = parser.get_chapter_content(chapter_url)
+            if not chapter_data or not chapter_data.get('content'):
+                LogService.log_error(f"❌ Пустое содержимое главы {chapter_number}", chapter_id=chapter_number)
+                parser.close()
+                return None
+            
+            content = chapter_data['content']
+            LogService.log_info(f"✅ Глава {chapter_number} загружена: {len(content)} символов", chapter_id=chapter_number)
+            
+            # Закрываем парсер
+            parser.close()
+            
+            return content
+            
+        except Exception as e:
+            LogService.log_error(f"❌ Ошибка парсинга главы {chapter_number} новой системой: {e}", chapter_id=chapter_number)
+            # Откат к старой системе
+            return self._parse_chapter_with_legacy_system(chapter_url, chapter_number)
+
+    def _parse_chapter_with_legacy_system(self, chapter_url: str, chapter_number: int) -> Optional[str]:
+        """Устаревший парсер для содержимого глав"""
 
         try:
             # Загружаем страницу главы

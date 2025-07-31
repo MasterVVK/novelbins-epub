@@ -1,10 +1,12 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, current_app
 from app.models import Novel, Chapter, Task, PromptTemplate, SystemSettings
 from app import db, socketio
+from sqlalchemy.orm.attributes import flag_modified
 from app.services.translator_service import TranslatorService
 from app.services.parser_service import WebParserService
 from app.services.editor_service import EditorService
 from app.services.log_service import LogService
+from app.services.parser_integration import ParserIntegrationService
 import threading
 import time
 import logging
@@ -60,10 +62,26 @@ def new_novel():
         title = request.form.get('title')
         source_url = request.form.get('source_url')
         source_type = request.form.get('source_type', 'novelbins')
+        auto_detect = request.form.get('auto_detect', 'false') == 'true'
 
         if not title or not source_url:
             flash('Заполните все обязательные поля', 'error')
             return redirect(url_for('main.new_novel'))
+
+        # Автоопределение источника если включено
+        if auto_detect and source_url:
+            detected_source = ParserIntegrationService.detect_source_from_url(source_url)
+            if detected_source:
+                source_type = detected_source
+                flash(f'Автоматически определен источник: {detected_source}', 'info')
+            else:
+                flash('Не удалось автоматически определить источник, используется выбранный', 'warning')
+
+        # Проверка соответствия URL и источника
+        if source_url and not ParserIntegrationService.validate_url_for_source(source_url, source_type):
+            detected = ParserIntegrationService.detect_source_from_url(source_url)
+            if detected and detected != source_type:
+                flash(f'Внимание: URL больше подходит для источника "{detected}", но выбран "{source_type}"', 'warning')
 
         # Вычисляем температуру редактирования на основе режима качества
         editing_quality_mode = request.form.get('editing_quality_mode', 'balanced')
@@ -74,12 +92,16 @@ def new_novel():
         }
         editing_temperature = editing_temperature_map.get(editing_quality_mode, 0.7)
         
+        # Обрабатываем опцию "все главы"
+        all_chapters = request.form.get('all_chapters', 'false') == 'true'
+        
         novel = Novel(
             title=title,
             source_url=source_url,
             source_type=source_type,
             config={
                 'max_chapters': int(request.form.get('max_chapters', 10)),
+                'all_chapters': all_chapters,
                 'request_delay': float(request.form.get('request_delay', 1.0)),
                 'translation_model': request.form.get('translation_model', 'gemini-2.5-flash-preview-05-20'),
                 'translation_temperature': float(request.form.get('translation_temperature', 0.1)),
@@ -91,10 +113,42 @@ def new_novel():
         db.session.add(novel)
         db.session.commit()
 
-        flash(f'Новелла "{title}" добавлена', 'success')
+        flash(f'Новелла "{title}" добавлена с источником {source_type}', 'success')
         return redirect(url_for('main.novel_detail', novel_id=novel.id))
 
-    return render_template('new_novel.html')
+    # Получаем доступные источники для формы
+    available_sources = ParserIntegrationService.get_available_sources_with_info()
+    return render_template('new_novel.html', available_sources=available_sources)
+
+
+@main_bp.route('/api/detect-source', methods=['POST'])
+def api_detect_source():
+    """API endpoint для автоопределения источника по URL"""
+    try:
+        data = request.get_json()
+        url = data.get('url')
+        
+        if not url:
+            return jsonify({'error': 'URL не указан'}), 400
+        
+        detected = ParserIntegrationService.detect_source_from_url(url)
+        
+        if detected:
+            source_info = ParserIntegrationService.get_parser_info(detected)
+            return jsonify({
+                'detected': True,
+                'source': detected,
+                'info': source_info
+            })
+        else:
+            return jsonify({
+                'detected': False,
+                'message': 'Источник не распознан'
+            })
+            
+    except Exception as e:
+        logger.error(f"Ошибка автоопределения источника: {e}")
+        return jsonify({'error': 'Внутренняя ошибка сервера'}), 500
 
 
 @main_bp.route('/novels/<int:novel_id>/edit', methods=['GET', 'POST'])
@@ -161,9 +215,13 @@ def edit_novel(novel_id):
         print(f"   editing_quality_mode: {editing_quality_mode} -> editing_temperature: {editing_temperature}")
         print(f"   Старая конфигурация: {novel.config}")
         
+        # Обрабатываем опцию "все главы"
+        all_chapters = request.form.get('all_chapters', 'false') == 'true'
+        
         # Обновляем конфигурацию с проверкой значений
         new_config = {
             'max_chapters': int(max_chapters) if max_chapters else 10,
+            'all_chapters': all_chapters,
             'request_delay': float(request_delay) if request_delay else 1.0,
             'translation_model': translation_model or 'gemini-2.5-flash-preview-05-20',
             'translation_temperature': float(translation_temperature) if translation_temperature else 0.1,
@@ -173,6 +231,9 @@ def edit_novel(novel_id):
         
         # Принудительно обновляем поле config
         novel.config = new_config
+        
+        # Важно! Уведомляем SQLAlchemy о том, что JSON поле изменилось
+        flag_modified(novel, 'config')
         
         print(f"   Новая конфигурация: {novel.config}")
 
