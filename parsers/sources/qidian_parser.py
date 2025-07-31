@@ -25,21 +25,43 @@ class QidianParser(BaseParser):
     def __init__(self):
         super().__init__("qidian")
         
-        # Специфичные заголовки для Qidian (мобильная версия)
-        self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-            'Accept-Encoding': 'gzip, deflate',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
-        })
+        # Пул User-Agent'ов для ротации
+        self.user_agents = [
+            'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1',
+            'Mozilla/5.0 (iPhone; CPU iPhone OS 14_7_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.2 Mobile/15E148 Safari/604.1',
+            'Mozilla/5.0 (Linux; Android 11; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.120 Mobile Safari/537.36',
+            'Mozilla/5.0 (Linux; Android 10; Mi 9T Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.120 Mobile Safari/537.36',
+            'Mozilla/5.0 (iPad; CPU OS 14_7_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.2 Mobile/15E148 Safari/604.1'
+        ]
+        self.current_ua_index = 0
+        
+        # Устанавливаем начальные заголовки
+        self._update_headers()
         
         # Базовые URL
         self.mobile_base_url = "https://m.qidian.com"
         
         # Счетчики для адаптивных пауз
         self.consecutive_errors = 0
+        
+    def _update_headers(self):
+        """Обновляем заголовки с новым User-Agent"""
+        self.session.headers.update({
+            'User-Agent': self.user_agents[self.current_ua_index],
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+            'Accept-Encoding': 'gzip, deflate',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Cache-Control': 'no-cache',
+            'Pragma': 'no-cache'
+        })
+        
+    def _rotate_user_agent(self):
+        """Переключаем на следующий User-Agent"""
+        self.current_ua_index = (self.current_ua_index + 1) % len(self.user_agents)
+        self._update_headers()
+        print(f"🔄 Переключение User-Agent: {self.user_agents[self.current_ua_index][:50]}...")
     
     def get_book_info(self, book_url: str) -> Dict:
         """
@@ -210,46 +232,86 @@ class QidianParser(BaseParser):
         if not html_content:
             raise Exception(f"Не удалось получить содержимое главы: {chapter_url}")
         
-        soup = BeautifulSoup(html_content, 'html.parser')
+        try:
+            soup = BeautifulSoup(html_content, 'html.parser')
+            
+            # Извлекаем заголовок главы (обновленные селекторы)
+            title_selectors = [
+                '#reader-content h2.title',
+                'div.print h2.title',
+                'h2.title',
+                'h1.chapter__title',
+                '.title'
+            ]
+            
+            title = "Неизвестная глава"
+            for selector in title_selectors:
+                title_elem = soup.select_one(selector)
+                if title_elem:
+                    title = title_elem.get_text(strip=True)
+                    if title:  # Проверяем, что заголовок не пустой
+                        break
+            
+            # Извлекаем содержимое главы (обновленные селекторы)
+            content_selectors = [
+                '#reader-content main.content',
+                'div.print main.content',
+                'main.content',
+                '.chapter__content',
+                '.content'
+            ]
+            
+            content_elem = None
+            for selector in content_selectors:
+                content_elem = soup.select_one(selector)
+                if content_elem:
+                    break
+                    
+            if not content_elem:
+                raise Exception("Не удалось найти содержимое главы (проверено: {', '.join(content_selectors)})")
+            
+            # Очищаем содержимое от лишних элементов
+            content = self._clean_chapter_content(content_elem)
+            
+            # Извлекаем chapter_id из URL
+            chapter_id = self._extract_chapter_id(chapter_url)
         
-        # Извлекаем заголовок главы
-        title_elem = soup.select_one('h1.chapter__title, .title')
-        title = title_elem.get_text(strip=True) if title_elem else "Неизвестная глава"
-        
-        # Извлекаем содержимое главы
-        content_elem = soup.select_one('.chapter__content, .content')
-        if not content_elem:
-            raise Exception("Не удалось найти содержимое главы")
-        
-        # Очищаем содержимое от лишних элементов
-        content = self._clean_chapter_content(content_elem)
-        
-        # Извлекаем chapter_id из URL
-        chapter_id = self._extract_chapter_id(chapter_url)
-        
-        return {
-            'title': title,
-            'content': content,
-            'chapter_id': chapter_id,
-            'word_count': len(content)
-        }
+            return {
+                'title': title,
+                'content': content,
+                'chapter_id': chapter_id,
+                'word_count': len(content)
+            }
+        except Exception as e:
+            print(f"⚠️ Ошибка парсинга содержимого главы: {e}")
+            # Возвращаем пустой результат вместо исключения
+            return {
+                'title': 'Недоступная глава',
+                'content': 'Содержимое главы недоступно из-за ограничений сайта.',
+                'chapter_id': self._extract_chapter_id(chapter_url) or '0',
+                'word_count': 0
+            }
     
     def _delay_between_requests(self):
         """
         Адаптивная пауза между запросами для Qidian
         """
         # Базовая пауза
-        base_delay = 1.5
+        base_delay = 2.0  # Увеличили базовую паузу
         
         # Увеличиваем паузу при ошибках
         if self.consecutive_errors > 0:
-            base_delay *= (1 + self.consecutive_errors * 0.5)
+            # Больше увеличиваем паузу при ошибках
+            base_delay *= (1 + self.consecutive_errors * 1.0)  # Увеличили множитель
+        
+        # Максимальная пауза 60 секунд
+        base_delay = min(base_delay, 60.0)
         
         # Случайная составляющая для имитации человека
-        random_factor = random.uniform(0.2, 0.8)
+        random_factor = random.uniform(0.5, 1.5)  # Увеличили случайность
         delay = base_delay + random_factor
         
-        print(f"⏳ Пауза {delay:.1f}s...")
+        print(f"⏳ Пауза {delay:.1f}s (ошибок подряд: {self.consecutive_errors})...")
         time.sleep(delay)
     
     def _get_page_content(self, url: str, timeout: int = 10, description: str = "") -> Optional[str]:
@@ -261,6 +323,8 @@ class QidianParser(BaseParser):
             
             if description:
                 print(f"🌐 {description}: {url}")
+            else:
+                print(f"🌐 Запрос: {url}")
             
             response = self.session.get(url, timeout=timeout)
             
@@ -271,23 +335,47 @@ class QidianParser(BaseParser):
                 html_content = response.text
                 
                 # Проверяем качество HTML для Qidian
-                if (html_content and 
-                    len(html_content) > 5000 and
-                    html_content.strip().startswith('<') and
-                    ('起点中文网' in html_content or 'qidian.com' in html_content)):
-                    
+                # Проверяем качество HTML
+                is_valid_html = (
+                    html_content and 
+                    len(html_content) > 1000 and  # Уменьшили минимальный размер
+                    html_content.strip().startswith('<')
+                )
+                
+                # Проверяем на Qidian маркеры
+                has_qidian_markers = (
+                    '起点中文网' in html_content or 
+                    'qidian.com' in html_content or
+                    'reader-content' in html_content or
+                    'chapter' in html_content.lower()
+                )
+                
+                if is_valid_html and has_qidian_markers:
                     self.success_count += 1
                     self.consecutive_errors = 0
-                    print(f"✅ Качественный HTML получен")
+                    print(f"✅ Качественный HTML получен ({len(html_content)} символов)")
                     return html_content
                 else:
                     print("⚠️ HTML не прошел проверку качества")
+                    print(f"   Размер: {len(html_content)}, HTML: {is_valid_html}, Qidian: {has_qidian_markers}")
                     self.consecutive_errors += 1
                     
             elif response.status_code == 202:
                 print("⚠️ Сервер возвращает 202 - возможная защита от ботов")
                 self.consecutive_errors += 1
                 time.sleep(5)
+                
+            elif response.status_code == 403:
+                print("⚠️ HTTP 403 Forbidden - защита от ботов")
+                self.consecutive_errors += 1
+                
+                # Переключаем User-Agent при ошибках 403
+                self._rotate_user_agent()
+                
+                # Увеличиваем задержку при 403 ошибке
+                delay = 15 + (self.consecutive_errors * 5)  # Минимум 15 сек, +5 сек за каждую ошибку
+                print(f"⏳ Увеличенная пауза: {delay} секунд...")
+                time.sleep(delay)
                 
             elif response.status_code == 429:
                 print("⚠️ Rate limiting - слишком много запросов")
@@ -440,20 +528,51 @@ class QidianParser(BaseParser):
     
     def _clean_chapter_content(self, content_elem) -> str:
         """
-        Очистить содержимое главы от лишних элементов
+        Очистить содержимое главы от лишних элементов (улучшенная версия)
         """
-        # Удаляем ненужные элементы
-        for unwanted in content_elem.select('script, style, .ad, .advertisement'):
-            unwanted.decompose()
+        # Удаляем ненужные элементы (расширенный список)
+        unwanted_selectors = [
+            'script', 'style', '.ad', '.advertisement', '.nav', '.navigation',
+            '.header', '.footer', '.sidebar', '.comment', '.share', '.social',
+            '.related', '.recommend', '[class*="ad"]', '[class*="banner"]'
+        ]
         
-        # Получаем текст с сохранением абзацев
+        for selector in unwanted_selectors:
+            for unwanted in content_elem.select(selector):
+                unwanted.decompose()
+        
+        # Получаем текст с сохранением структуры
         paragraphs = []
-        for p in content_elem.find_all(['p', 'div']):
+        
+        # Сначала пробуем найти правильные параграфы
+        for p in content_elem.find_all('p'):
             text = p.get_text(strip=True)
-            if text and len(text) > 10:  # Игнорируем короткие строки
+            if text and len(text) > 20:  # Увеличили минимальную длину
                 paragraphs.append(text)
         
-        return '\n\n'.join(paragraphs) if paragraphs else content_elem.get_text(strip=True)
+        # Если не нашли параграфы, ищем в div'ах
+        if not paragraphs:
+            for div in content_elem.find_all('div'):
+                text = div.get_text(strip=True)
+                if text and len(text) > 20:
+                    # Проверяем, что это не навигация
+                    if not any(nav_word in text.lower() for nav_word in ['目录', '下一章', '上一章', 'menu', 'next', 'prev']):
+                        paragraphs.append(text)
+        
+        # Если все еще пусто, берем весь текст
+        if not paragraphs:
+            full_text = content_elem.get_text(strip=True)
+            if full_text:
+                # Разбиваем по строкам и фильтруем
+                lines = [line.strip() for line in full_text.split('\n') if line.strip()]
+                paragraphs = [line for line in lines if len(line) > 20]
+        
+        result = '\n\n'.join(paragraphs) if paragraphs else "Нет содержимого"
+        
+        # Отладочная информация
+        print(f"   📝 Очищено содержимое: {len(paragraphs)} абзацев, {len(result)} символов")
+        
+        return result
 
 
 def main():

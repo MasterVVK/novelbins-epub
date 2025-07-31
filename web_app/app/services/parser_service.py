@@ -115,8 +115,8 @@ class WebParserService:
             chapters = parser.get_chapter_list(novel_url)
             
             if not chapters:
-                LogService.log_error("❌ Список глав пуст", novel_id=novel.id)
-                return []
+                LogService.log_warning("⚠️ Новая система не нашла главы, переключаемся на fallback", novel_id=novel.id)
+                return self._parse_with_legacy_system(novel, novel_url)
             
             LogService.log_info(f"📑 Найдено глав: {len(chapters)}", novel_id=novel.id)
             
@@ -148,6 +148,7 @@ class WebParserService:
             
         except Exception as e:
             LogService.log_error(f"❌ Ошибка в новой системе парсеров: {e}", novel_id=novel.id)
+            LogService.log_info("🔄 Переключаемся на старую систему парсинга", novel_id=novel.id)
             # Откат к старой системе при ошибке
             return self._parse_with_legacy_system(novel, novel_url)
 
@@ -158,21 +159,51 @@ class WebParserService:
             if not novel_url.endswith('/'):
                 novel_url += '/'
             
-            # Загружаем страницу с помощью requests
-            LogService.log_info("Загрузка страницы новеллы...", novel_id=novel.id)
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-            }
-            response = requests.get(novel_url, headers=headers, timeout=30)
+            # Для Qidian используем страницу каталога, для других - основную страницу
+            if 'qidian.com' in novel_url:
+                # Извлекаем ID книги из URL Qidian
+                import re
+                book_id_match = re.search(r'/book/(\d+)/?', novel_url)
+                if book_id_match:
+                    book_id = book_id_match.group(1)
+                    catalog_url = f"https://m.qidian.com/book/{book_id}/catalog"
+                    LogService.log_info(f"Загрузка каталога Qidian: {catalog_url}", novel_id=novel.id)
+                else:
+                    catalog_url = novel_url
+                    LogService.log_info("Загрузка страницы новеллы...", novel_id=novel.id)
+            else:
+                catalog_url = novel_url
+                LogService.log_info("Загрузка страницы новеллы...", novel_id=novel.id)
+            
+            # Используем мобильный User-Agent для Qidian
+            if 'qidian.com' in catalog_url:
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+                }
+            else:
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                }
+                
+            response = requests.get(catalog_url, headers=headers, timeout=30)
             response.raise_for_status()
             LogService.log_info("Страница загружена", novel_id=novel.id)
 
             # Парсим HTML
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # Ищем все ссылки на главы
+            # Ищем ссылки на главы в зависимости от сайта
             LogService.log_info("Поиск ссылок на главы...", novel_id=novel.id)
-            chapter_links = soup.find_all('a', href=re.compile(r'/chapter/\d+'))
+            
+            if 'qidian.com' in catalog_url:
+                # Для Qidian используем специальные селекторы
+                chapter_links = soup.select('a[href*="/chapter/"]')
+            else:
+                # Для других сайтов используем старый метод
+                chapter_links = soup.find_all('a', href=re.compile(r'/chapter/\d+'))
+                
             LogService.log_info(f"Найдено ссылок на главы: {len(chapter_links)}", novel_id=novel.id)
 
             all_chapters = []
@@ -182,23 +213,44 @@ class WebParserService:
 
             # Собираем все главы сначала
             temp_chapters = []
-            for link in chapter_links:
+            for i, link in enumerate(chapter_links):
                 href = link.get('href')
                 title = link.text.strip()
-                chapter_num = self.extract_chapter_number(href)
-
-                if chapter_num > 0:
-                    # Преобразуем относительный URL в абсолютный
-                    if href.startswith('/'):
-                        full_url = f"https://novelbins.com{href}"
-                    else:
-                        full_url = href
-                        
-                    temp_chapters.append({
-                        'url': full_url,
-                        'title': title,
-                        'number': chapter_num
-                    })
+                
+                if 'qidian.com' in catalog_url:
+                    # Для Qidian специальная обработка
+                    if href and title:
+                        # Преобразуем относительные URL в абсолютные
+                        if href.startswith('//'):
+                            full_url = f"https:{href}"
+                        elif href.startswith('/'):
+                            full_url = f"https://m.qidian.com{href}"
+                        else:
+                            full_url = href
+                            
+                        # Фильтруем служебные главы
+                        if self._is_qidian_story_chapter(title):
+                            temp_chapters.append({
+                                'url': full_url,
+                                'title': title,
+                                'number': i + 1  # Просто порядковый номер
+                            })
+                else:
+                    # Для других сайтов старая логика
+                    chapter_num = self.extract_chapter_number(href)
+                    
+                    if chapter_num > 0:
+                        # Преобразуем относительный URL в абсолютный
+                        if href.startswith('/'):
+                            full_url = f"https://novelbins.com{href}"
+                        else:
+                            full_url = href
+                            
+                        temp_chapters.append({
+                            'url': full_url,
+                            'title': title,
+                            'number': chapter_num
+                        })
 
             # Сортируем по номеру главы
             temp_chapters.sort(key=lambda x: x['number'])
@@ -220,6 +272,34 @@ class WebParserService:
         except Exception as e:
             LogService.log_error(f"Ошибка при парсинге глав: {e}", novel_id=novel.id)
             return []
+    
+    def _is_qidian_story_chapter(self, title: str) -> bool:
+        """
+        Проверяет, является ли глава частью основной истории для Qidian
+        """
+        if not title or len(title.strip()) < 3:
+            return False
+            
+        # Главы истории обычно начинаются с "第" (глава)
+        if title.startswith('第') and ('章' in title or '回' in title):
+            return True
+            
+        # Служебные ключевые слова
+        service_keywords = [
+            '新书', '发布', '通知', '公告', '说明', '抽奖', '活动',
+            '教程', '外传', '番外', '感言', '推荐', '骗子', '冒充',
+            '海量', 'iPad', '起点币', '经验', '推荐票',
+            '2022-', '2023-', '2024-', '2025-',
+            '作家入驻', '即更即看', '还有番外'
+        ]
+        
+        # Проверяем на наличие служебных ключевых слов
+        for keyword in service_keywords:
+            if keyword in title:
+                return False
+                
+        # По умолчанию считаем главой истории
+        return True
 
     def parse_chapter_content(self, chapter_url: str, chapter_number: int) -> Optional[str]:
         """Парсинг содержимого главы с использованием новой системы парсеров"""
