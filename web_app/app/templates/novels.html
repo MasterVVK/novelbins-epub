@@ -28,9 +28,10 @@
                 {% endif %}
                 
                 <div class="mb-3">
-                    <span class="badge bg-{{ 'success' if novel.status == 'completed' else 'warning' if novel.status == 'translating' else 'info' }}">
-                        {{ novel.status }}
-                    </span>
+                                                <span class="{{ novel.status|status_badge_class('novel') }}">
+                                <i class="{{ novel.status|status_icon('novel') }}"></i>
+                                {{ novel.status|status_text('novel') }}
+                            </span>
                 </div>
                 
                 <!-- Прогресс по этапам -->

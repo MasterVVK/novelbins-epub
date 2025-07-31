@@ -30,8 +30,9 @@
                         {% endif %}
                         <p><strong>Источник:</strong> {{ novel.source_type }}</p>
                         <p><strong>Статус:</strong> 
-                            <span class="badge bg-{{ 'success' if novel.status == 'completed' else 'warning' if novel.status == 'translating' else 'info' }}">
-                                {{ novel.status }}
+                            <span class="{{ novel.status|status_badge_class('novel') }}">
+                                <i class="{{ novel.status|status_icon('novel') }}"></i>
+                                {{ novel.status|status_text('novel') }}
                             </span>
                         </p>
                     </div>
@@ -217,8 +218,9 @@
                                     {% endif %}
                                 </td>
                                 <td>
-                                    <span class="badge bg-{{ 'success' if chapter.status == 'edited' else 'warning' if chapter.status == 'translated' else 'info' if chapter.status == 'parsed' else 'secondary' }}">
-                                        {{ chapter.status }}
+                                    <span class="{{ chapter.status|status_badge_class('chapter') }}">
+                                        <i class="{{ chapter.status|status_icon('chapter') }}"></i>
+                                        {{ chapter.status|status_text('chapter') }}
                                     </span>
                                 </td>
                                 <td>

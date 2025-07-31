@@ -44,8 +44,9 @@
                     <tr>
                         <td>{{ task.id }}</td>
                         <td>
-                            <span class="badge bg-{{ 'primary' if task.task_type == 'parse' else 'success' if task.task_type == 'translate' else 'warning' if task.task_type == 'edit' else 'info' }}">
-                                {{ task.task_type }}
+                            <span class="{{ task.task_type|status_badge_class('task_type') }}">
+                                <i class="{{ task.task_type|status_icon('task_type') }}"></i>
+                                {{ task.task_type|status_text('task_type') }}
                             </span>
                         </td>
                         <td>
@@ -58,8 +59,9 @@
                             {% endif %}
                         </td>
                         <td>
-                            <span class="badge bg-{{ 'success' if task.status == 'completed' else 'danger' if task.status == 'failed' else 'warning' if task.status == 'running' else 'secondary' }}">
-                                {{ task.status }}
+                            <span class="{{ task.status|status_badge_class('task_status') }}">
+                                <i class="{{ task.status|status_icon('task_status') }}"></i>
+                                {{ task.status|status_text('task_status') }}
                             </span>
                         </td>
                         <td>
@@ -72,9 +74,15 @@
                         <td>
                             <div class="btn-group" role="group">
                                 {% if task.status == 'running' %}
-                                <span class="badge bg-warning">Выполняется</span>
+                                <span class="{{ task.status|status_badge_class('task_status') }}">
+                                    <i class="{{ task.status|status_icon('task_status') }}"></i>
+                                    {{ task.status|status_text('task_status') }}
+                                </span>
                                 {% elif task.status == 'completed' %}
-                                <span class="badge bg-success">Завершена</span>
+                                <span class="{{ task.status|status_badge_class('task_status') }}">
+                                    <i class="{{ task.status|status_icon('task_status') }}"></i>
+                                    {{ task.status|status_text('task_status') }}
+                                </span>
                                 {% elif task.status == 'failed' %}
                                 <span class="text-danger" title="{{ task.error_message }}">
                                     <i class="bi bi-exclamation-triangle"></i>

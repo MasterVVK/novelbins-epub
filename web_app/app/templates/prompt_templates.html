@@ -29,11 +29,9 @@
                 
                 <div class="mb-3">
                     <span class="badge bg-info">{{ template.category }}</span>
-                    {% if template.is_active %}
-                    <span class="badge bg-success">Активен</span>
-                    {% else %}
-                    <span class="badge bg-secondary">Неактивен</span>
-                    {% endif %}
+                    <span class="{{ template|prompt_template_status_color }}">
+                        {% if template.is_active %}Активен{% else %}Неактивен{% endif %}
+                    </span>
                 </div>
                 
                 <div class="mb-3">

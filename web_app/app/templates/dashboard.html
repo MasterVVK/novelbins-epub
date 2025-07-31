@@ -77,9 +77,10 @@
                                     </a>
                                 </td>
                                 <td>
-                                    <span class="badge bg-{{ 'success' if novel.status == 'completed' else 'warning' if novel.status == 'translating' else 'info' }}">
-                                        {{ novel.status }}
-                                    </span>
+                                                                <span class="{{ novel.status|status_badge_class('novel') }}">
+                                <i class="{{ novel.status|status_icon('novel') }}"></i>
+                                {{ novel.status|status_text('novel') }}
+                            </span>
                                 </td>
                                 <td>
                                     <div class="progress" style="height: 8px;">

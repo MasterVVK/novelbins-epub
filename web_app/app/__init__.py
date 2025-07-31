@@ -81,6 +81,10 @@ def create_app(config_name=None):
     app.register_blueprint(api_bp, url_prefix='/api')
     app.register_blueprint(main_bp)
 
+    # Регистрация фильтров для шаблонов
+    from .utils.template_filters import register_template_filters
+    register_template_filters(app)
+
     # Создание папок
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 

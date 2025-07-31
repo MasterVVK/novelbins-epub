@@ -3,6 +3,10 @@
 {% block title %}Логи - Novel Translator{% endblock %}
 {% block page_title %}Логи системы{% endblock %}
 
+{% block extra_head %}
+<script src="{{ url_for('static', filename='js/status_colors.js') }}"></script>
+{% endblock %}
+
 {% block content %}
 <div class="row">
     <!-- Статистика -->
@@ -245,7 +249,7 @@ function displayLogs(logs) {
                     <div class="flex-grow-1">
                         <div class="d-flex align-items-center mb-1">
                             <i class="bi ${levelIcon} me-2"></i>
-                            <span class="badge bg-${log.is_error ? 'danger' : log.is_warning ? 'warning' : 'info'} me-2">${log.level}</span>
+                            <span class="badge bg-${StatusColors.getLogLevelColor(log.level)} me-2">${log.level}</span>
                             <small class="text-muted">${time}</small>
                         </div>
                         <div class="log-message">${escapeHtml(log.message)}</div>
@@ -367,7 +371,7 @@ function setupWebSocket() {
                     <div class="flex-grow-1">
                         <div class="d-flex align-items-center mb-1">
                             <i class="bi ${logData.is_error ? 'bi-exclamation-triangle' : logData.is_warning ? 'bi-exclamation-circle' : 'bi-info-circle'} me-2"></i>
-                            <span class="badge bg-${logData.is_error ? 'danger' : logData.is_warning ? 'warning' : 'info'} me-2">${logData.level}</span>
+                            <span class="badge bg-${StatusColors.getLogLevelColor(logData.level)} me-2">${logData.level}</span>
                             <small class="text-muted">${new Date(logData.created_at).toLocaleString('ru-RU')}</small>
                         </div>
                         <div class="log-message">${escapeHtml(logData.message)}</div>
