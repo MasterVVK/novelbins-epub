@@ -29,12 +29,13 @@ class ParserFactory:
     }
     
     @classmethod
-    def create_parser(cls, source: str) -> BaseParser:
+    def create_parser(cls, source: str, auth_cookies: str = None) -> BaseParser:
         """
         Создать парсер по названию источника
         
         Args:
             source: Название источника ('qidian', 'webnovel', etc.)
+            auth_cookies: Cookies для авторизации (опционально)
             
         Returns:
             Экземпляр парсера для указанного источника
@@ -49,15 +50,16 @@ class ParserFactory:
             raise ValueError(f"Парсер для '{source}' не найден. Доступные: {available}")
         
         parser_class = cls._parsers[source]
-        return parser_class()
+        return parser_class(auth_cookies=auth_cookies)
     
     @classmethod
-    def create_parser_from_url(cls, url: str) -> BaseParser:
+    def create_parser_from_url(cls, url: str, auth_cookies: str = None) -> BaseParser:
         """
         Создать парсер на основе URL
         
         Args:
             url: URL книги или сайта
+            auth_cookies: Cookies для авторизации (опционально)
             
         Returns:
             Экземпляр подходящего парсера
@@ -70,7 +72,7 @@ class ParserFactory:
         if not source:
             raise ValueError(f"Не удается определить источник по URL: {url}")
         
-        return cls.create_parser(source)
+        return cls.create_parser(source, auth_cookies=auth_cookies)
     
     @classmethod
     def detect_source_from_url(cls, url: str) -> Optional[str]:
@@ -160,18 +162,14 @@ class ParserFactory:
 
 
 # Удобные функции для быстрого использования
-def create_parser(source: str) -> BaseParser:
-    """
-    Создать парсер по названию источника
-    """
-    return ParserFactory.create_parser(source)
+def create_parser(source: str, auth_cookies: str = None) -> BaseParser:
+    """Создать парсер по названию источника"""
+    return ParserFactory.create_parser(source, auth_cookies=auth_cookies)
 
 
-def create_parser_from_url(url: str) -> BaseParser:
-    """
-    Создать парсер на основе URL
-    """
-    return ParserFactory.create_parser_from_url(url)
+def create_parser_from_url(url: str, auth_cookies: str = None) -> BaseParser:
+    """Создать парсер на основе URL"""
+    return ParserFactory.create_parser_from_url(url, auth_cookies=auth_cookies)
 
 
 def detect_source(url: str) -> Optional[str]:

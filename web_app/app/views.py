@@ -100,7 +100,7 @@ def new_novel():
             source_url=source_url,
             source_type=source_type,
             config={
-                'max_chapters': int(request.form.get('max_chapters', 10)),
+                'max_chapters': int(request.form.get('max_chapters', 100)),
                 'all_chapters': all_chapters,
                 'request_delay': float(request.form.get('request_delay', 1.0)),
                 'translation_model': request.form.get('translation_model', 'gemini-2.5-flash-preview-05-20'),
@@ -220,7 +220,7 @@ def edit_novel(novel_id):
         
         # Обновляем конфигурацию с проверкой значений
         new_config = {
-            'max_chapters': int(max_chapters) if max_chapters else 10,
+            'max_chapters': int(max_chapters) if max_chapters else 100,
             'all_chapters': all_chapters,
             'request_delay': float(request_delay) if request_delay else 1.0,
             'translation_model': translation_model or 'gemini-2.5-flash-preview-05-20',
@@ -236,6 +236,17 @@ def edit_novel(novel_id):
         flag_modified(novel, 'config')
         
         print(f"   Новая конфигурация: {novel.config}")
+
+        # Обрабатываем авторизацию
+        auth_enabled = request.form.get('auth_enabled', 'false') == 'true'
+        auth_cookies = request.form.get('auth_cookies', '').strip()
+        
+        if auth_enabled and auth_cookies:
+            novel.set_auth_cookies(auth_cookies)
+            print(f"🔐 Авторизация включена: {len(auth_cookies)} символов cookies")
+        else:
+            novel.clear_auth()
+            print(f"🔐 Авторизация отключена")
 
         # Принудительно обновляем объект в сессии
         db.session.add(novel)

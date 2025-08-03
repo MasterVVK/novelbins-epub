@@ -305,18 +305,27 @@ class WebParserService:
         """Парсинг содержимого главы с использованием новой системы парсеров"""
         LogService.log_info(f"📄 Загрузка главы {chapter_number}: {chapter_url}")
         
+        # Получаем новеллу для передачи cookies
+        novel = Novel.query.filter_by(source_url=chapter_url).first()
+
         # Пробуем использовать новую систему парсеров
         if PARSERS_AVAILABLE:
-            return self._parse_chapter_with_new_system(chapter_url, chapter_number)
+            return self._parse_chapter_with_new_system(chapter_url, chapter_number, novel)
         else:
             LogService.log_warning("⚠️ Используется устаревший парсер для главы", chapter_id=chapter_number)
             return self._parse_chapter_with_legacy_system(chapter_url, chapter_number)
 
-    def _parse_chapter_with_new_system(self, chapter_url: str, chapter_number: int) -> Optional[str]:
+    def _parse_chapter_with_new_system(self, chapter_url: str, chapter_number: int, novel: Novel = None) -> Optional[str]:
         """Парсинг содержимого главы с новой системой"""
         try:
-            # Создаем парсер для URL главы
-            parser = create_parser_from_url(chapter_url)
+            # Получаем cookies из настроек новеллы
+            auth_cookies = None
+            if novel and novel.is_auth_enabled():
+                auth_cookies = novel.get_auth_cookies()
+                LogService.log_info(f"🔐 Используем авторизацию для главы {chapter_number}", chapter_id=chapter_number)
+            
+            # Создаем парсер для URL главы с cookies
+            parser = create_parser_from_url(chapter_url, auth_cookies=auth_cookies)
             if not parser:
                 LogService.log_warning(f"⚠️ Не удалось создать парсер для главы {chapter_number}, используем legacy", chapter_id=chapter_number)
                 return self._parse_chapter_with_legacy_system(chapter_url, chapter_number)
@@ -329,7 +338,15 @@ class WebParserService:
                 return None
             
             content = chapter_data['content']
-            LogService.log_info(f"✅ Глава {chapter_number} загружена: {len(content)} символов", chapter_id=chapter_number)
+            is_locked = chapter_data.get('is_locked', False)
+            
+            if is_locked:
+                LogService.log_warning(f"🔒 Глава {chapter_number} заблокирована, получено превью: {len(content)} символов", chapter_id=chapter_number)
+                # Для заблокированных глав возвращаем превью с пометкой
+                if len(content) < 200:
+                    content = f"[ЗАБЛОКИРОВАНА - ПРЕВЬЮ] {content}"
+            else:
+                LogService.log_info(f"✅ Глава {chapter_number} загружена: {len(content)} символов", chapter_id=chapter_number)
             
             # Закрываем парсер
             parser.close()

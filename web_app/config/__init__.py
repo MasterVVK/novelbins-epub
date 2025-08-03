@@ -33,7 +33,7 @@ class Config:
 
     # Настройки парсинга
     DEFAULT_REQUEST_DELAY = 1.0
-    DEFAULT_MAX_CHAPTERS = 10
+    DEFAULT_MAX_CHAPTERS = 100
 
     # Настройки редактуры
     DEFAULT_EDITING_STAGES = ['analysis', 'style', 'dialogue', 'polish']

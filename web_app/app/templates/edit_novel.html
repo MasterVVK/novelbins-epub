@@ -68,8 +68,8 @@
                                 <!-- Отладка: max_chapters = {{ novel.config.max_chapters if novel.config and novel.config.max_chapters else 'НЕТ ЗНАЧЕНИЯ' }} -->
                                 <div class="input-group">
                                     <input type="number" class="form-control" id="max_chapters" name="max_chapters" 
-                                           value="{{ novel.config.max_chapters if novel.config and novel.config.max_chapters else 10 }}" 
-                                           min="1" max="100" 
+                                           value="{{ novel.config.max_chapters if novel.config and novel.config.max_chapters else 100 }}" 
+                                           min="1" max="1000" 
                                            {{ 'disabled style="background-color: #e9ecef;"' if novel.config and novel.config.all_chapters else '' }}>
                                 </div>
                                 <div class="form-check mt-2">
@@ -89,6 +89,47 @@
                                        value="{{ novel.config.request_delay if novel.config and novel.config.request_delay else 1.0 }}" 
                                        min="0.1" max="10" step="0.1">
                             </div>
+                        </div>
+                    </div>
+                    
+                    <hr>
+                    <h6 class="mb-3">🔐 Авторизация для парсинга</h6>
+                    
+                    <div class="alert alert-info">
+                        <i class="bi bi-info-circle"></i>
+                        <strong>Для доступа к заблокированным главам:</strong>
+                        <ol class="mb-0 mt-2">
+                            <li>Зарегистрируйтесь на сайте-источнике (например, Qidian.com)</li>
+                            <li>Войдите в аккаунт в браузере</li>
+                            <li>Откройте Developer Tools (F12) → Network</li>
+                            <li>Обновите страницу и скопируйте значение Cookie из заголовков</li>
+                            <li>Вставьте cookies в поле ниже</li>
+                        </ol>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="auth_enabled" name="auth_enabled" value="true"
+                                   {{ 'checked' if novel.auth_enabled else '' }}>
+                            <label class="form-check-label" for="auth_enabled">
+                                <strong>Включить авторизацию</strong>
+                            </label>
+                        </div>
+                        <div class="form-text">Использовать cookies для доступа к заблокированным главам</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="auth_cookies" class="form-label">Cookies для авторизации</label>
+                        <textarea class="form-control" id="auth_cookies" name="auth_cookies" rows="3" 
+                                  placeholder="Вставьте сюда cookies из браузера...">{{ novel.auth_cookies or '' }}</textarea>
+                        <div class="form-text">
+                            <strong>Пример:</strong> <code>sessionid=abc123; user_id=456; token=xyz789</code><br>
+                            <strong>Статус:</strong> 
+                            {% if novel.auth_enabled and novel.auth_cookies %}
+                                <span class="text-success">✅ Авторизация активна</span>
+                            {% else %}
+                                <span class="text-muted">❌ Авторизация не настроена</span>
+                            {% endif %}
                         </div>
                     </div>
                     

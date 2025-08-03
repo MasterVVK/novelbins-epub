@@ -22,7 +22,7 @@ class QidianParser(BaseParser):
     Использует мобильную версию для обхода защиты от ботов
     """
     
-    def __init__(self):
+    def __init__(self, auth_cookies: str = None):
         super().__init__("qidian")
         
         # Пул User-Agent'ов для ротации
@@ -35,6 +35,9 @@ class QidianParser(BaseParser):
         ]
         self.current_ua_index = 0
         
+        # Cookies для авторизации
+        self.auth_cookies = auth_cookies
+        
         # Устанавливаем начальные заголовки
         self._update_headers()
         
@@ -45,8 +48,8 @@ class QidianParser(BaseParser):
         self.consecutive_errors = 0
         
     def _update_headers(self):
-        """Обновляем заголовки с новым User-Agent"""
-        self.session.headers.update({
+        """Обновляем заголовки с новым User-Agent и cookies"""
+        headers = {
             'User-Agent': self.user_agents[self.current_ua_index],
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
@@ -55,7 +58,14 @@ class QidianParser(BaseParser):
             'Upgrade-Insecure-Requests': '1',
             'Cache-Control': 'no-cache',
             'Pragma': 'no-cache'
-        })
+        }
+        
+        # Добавляем cookies если есть
+        if self.auth_cookies:
+            headers['Cookie'] = self.auth_cookies
+            print(f"🔐 Используем авторизацию: {len(self.auth_cookies)} символов cookies")
+        
+        self.session.headers.update(headers)
         
     def _rotate_user_agent(self):
         """Переключаем на следующий User-Agent"""
@@ -235,13 +245,13 @@ class QidianParser(BaseParser):
         try:
             soup = BeautifulSoup(html_content, 'html.parser')
             
-            # Извлекаем заголовок главы (обновленные селекторы)
+            # Извлекаем заголовок главы (обновленные селекторы на основе реальной структуры)
             title_selectors = [
-                '#reader-content h2.title',
-                'div.print h2.title',
                 'h2.title',
+                '.title',
                 'h1.chapter__title',
-                '.title'
+                'h1',
+                'h2'
             ]
             
             title = "Неизвестная глава"
@@ -249,15 +259,15 @@ class QidianParser(BaseParser):
                 title_elem = soup.select_one(selector)
                 if title_elem:
                     title = title_elem.get_text(strip=True)
-                    if title:  # Проверяем, что заголовок не пустой
+                    if title and len(title) > 5:  # Проверяем, что заголовок не слишком короткий
                         break
             
-            # Извлекаем содержимое главы (обновленные селекторы)
+            # Извлекаем содержимое главы (исправленные селекторы на основе реальной структуры)
             content_selectors = [
-                '#reader-content main.content',
-                'div.print main.content',
+                'main[data-type="cjk"]',  # Основной селектор для содержимого
                 'main.content',
-                '.chapter__content',
+                '#reader-content main',
+                'main',
                 '.content'
             ]
             
@@ -270,6 +280,20 @@ class QidianParser(BaseParser):
             if not content_elem:
                 raise Exception("Не удалось найти содержимое главы (проверено: {', '.join(content_selectors)})")
             
+            # Проверяем на блокировку
+            if "lock-mask" in str(content_elem):
+                print(f"   🔒 Глава заблокирована (lock-mask) - возвращаем превью")
+                # Для заблокированных глав возвращаем превью с пометкой
+                content = self._clean_chapter_content(content_elem)
+                if len(content) < 200:  # Если содержимое слишком короткое
+                    return {
+                        'title': title,
+                        'content': f"[ЗАБЛОКИРОВАНА] {content}",
+                        'chapter_id': self._extract_chapter_id(chapter_url),
+                        'word_count': len(content),
+                        'is_locked': True
+                    }
+            
             # Очищаем содержимое от лишних элементов
             content = self._clean_chapter_content(content_elem)
             
@@ -280,7 +304,8 @@ class QidianParser(BaseParser):
                 'title': title,
                 'content': content,
                 'chapter_id': chapter_id,
-                'word_count': len(content)
+                'word_count': len(content),
+                'is_locked': False
             }
         except Exception as e:
             print(f"⚠️ Ошибка парсинга содержимого главы: {e}")
@@ -289,7 +314,8 @@ class QidianParser(BaseParser):
                 'title': 'Недоступная глава',
                 'content': 'Содержимое главы недоступно из-за ограничений сайта.',
                 'chapter_id': self._extract_chapter_id(chapter_url) or '0',
-                'word_count': 0
+                'word_count': 0,
+                'is_locked': True
             }
     
     def _delay_between_requests(self):
@@ -528,13 +554,14 @@ class QidianParser(BaseParser):
     
     def _clean_chapter_content(self, content_elem) -> str:
         """
-        Очистить содержимое главы от лишних элементов (улучшенная версия)
+        Очистить содержимое главы от лишних элементов (исправленная версия)
         """
         # Удаляем ненужные элементы (расширенный список)
         unwanted_selectors = [
             'script', 'style', '.ad', '.advertisement', '.nav', '.navigation',
             '.header', '.footer', '.sidebar', '.comment', '.share', '.social',
-            '.related', '.recommend', '[class*="ad"]', '[class*="banner"]'
+            '.related', '.recommend', '[class*="ad"]', '[class*="banner"]',
+            '.download-bar', '.icon-container', '.y-button', '.auto-tr'
         ]
         
         for selector in unwanted_selectors:
@@ -547,8 +574,11 @@ class QidianParser(BaseParser):
         # Сначала пробуем найти правильные параграфы
         for p in content_elem.find_all('p'):
             text = p.get_text(strip=True)
-            if text and len(text) > 20:  # Увеличили минимальную длину
-                paragraphs.append(text)
+            if text and len(text) > 10:  # Уменьшили минимальную длину
+                # Убираем лишние пробелы в начале
+                text = text.lstrip('　')  # Убираем китайские пробелы
+                if text and len(text) > 10:
+                    paragraphs.append(text)
         
         # Если не нашли параграфы, ищем в div'ах
         if not paragraphs:
@@ -556,7 +586,7 @@ class QidianParser(BaseParser):
                 text = div.get_text(strip=True)
                 if text and len(text) > 20:
                     # Проверяем, что это не навигация
-                    if not any(nav_word in text.lower() for nav_word in ['目录', '下一章', '上一章', 'menu', 'next', 'prev']):
+                    if not any(nav_word in text.lower() for nav_word in ['目录', '下一章', '上一章', 'menu', 'next', 'prev', 'app', '下载']):
                         paragraphs.append(text)
         
         # Если все еще пусто, берем весь текст
@@ -565,7 +595,7 @@ class QidianParser(BaseParser):
             if full_text:
                 # Разбиваем по строкам и фильтруем
                 lines = [line.strip() for line in full_text.split('\n') if line.strip()]
-                paragraphs = [line for line in lines if len(line) > 20]
+                paragraphs = [line for line in lines if len(line) > 10]
         
         result = '\n\n'.join(paragraphs) if paragraphs else "Нет содержимого"
         

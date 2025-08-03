@@ -28,6 +28,10 @@ class Novel(db.Model):
     # Конфигурация
     config = Column(JSON)  # Настройки парсинга, перевода, редактуры
     
+    # Авторизация для парсинга
+    auth_cookies = Column(Text)  # Cookies для авторизации на сайте-источнике
+    auth_enabled = Column(Boolean, default=False)  # Включена ли авторизация
+
     # Связь с шаблоном промпта
     prompt_template_id = Column(Integer, ForeignKey('prompt_templates.id'), nullable=True)
 
@@ -98,4 +102,23 @@ class Novel(db.Model):
         """Восстановление новеллы"""
         self.is_active = True
         self.status = 'pending'
+    
+    def set_auth_cookies(self, cookies: str):
+        """Установка cookies для авторизации"""
+        self.auth_cookies = cookies
+        self.auth_enabled = bool(cookies and cookies.strip())
+        return self
+    
+    def get_auth_cookies(self) -> str:
+        """Получение cookies для авторизации"""
+        return self.auth_cookies or ""
+    
+    def is_auth_enabled(self) -> bool:
+        """Проверка, включена ли авторизация"""
+        return self.auth_enabled and bool(self.auth_cookies)
+    
+    def clear_auth(self):
+        """Очистка данных авторизации"""
+        self.auth_cookies = None
+        self.auth_enabled = False
         return self 
