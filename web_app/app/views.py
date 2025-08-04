@@ -255,6 +255,18 @@ def edit_novel(novel_id):
         else:
             novel.clear_auth()
             print(f"🔐 Авторизация отключена")
+        
+        # Обрабатываем VIP авторизацию
+        vip_cookies_enabled = request.form.get('vip_cookies_enabled', 'false') == 'true'
+        vip_cookies = request.form.get('vip_cookies', '').strip()
+        
+        if vip_cookies_enabled and vip_cookies:
+            novel.set_vip_cookies(vip_cookies)
+            print(f"💎 VIP авторизация включена: {len(vip_cookies)} символов cookies")
+        else:
+            novel.vip_cookies = None
+            novel.vip_cookies_enabled = False
+            print(f"💎 VIP авторизация отключена")
 
         # Обрабатываем SOCKS прокси
         proxy_enabled = request.form.get('proxy_enabled', 'false') == 'true'

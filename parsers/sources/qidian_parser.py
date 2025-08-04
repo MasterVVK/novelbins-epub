@@ -342,8 +342,8 @@ class QidianParser(BaseParser):
                 if encrypted_content:
                     print(f"   🔐 Найден зашифрованный контент: {len(encrypted_content)} символов")
                     
-                    # Сначала пробуем простые алгоритмы
-                    decrypted_text = self._decrypt_qidian_content(encrypted_content)
+                    # Сначала пробуем VIP и простые алгоритмы
+                    decrypted_text = self._decrypt_qidian_content(html_content)
                     
                     if decrypted_text and len(decrypted_text) > 500:
                         print(f"   ✅ Контент расшифрован простым алгоритмом: {len(decrypted_text)} символов")
@@ -359,7 +359,8 @@ class QidianParser(BaseParser):
                         print(f"   ⚠️ Простая расшифровка не удалась, пробуем Selenium...")
                         
                         # Fallback: используем Selenium для JavaScript расшифровки
-                        if selenium_available and self.auth_cookies:
+                        if selenium_available:
+                            print(f"   🌐 Запускаем Selenium расшифровку...")
                             selenium_result = self._decrypt_with_selenium(chapter_url)
                             if selenium_result and len(selenium_result) > 500:
                                 print(f"   ✅ Контент расшифрован через Selenium: {len(selenium_result)} символов")
@@ -375,14 +376,30 @@ class QidianParser(BaseParser):
                         print(f"   ❌ Расшифровка не удалась - возвращаем заблокированный контент")
                 else:
                     print(f"   ❌ Зашифрованный контент не найден")
+                    
+                    # Если зашифрованный контент не найден, но глава заблокирована,
+                    # всё равно пробуем Selenium (возможно другой тип шифрования)
+                    if selenium_available:
+                        print(f"   🌐 Пробуем Selenium как fallback для заблокированной главы...")
+                        selenium_result = self._decrypt_with_selenium(chapter_url)
+                        if selenium_result and len(selenium_result) > 500:
+                            print(f"   ✅ Контент получен через Selenium: {len(selenium_result)} символов")
+                            return {
+                                'title': title,
+                                'content': selenium_result,
+                                'chapter_id': chapter_id,
+                                'word_count': len(selenium_result),
+                                'is_locked': False,
+                                'is_decrypted': True
+                            }
             else:
                 # Если глава не заблокирована, всё равно проверяем на зашифрованный контент
                 encrypted_content = self._extract_encrypted_content(html_content)
                 if encrypted_content:
                     print(f"   🔐 Найден зашифрованный контент (незаблокированная глава): {len(encrypted_content)} символов")
                     
-                    # Пробуем простые алгоритмы
-                    decrypted_text = self._decrypt_qidian_content(encrypted_content)
+                    # Пробуем VIP и простые алгоритмы
+                    decrypted_text = self._decrypt_qidian_content(html_content)
                     if decrypted_text and len(decrypted_text) > 500:
                         print(f"   ✅ Контент расшифрован простым алгоритмом: {len(decrypted_text)} символов")
                         return {
@@ -512,7 +529,7 @@ class QidianParser(BaseParser):
             elif response.status_code == 202:
                 print("⚠️ Сервер возвращает 202 - возможная защита от ботов")
                 self.consecutive_errors += 1
-                time.sleep(5)
+                time.sleep(15)
                 
             elif response.status_code == 403:
                 print("⚠️ HTTP 403 Forbidden - защита от ботов")
@@ -824,30 +841,132 @@ class QidianParser(BaseParser):
             text.count('=') <= 2  # Максимум 2 знака padding
         )
     
-    def _decrypt_qidian_content(self, encrypted_content: str) -> str:
+    def _decrypt_qidian_content(self, html_content: str) -> str:
         """
-        Расшифровка контента Qidian с использованием известных алгоритмов
+        Расшифровка контента Qidian с использованием VIP алгоритмов
         """
-        # Алгоритмы расшифровки в порядке приоритета
-        decryption_methods = [
-            ('zGup5_xor', self._decrypt_with_key, 'zGup5'),
-            ('qidian_xor', self._decrypt_with_key, 'qidian'),
-            ('reader_xor', self._decrypt_with_key, 'reader'),
-            ('zGup5_zlib', self._decrypt_with_zlib, 'zGup5'),
-            ('qidian_zlib', self._decrypt_with_zlib, 'qidian')
-        ]
+        # Сначала пробуем VIP расшифровку
+        vip_result = self._decrypt_vip_content(html_content)
+        if vip_result:
+            return vip_result
         
-        for method_name, method_func, key in decryption_methods:
-            try:
-                result = method_func(encrypted_content, key)
-                if result and self._is_valid_chinese_text(result):
-                    print(f"   ✅ Расшифровка успешна методом: {method_name}")
-                    return result
-            except Exception as e:
-                continue
+        # Fallback к старым алгоритмам
+        encrypted_content = self._extract_encrypted_content(html_content)
+        if encrypted_content:
+            # Алгоритмы расшифровки в порядке приоритета
+            decryption_methods = [
+                ('zGup5_xor', self._decrypt_with_key, 'zGup5'),
+                ('qidian_xor', self._decrypt_with_key, 'qidian'),
+                ('reader_xor', self._decrypt_with_key, 'reader'),
+                ('zGup5_zlib', self._decrypt_with_zlib, 'zGup5'),
+                ('qidian_zlib', self._decrypt_with_zlib, 'qidian')
+            ]
+            
+            for method_name, method_func, key in decryption_methods:
+                try:
+                    result = method_func(encrypted_content, key)
+                    if result and self._is_valid_chinese_text(result):
+                        print(f"   ✅ Расшифровка успешна методом: {method_name}")
+                        return result
+                except Exception as e:
+                    continue
         
         print(f"   ⚠️ Не удалось расшифровать контент")
         return None
+    
+    def _decrypt_vip_content(self, html: str) -> Optional[str]:
+        """
+        Расшифровка VIP контента из HTML
+        """
+        try:
+            # Ищем зашифрованные данные в скрипте
+            script_match = re.search(r'<script id="vite-plugin-ssr_pageContext" type="application/json">({.+?})</script>', html, re.DOTALL)
+            
+            if not script_match:
+                return None
+            
+            try:
+                json_data = json.loads(script_match.group(1))
+                chapter_info = json_data['pageContext']['pageProps']['pageData']['chapterInfo']
+                
+                encrypted_content = chapter_info.get('content')
+                fkp_key = chapter_info.get('fkp')
+                actual_words = chapter_info.get('actualWords', 0)
+                
+                if not encrypted_content or not fkp_key:
+                    return None
+                
+                print(f"   🔐 VIP контент найден: {len(encrypted_content)} символов, ожидается: {actual_words}")
+                
+                # Декодируем ключ FKP
+                fkp_decoded = base64.b64decode(fkp_key).decode('utf-8')
+                key_match = re.search(r'window\.onkeyfocus\("([^"]+)",\s*(\d+)\)', fkp_decoded)
+                
+                if not key_match:
+                    print(f"   ❌ Не удалось извлечь ключ из FKP")
+                    return None
+                
+                actual_key = base64.b64decode(key_match.group(1))
+                timestamp = int(key_match.group(2))
+                
+                print(f"   🔑 Извлечен ключ: {len(actual_key)} байт, timestamp: {timestamp}")
+                
+                # Декодируем зашифрованный контент
+                encrypted_bytes = base64.b64decode(encrypted_content)
+                
+                # Пробуем различные методы расшифровки
+                decryption_methods = [
+                    ("Прямой XOR", lambda: self._xor_decrypt(encrypted_bytes, actual_key)),
+                    ("XOR с timestamp", lambda: self._xor_decrypt(encrypted_bytes, actual_key + timestamp.to_bytes(8, byteorder='little'))),
+                    ("XOR первые 32 байта", lambda: self._xor_decrypt(encrypted_bytes, actual_key[:32])),
+                    ("XOR каждый второй байт", lambda: self._xor_decrypt(encrypted_bytes, actual_key[::2])),
+                ]
+                
+                for method_name, method_func in decryption_methods:
+                    try:
+                        result = method_func()
+                        if result and len(result) > 1000:
+                            chinese_count = sum(1 for c in result if '\u4e00' <= c <= '\u9fff')
+                            
+                            if chinese_count > 500:
+                                print(f"   ✅ VIP контент расшифрован ({method_name}): {len(result)} символов, {chinese_count} китайских")
+                                
+                                # Проверяем соответствие ожидаемой длине
+                                if actual_words > 0 and abs(len(result) - actual_words) < 500:
+                                    print(f"   ✅ Длина соответствует ожидаемой!")
+                                
+                                return result
+                    except Exception as e:
+                        continue
+                
+                print(f"   ❌ Все методы VIP расшифровки не дали результата")
+                return None
+                
+            except json.JSONDecodeError as e:
+                print(f"   ❌ Ошибка парсинга JSON: {e}")
+                return None
+                
+        except Exception as e:
+            print(f"   ❌ Ошибка VIP расшифровки: {e}")
+            return None
+    
+    def _xor_decrypt(self, encrypted_bytes: bytes, key: bytes) -> Optional[str]:
+        """Вспомогательная функция XOR расшифровки"""
+        try:
+            decrypted = bytearray()
+            for i in range(len(encrypted_bytes)):
+                decrypted.append(encrypted_bytes[i] ^ key[i % len(key)])
+            
+            # Пробуем разные кодировки
+            for encoding in ['utf-8', 'gbk', 'gb2312']:
+                try:
+                    return decrypted.decode(encoding)
+                except:
+                    continue
+            
+            return None
+        except:
+            return None
     
     def _decrypt_with_key(self, encrypted_content: str, key: str) -> str:
         """
@@ -941,7 +1060,7 @@ class QidianParser(BaseParser):
             
             # Загружаем главную страницу для установки cookies
             driver.get("https://m.qidian.com/")
-            time.sleep(2)
+            time.sleep(8)
             
             # Устанавливаем cookies
             if self.auth_cookies:

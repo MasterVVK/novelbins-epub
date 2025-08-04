@@ -146,6 +146,47 @@
                     </div>
                     
                     <hr>
+                    <h6 class="mb-3">💎 VIP авторизация для премиум контента</h6>
+                    
+                    <div class="alert alert-success">
+                        <i class="bi bi-star-fill"></i>
+                        <strong>Для доступа к VIP/платным главам:</strong>
+                        <ol class="mb-0 mt-2">
+                            <li>Авторизуйтесь на сайте и <strong>купите/подпишитесь</strong> на VIP контент</li>
+                            <li>Откройте VIP главу в браузере (убедитесь, что она доступна)</li>
+                            <li>Откройте Developer Tools (F12) → Network</li>
+                            <li>Обновите страницу и скопируйте <strong>VIP cookies</strong> из заголовков</li>
+                            <li>Вставьте VIP cookies в поле ниже</li>
+                        </ol>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="vip_cookies_enabled" name="vip_cookies_enabled" value="true"
+                                   {{ 'checked' if novel.vip_cookies_enabled else '' }}>
+                            <label class="form-check-label" for="vip_cookies_enabled">
+                                <strong>Включить VIP авторизацию</strong>
+                            </label>
+                        </div>
+                        <div class="form-text">Использовать специальные cookies для доступа к платным главам</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="vip_cookies" class="form-label">VIP Cookies для премиум контента</label>
+                        <textarea class="form-control" id="vip_cookies" name="vip_cookies" rows="3" 
+                                  placeholder="Вставьте сюда VIP cookies из браузера...">{{ novel.vip_cookies or '' }}</textarea>
+                        <div class="form-text">
+                            <strong>Важно:</strong> Должны содержать <code>w_tsfp</code>, <code>_csrfToken</code> и другие VIP параметры<br>
+                            <strong>Статус:</strong> 
+                            {% if novel.vip_cookies_enabled and novel.vip_cookies %}
+                                <span class="text-success">✅ VIP авторизация активна</span>
+                            {% else %}
+                                <span class="text-muted">❌ VIP авторизация не настроена</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                    
+                    <hr>
                     <h6 class="mb-3">🌐 SOCKS прокси для обхода блокировок</h6>
                     
                     <div class="alert alert-warning">

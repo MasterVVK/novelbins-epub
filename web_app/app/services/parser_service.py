@@ -334,13 +334,19 @@ class WebParserService:
             auth_cookies = None
             socks_proxy = None
             
-            if novel and novel.is_auth_enabled():
-                auth_cookies = novel.get_auth_cookies()
-                LogService.log_info(f"🔐 Используем авторизацию для главы {chapter_number}", chapter_id=chapter_number)
-            
-            if novel and novel.is_proxy_enabled():
-                socks_proxy = novel.get_socks_proxy()
-                LogService.log_info(f"🌐 Используем SOCKS прокси для главы {chapter_number}: {socks_proxy}", chapter_id=chapter_number)
+            if novel:
+                # Определяем, является ли глава VIP/платной
+                is_vip_chapter = self._is_vip_chapter(chapter_number, chapter_url, novel)
+                
+                # Получаем подходящие cookies для типа контента
+                if novel.is_auth_enabled() or novel.is_vip_cookies_enabled():
+                    auth_cookies = novel.get_effective_cookies(is_vip_content=is_vip_chapter)
+                    cookie_type = "VIP" if is_vip_chapter and novel.is_vip_cookies_enabled() else "обычные"
+                    LogService.log_info(f"🔐 Используем {cookie_type} cookies для главы {chapter_number} (VIP: {is_vip_chapter})", chapter_id=chapter_number)
+                
+                if novel.is_proxy_enabled():
+                    socks_proxy = novel.get_socks_proxy()
+                    LogService.log_info(f"🌐 Используем SOCKS прокси для главы {chapter_number}: {socks_proxy}", chapter_id=chapter_number)
             
             # Создаем парсер для URL главы с cookies и прокси
             parser = create_parser_from_url(chapter_url, auth_cookies=auth_cookies, socks_proxy=socks_proxy)
@@ -376,6 +382,26 @@ class WebParserService:
             # Откат к старой системе
             return self._parse_chapter_with_legacy_system(chapter_url, chapter_number)
 
+    def _is_vip_chapter(self, chapter_number: int, chapter_url: str, novel) -> bool:
+        """Определение VIP/платных глав"""
+        try:
+            # Для Qidian главы после 130 обычно VIP
+            if 'qidian.com' in chapter_url:
+                if chapter_number and int(chapter_number) > 130:
+                    return True
+            
+            # Проверяем URL на наличие VIP индикаторов
+            if 'vip' in chapter_url.lower():
+                return True
+            
+            # Можно добавить другие проверки для других сайтов
+            
+            return False
+            
+        except Exception as e:
+            LogService.log_warning(f"⚠️ Ошибка при определении VIP статуса главы {chapter_number}: {e}")
+            return False
+    
     def _parse_chapter_with_legacy_system(self, chapter_url: str, chapter_number: int) -> Optional[str]:
         """Устаревший парсер для содержимого глав"""
 

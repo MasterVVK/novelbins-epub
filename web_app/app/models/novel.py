@@ -32,6 +32,10 @@ class Novel(db.Model):
     auth_cookies = Column(Text)  # Cookies для авторизации на сайте-источнике
     auth_enabled = Column(Boolean, default=False)  # Включена ли авторизация
     
+    # VIP авторизация для премиум контента
+    vip_cookies = Column(Text)  # VIP cookies для доступа к платному контенту
+    vip_cookies_enabled = Column(Boolean, default=False)  # Включены ли VIP cookies
+    
     # SOCKS прокси для обхода блокировок
     socks_proxy = Column(String(255))  # SOCKS прокси в формате host:port
     proxy_enabled = Column(Boolean, default=False)  # Включен ли прокси
@@ -141,6 +145,25 @@ class Novel(db.Model):
         """Проверка, включен ли прокси"""
         return self.proxy_enabled and bool(self.socks_proxy)
     
+    def get_vip_cookies(self):
+        """Получить VIP cookies"""
+        return self.vip_cookies or ''
+    
+    def set_vip_cookies(self, cookies):
+        """Установить VIP cookies"""
+        self.vip_cookies = cookies
+        self.vip_cookies_enabled = True if cookies else False
+    
+    def is_vip_cookies_enabled(self):
+        """Проверить, включены ли VIP cookies"""
+        return self.vip_cookies_enabled and bool(self.vip_cookies)
+    
+    def get_effective_cookies(self, is_vip_content=False):
+        """Получить подходящие cookies для контента"""
+        if is_vip_content and self.is_vip_cookies_enabled():
+            return self.get_vip_cookies()
+        return self.get_auth_cookies()
+
     def clear_proxy(self):
         """Очистка данных прокси"""
         self.socks_proxy = None
