@@ -400,7 +400,10 @@ class QidianParser(BaseParser):
                     
                     # Пробуем VIP и простые алгоритмы
                     decrypted_text = self._decrypt_qidian_content(html_content)
-                    if decrypted_text and len(decrypted_text) > 500:
+                    if decrypted_text == "VIP_NEEDS_SELENIUM":
+                        print(f"   🔐 Обнаружен VIP контент, требуется Selenium расшифровка...")
+                        # Сразу переходим к Selenium
+                    elif decrypted_text and len(decrypted_text) > 500:
                         print(f"   ✅ Контент расшифрован простым алгоритмом: {len(decrypted_text)} символов")
                         return {
                             'title': title,
@@ -413,13 +416,27 @@ class QidianParser(BaseParser):
                     else:
                         print(f"   ⚠️ Простая расшифровка не удалась, пробуем Selenium...")
                         
-                        # Fallback: используем Selenium для JavaScript расшифровки
+                        # Fallback: используем VIP Selenium для JavaScript расшифровки
                         if selenium_available and self.auth_cookies:
+                            # Сначала пробуем VIP Reader
+                            vip_result = self._decrypt_vip_with_selenium(chapter_url)
+                            if vip_result and len(vip_result) > 500:
+                                cleaned_result = self._clean_selenium_result(vip_result)
+                                print(f"   ✅ VIP контент расшифрован через Selenium: {len(cleaned_result)} символов")
+                                return {
+                                    'title': title,
+                                    'content': cleaned_result,
+                                    'chapter_id': chapter_id,
+                                    'word_count': len(cleaned_result),
+                                    'is_locked': False,
+                                    'is_decrypted': True
+                                }
+                            
+                            # Если VIP не сработал, пробуем стандартный Selenium
                             selenium_result = self._decrypt_with_selenium(chapter_url)
                             if selenium_result and len(selenium_result) > 500:
-                                # Очищаем Selenium результат от лишнего
                                 cleaned_result = self._clean_selenium_result(selenium_result)
-                                print(f"   ✅ Контент расшифрован через Selenium: {len(cleaned_result)} символов")
+                                print(f"   ✅ Контент расшифрован через обычный Selenium: {len(cleaned_result)} символов")
                                 return {
                                     'title': title,
                                     'content': cleaned_result,
@@ -876,25 +893,65 @@ class QidianParser(BaseParser):
     
     def _decrypt_vip_content(self, html: str) -> Optional[str]:
         """
-        Расшифровка VIP контента из HTML
+        Расшифровка VIP контента из HTML (обновленная версия)
         """
         try:
-            # Ищем зашифрованные данные в скрипте
+            # Метод 1: Ищем данные в vite-plugin-ssr скрипте
             script_match = re.search(r'<script id="vite-plugin-ssr_pageContext" type="application/json">({.+?})</script>', html, re.DOTALL)
             
-            if not script_match:
-                return None
+            if script_match:
+                try:
+                    json_data = json.loads(script_match.group(1))
+                    chapter_info = json_data['pageContext']['pageProps']['pageData']['chapterInfo']
+                    
+                    encrypted_content = chapter_info.get('content')
+                    fkp_key = chapter_info.get('fkp')
+                    
+                    if encrypted_content and fkp_key:
+                        print(f"   📦 Найдены VIP данные в Vite: контент={len(encrypted_content)}, ключ={len(fkp_key)}")
+                        return self._perform_vip_decryption(encrypted_content, fkp_key)
+                except Exception as e:
+                    print(f"   ⚠️ Ошибка парсинга Vite JSON: {e}")
             
-            try:
-                json_data = json.loads(script_match.group(1))
-                chapter_info = json_data['pageContext']['pageProps']['pageData']['chapterInfo']
-                
-                encrypted_content = chapter_info.get('content')
-                fkp_key = chapter_info.get('fkp')
-                actual_words = chapter_info.get('actualWords', 0)
-                
-                if not encrypted_content or not fkp_key:
-                    return None
+            # Метод 2: Ищем window.enContent и window.fkp в обычных скриптах  
+            encrypted_content = None
+            fkp_key = None
+            
+            # Паттерны для поиска зашифрованного контента
+            content_patterns = [
+                r'window\.enContent\s*=\s*["\']([^"\']+)["\']',
+                r'enContent\s*=\s*["\']([^"\']+)["\']',
+            ]
+            
+            for pattern in content_patterns:
+                match = re.search(pattern, html, re.IGNORECASE)
+                if match:
+                    encrypted_content = match.group(1)
+                    print(f"   ✅ Найден window.enContent: {len(encrypted_content)} символов")
+                    break
+            
+            # Паттерны для поиска ключа
+            fkp_patterns = [
+                r'window\.fkp\s*=\s*["\']([^"\']+)["\']',
+                r'fkp\s*=\s*["\']([^"\']+)["\']',
+            ]
+            
+            for pattern in fkp_patterns:
+                match = re.search(pattern, html, re.IGNORECASE)
+                if match:
+                    fkp_key = match.group(1)
+                    print(f"   ✅ Найден window.fkp: {len(fkp_key)} символов")
+                    break
+            
+            if encrypted_content and fkp_key:
+                print(f"   🔑 Найдены VIP данные в скриптах")
+                return self._perform_vip_decryption(encrypted_content, fkp_key)
+            elif encrypted_content:
+                print(f"   ⚠️ Найден контент, но нет ключа - нужен Selenium")
+                return "VIP_NEEDS_SELENIUM"
+            else:
+                print(f"   ❌ VIP данные не найдены")
+                return None
                 
                 print(f"   🔐 VIP контент найден: {len(encrypted_content)} символов, ожидается: {actual_words}")
                 
@@ -942,13 +999,50 @@ class QidianParser(BaseParser):
                 print(f"   ❌ Все методы VIP расшифровки не дали результата")
                 return None
                 
-            except json.JSONDecodeError as e:
-                print(f"   ❌ Ошибка парсинга JSON: {e}")
-                return None
-                
         except Exception as e:
             print(f"   ❌ Ошибка VIP расшифровки: {e}")
             return None
+    
+    def _perform_vip_decryption(self, encrypted_content: str, fkp_key: str) -> Optional[str]:
+        """
+        Выполнение VIP расшифровки с использованием алгоритма Qidian
+        """
+        try:
+            print(f"   🔐 Начинаем VIP расшифровку...")
+            print(f"   📊 Зашифрованный контент: {len(encrypted_content)} символов")
+            print(f"   🔑 Ключ fkp: {len(fkp_key)} символов")
+            
+            # Декодируем ключ fkp
+            try:
+                fkp_decoded = base64.b64decode(fkp_key + '==').decode('utf-8')
+                print(f"   🔑 fkp декодирован: {fkp_decoded[:100]}...")
+                
+                # Извлекаем параметры
+                key_match = re.search(r'window\.onkeyfocus\("([^"]+)",\s*(\d+)\)', fkp_decoded)
+                if not key_match:
+                    print(f"   ❌ Не удалось извлечь параметры из fkp")
+                    return "VIP_NEEDS_SELENIUM"
+                
+                key_param = key_match.group(1)
+                number_param = int(key_match.group(2))
+                
+                print(f"   🔑 Параметры: key_len={len(key_param)}, number={number_param}")
+                
+            except Exception as e:
+                print(f"   ❌ Ошибка декодирования fkp: {e}")
+                return "VIP_NEEDS_SELENIUM"
+            
+            # Поскольку алгоритм расшифровки сложный и требует точной реализации,
+            # возвращаем специальный маркер для использования Selenium
+            print(f"   💡 VIP данные найдены, но расшифровка требует JavaScript")
+            print(f"   💡 Передаем на обработку Selenium для точной расшифровки")
+            
+            # Можно попробовать простые методы, но они вряд ли сработают
+            return "VIP_NEEDS_SELENIUM"
+            
+        except Exception as e:
+            print(f"   ❌ Ошибка VIP расшифровки: {e}")
+            return "VIP_NEEDS_SELENIUM"
     
     def _xor_decrypt(self, encrypted_bytes: bytes, key: bytes) -> Optional[str]:
         """Вспомогательная функция XOR расшифровки"""
@@ -1028,6 +1122,172 @@ class QidianParser(BaseParser):
             chinese_chars > 500  # Минимум 500 китайских символов
         )
     
+    def _decrypt_vip_with_selenium(self, chapter_url: str) -> str:
+        """
+        Расшифровка VIP контента с помощью Selenium через VIP Reader
+        """
+        if not selenium_available:
+            print(f"   ❌ Selenium не доступен для VIP расшифровки")
+            return None
+        
+        driver = None
+        try:
+            print(f"   🔐 Запуск VIP Selenium расшифровки...")
+            
+            # Настраиваем Chrome для VIP Reader
+            chrome_options = Options()
+            chrome_options.add_argument('--headless')
+            chrome_options.add_argument('--no-sandbox')
+            chrome_options.add_argument('--disable-dev-shm-usage')
+            chrome_options.add_argument('--disable-gpu')
+            chrome_options.add_argument('--disable-extensions')
+            chrome_options.add_argument('--disable-blink-features=AutomationControlled')
+            chrome_options.add_argument(f'--user-data-dir=/tmp/chrome_vip_{int(time.time())}')
+            
+            # Desktop User-Agent для VIP Reader
+            chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 YaBrowser/25.6.0.0 Safari/537.36')
+            
+            # Добавляем SOCKS прокси если настроен
+            if self.socks_proxy:
+                chrome_options.add_argument(f'--proxy-server=socks5://{self.socks_proxy}')
+                print(f"   🌐 VIP Selenium использует SOCKS прокси: {self.socks_proxy}")
+            
+            driver = webdriver.Chrome(options=chrome_options)
+            
+            # Убираем признаки автоматизации
+            driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            
+            # Загружаем главную страницу для установки cookies
+            print(f"   🍪 Установка VIP cookies...")
+            driver.get("https://www.qidian.com")
+            time.sleep(3)
+            
+            # Устанавливаем cookies
+            if self.auth_cookies:
+                cookies_set = 0
+                for cookie_pair in self.auth_cookies.split(';'):
+                    if '=' in cookie_pair:
+                        name, value = cookie_pair.strip().split('=', 1)
+                        try:
+                            driver.add_cookie({
+                                'name': name.strip(),
+                                'value': value.strip(),
+                                'domain': '.qidian.com'
+                            })
+                            cookies_set += 1
+                        except Exception as e:
+                            continue
+                print(f"   🍪 VIP cookies установлено: {cookies_set}")
+            
+            # Определяем VIP Reader URL
+            chapter_id = self._extract_chapter_id(chapter_url)
+            book_id = self._extract_book_id(chapter_url)
+            
+            if chapter_id and book_id:
+                vip_reader_url = f"https://vipreader.qidian.com/chapter/{book_id}/{chapter_id}"
+                print(f"   📖 Загрузка VIP Reader: {vip_reader_url}")
+                
+                # Загружаем VIP Reader страницу
+                driver.get(vip_reader_url)
+                
+                # Ждем выполнения JavaScript расшифровки
+                print(f"   ⏳ Ожидание VIP JavaScript расшифровки...")
+                time.sleep(10)  # Увеличенное время для VIP
+                
+                # Проверяем расшифровку с несколькими попытками
+                for attempt in range(3):
+                    time.sleep(5 + attempt * 3)  # Увеличиваем время с каждой попыткой
+                    print(f"   📊 VIP попытка {attempt + 1}/3...")
+                    
+                    # VIP-специфичные extractors
+                    vip_extractors = [
+                        # Основные контейнеры VIP Reader
+                        "return document.querySelector('.read-content') ? document.querySelector('.read-content').innerText : null;",
+                        "return document.querySelector('.j_readContent') ? document.querySelector('.j_readContent').innerText : null;",
+                        "return document.querySelector('#j_readContent') ? document.querySelector('#j_readContent').innerText : null;",
+                        "return document.querySelector('.chapter-content') ? document.querySelector('.chapter-content').innerText : null;",
+                        
+                        # Фильтрованное извлечение из body
+                        """
+                        var bodyText = document.body.innerText;
+                        var lines = bodyText.split('\\n');
+                        var contentLines = [];
+                        for (var i = 0; i < lines.length; i++) {
+                            var line = lines[i].trim();
+                            if (line.length > 15 && 
+                                !line.includes('登录') && 
+                                !line.includes('订阅') && 
+                                !line.includes('购买') &&
+                                !line.includes('login') &&
+                                !line.includes('点击') &&
+                                !line.includes('VIP')) {
+                                var chineseCount = (line.match(/[\\u4e00-\\u9fff]/g) || []).length;
+                                if (chineseCount > 8) {
+                                    contentLines.push(line);
+                                }
+                            }
+                        }
+                        return contentLines.join('\\n');
+                        """,
+                        
+                        # Параграфы с высоким процентом китайского текста
+                        """
+                        var allParagraphs = document.querySelectorAll('p, div');
+                        var chineseTexts = [];
+                        for (var i = 0; i < allParagraphs.length; i++) {
+                            var text = allParagraphs[i].innerText.trim();
+                            if (text.length > 30) {
+                                var chineseCount = (text.match(/[\\u4e00-\\u9fff]/g) || []).length;
+                                var chineseRatio = chineseCount / text.length;
+                                if (chineseRatio > 0.5 && chineseCount > 20) {
+                                    chineseTexts.push(text);
+                                }
+                            }
+                        }
+                        return chineseTexts.join('\\n');
+                        """
+                    ]
+                    
+                    for i, js_code in enumerate(vip_extractors):
+                        try:
+                            result = driver.execute_script(js_code)
+                            if result and len(result.strip()) > 500:
+                                chinese_chars = sum(1 for char in result if '\u4e00' <= char <= '\u9fff')
+                                print(f"   📊 VIP метод {i+1}: {len(result)} символов, {chinese_chars} китайских")
+                                
+                                # Для VIP требуем высокое качество
+                                if chinese_chars > 800 or (chinese_chars > 400 and len(result) > 2500):
+                                    print(f"   ✅ VIP расшифровка успешна! (качество: высокое)")
+                                    driver.quit()
+                                    return result
+                                elif chinese_chars > 300 and len(result) > 1500:
+                                    print(f"   ⭐ VIP средний результат, ищем лучше...")
+                                    partial_result = result
+                        except Exception as e:
+                            continue
+                    
+                    print(f"   ⏳ VIP попытка {attempt + 1} завершена, пробуем еще...")
+                
+                # Если нашли хотя бы средний результат
+                if 'partial_result' in locals() and len(partial_result) > 1000:
+                    chinese_chars = sum(1 for char in partial_result if '\u4e00' <= char <= '\u9fff')
+                    print(f"   ⭐ Возвращаем лучший VIP результат: {len(partial_result)} символов, {chinese_chars} китайских")
+                    driver.quit()
+                    return partial_result
+            
+            driver.quit()
+            print(f"   ❌ VIP Selenium расшифровка неуспешна")
+            return None
+            
+        except Exception as e:
+            print(f"   ❌ Ошибка VIP Selenium: {e}")
+            if driver:
+                try:
+                    driver.quit()
+                except:
+                    pass
+            return None
+
     def _decrypt_with_selenium(self, chapter_url: str) -> str:
         """
         Расшифровка контента с помощью Selenium (JavaScript выполнение)

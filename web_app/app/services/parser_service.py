@@ -493,16 +493,34 @@ class WebParserService:
                                   novel_id=novel_id, task_id=task_id)
                 print(f"📖 Обработка главы {i+1}/{len(chapters_data)}: {chapter_data['title']}")
 
-                # Проверяем, не существует ли уже глава
-                existing_chapter = Chapter.query.filter_by(
-                    novel_id=novel_id,
-                    chapter_number=chapter_data['number']
+                # РАСШИРЕННАЯ ПРОВЕРКА НА СУЩЕСТВОВАНИЕ ГЛАВЫ
+                # Проверяем по номеру главы И по URL для большей надежности
+                existing_chapter = Chapter.query.filter(
+                    Chapter.novel_id == novel_id,
+                    db.or_(
+                        Chapter.chapter_number == chapter_data['number'],
+                        Chapter.url == chapter_data['url']
+                    )
                 ).first()
-
+                
                 if existing_chapter:
-                    LogService.log_info(f"Глава {chapter_data['number']} уже существует и активна", 
+                    LogService.log_info(f"Глава {chapter_data['number']} уже существует (ID: {existing_chapter.id}, статус: {existing_chapter.status})", 
                                       novel_id=novel_id, task_id=task_id)
-                    continue
+                    
+                    # Проверяем статус существующей главы
+                    if existing_chapter.status in ['parsed', 'translated', 'edited']:
+                        LogService.log_info(f"Пропускаем главу {chapter_data['number']} - уже обработана", 
+                                          novel_id=novel_id, task_id=task_id)
+                        continue
+                    else:
+                        # Если глава в статусе 'pending' или 'error', обновляем её
+                        LogService.log_info(f"Обновляем существующую главу {chapter_data['number']} (статус: {existing_chapter.status})", 
+                                          novel_id=novel_id, task_id=task_id)
+                        update_existing = True
+                        chapter_to_update = existing_chapter
+                else:
+                    update_existing = False
+                    chapter_to_update = None
 
                 # Парсим содержимое
                 LogService.log_info(f"Загрузка содержимого главы {chapter_data['number']}...", 
@@ -513,19 +531,55 @@ class WebParserService:
                                          novel_id=novel_id, task_id=task_id)
                     continue
 
-                # Создаем главу в БД
-                chapter = Chapter(
-                    novel_id=novel_id,
-                    chapter_number=chapter_data['number'],
-                    original_title=chapter_data['title'],
-                    url=chapter_data['url'],
-                    original_text=content,
-                    status='parsed'
-                )
-                db.session.add(chapter)
+                # Создаем или обновляем главу в БД
+                if update_existing:
+                    # Обновляем существующую главу
+                    chapter_to_update.original_title = chapter_data['title']
+                    chapter_to_update.url = chapter_data['url']
+                    chapter_to_update.original_text = content
+                    chapter_to_update.word_count_original = len(content) if content else 0
+                    chapter_to_update.status = 'parsed'
+                    
+                    chapter = chapter_to_update
+                    LogService.log_info(f"Глава {chapter_data['number']} обновлена в БД", 
+                                      novel_id=novel_id, task_id=task_id, chapter_id=chapter.id)
+                else:
+                    # Создаем новую главу
+                    chapter = Chapter(
+                        novel_id=novel_id,
+                        chapter_number=chapter_data['number'],
+                        original_title=chapter_data['title'],
+                        url=chapter_data['url'],
+                        original_text=content,
+                        word_count_original=len(content) if content else 0,
+                        status='parsed'
+                    )
+                    db.session.add(chapter)
+                    LogService.log_info(f"Глава {chapter_data['number']} создана в БД", 
+                                      novel_id=novel_id, task_id=task_id, chapter_id=chapter.id)
+                
                 success_count += 1
-                LogService.log_info(f"Глава {chapter_data['number']} сохранена в БД", 
-                                  novel_id=novel_id, task_id=task_id, chapter_id=chapter.id)
+                
+                # Принудительно коммитим каждую главу для избежания race conditions
+                try:
+                    db.session.commit()
+                    LogService.log_info(f"Глава {chapter_data['number']} успешно сохранена", 
+                                      novel_id=novel_id, task_id=task_id, chapter_id=chapter.id)
+                except Exception as e:
+                    db.session.rollback()
+                    
+                    # Проверяем, не является ли это ошибкой уникальности
+                    if "UNIQUE constraint failed" in str(e):
+                        LogService.log_warning(f"Глава {chapter_data['number']} уже существует (обнаружено при сохранении)", 
+                                             novel_id=novel_id, task_id=task_id)
+                        # Не считаем это ошибкой, просто пропускаем
+                        success_count -= 1  # Убираем из счетчика успешных
+                        continue
+                    else:
+                        LogService.log_error(f"Ошибка сохранения главы {chapter_data['number']}: {e}", 
+                                           novel_id=novel_id, task_id=task_id)
+                        success_count -= 1  # Убираем из счетчика успешных
+                        continue
 
                 # Обновляем прогресс
                 if task:
