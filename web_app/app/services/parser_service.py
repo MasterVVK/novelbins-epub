@@ -102,8 +102,20 @@ class WebParserService:
             
             LogService.log_info(f"📚 Источник: {source_type} (определен: {detected_source})", novel_id=novel.id)
             
-            # Создаем парсер
-            parser = create_parser_from_url(novel_url)
+            # Получаем настройки авторизации и прокси
+            auth_cookies = None
+            socks_proxy = None
+            
+            if novel.is_auth_enabled():
+                auth_cookies = novel.get_auth_cookies()
+                LogService.log_info(f"🔐 Используем авторизацию: {len(auth_cookies)} символов", novel_id=novel.id)
+            
+            if novel.is_proxy_enabled():
+                socks_proxy = novel.get_socks_proxy()
+                LogService.log_info(f"🌐 Используем SOCKS прокси: {socks_proxy}", novel_id=novel.id)
+            
+            # Создаем парсер с настройками
+            parser = create_parser_from_url(novel_url, auth_cookies=auth_cookies, socks_proxy=socks_proxy)
             if not parser:
                 LogService.log_error(f"❌ Не удалось создать парсер для {source_type}", novel_id=novel.id)
                 return self._parse_with_legacy_system(novel, novel_url)
@@ -318,14 +330,20 @@ class WebParserService:
     def _parse_chapter_with_new_system(self, chapter_url: str, chapter_number: int, novel: Novel = None) -> Optional[str]:
         """Парсинг содержимого главы с новой системой"""
         try:
-            # Получаем cookies из настроек новеллы
+            # Получаем cookies и прокси из настроек новеллы
             auth_cookies = None
+            socks_proxy = None
+            
             if novel and novel.is_auth_enabled():
                 auth_cookies = novel.get_auth_cookies()
                 LogService.log_info(f"🔐 Используем авторизацию для главы {chapter_number}", chapter_id=chapter_number)
             
-            # Создаем парсер для URL главы с cookies
-            parser = create_parser_from_url(chapter_url, auth_cookies=auth_cookies)
+            if novel and novel.is_proxy_enabled():
+                socks_proxy = novel.get_socks_proxy()
+                LogService.log_info(f"🌐 Используем SOCKS прокси для главы {chapter_number}: {socks_proxy}", chapter_id=chapter_number)
+            
+            # Создаем парсер для URL главы с cookies и прокси
+            parser = create_parser_from_url(chapter_url, auth_cookies=auth_cookies, socks_proxy=socks_proxy)
             if not parser:
                 LogService.log_warning(f"⚠️ Не удалось создать парсер для главы {chapter_number}, используем legacy", chapter_id=chapter_number)
                 return self._parse_chapter_with_legacy_system(chapter_url, chapter_number)

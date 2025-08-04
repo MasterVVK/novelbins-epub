@@ -10,6 +10,18 @@ from bs4 import BeautifulSoup
 import re
 import sys
 import os
+import base64
+import json
+import zlib
+
+# Импорт Selenium для расшифровки (опционально)
+try:
+    from selenium import webdriver
+    from selenium.webdriver.chrome.options import Options
+    from selenium.webdriver.chrome.service import Service
+    selenium_available = True
+except ImportError:
+    selenium_available = False
 
 # Добавляем путь к базовому классу
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'base'))
@@ -22,7 +34,7 @@ class QidianParser(BaseParser):
     Использует мобильную версию для обхода защиты от ботов
     """
     
-    def __init__(self, auth_cookies: str = None):
+    def __init__(self, auth_cookies: str = None, socks_proxy: str = None):
         super().__init__("qidian")
         
         # Пул User-Agent'ов для ротации
@@ -38,6 +50,12 @@ class QidianParser(BaseParser):
         # Cookies для авторизации
         self.auth_cookies = auth_cookies
         
+        # SOCKS прокси для обхода WAF
+        self.socks_proxy = socks_proxy
+        if socks_proxy:
+            print(f"🌐 Используем SOCKS прокси: {socks_proxy}")
+            self._setup_proxy_session()
+        
         # Устанавливаем начальные заголовки
         self._update_headers()
         
@@ -46,6 +64,34 @@ class QidianParser(BaseParser):
         
         # Счетчики для адаптивных пауз
         self.consecutive_errors = 0
+    
+    def _setup_proxy_session(self):
+        """Настройка сессии с SOCKS прокси"""
+        try:
+            import requests
+            from requests.adapters import HTTPAdapter
+            import urllib3
+            
+            # Проверяем формат прокси
+            if ':' in self.socks_proxy:
+                proxy_host, proxy_port = self.socks_proxy.split(':', 1)
+                proxy_url = f'socks5://{proxy_host}:{proxy_port}'
+                
+                # Создаем новую сессию с прокси
+                proxies = {
+                    'http': proxy_url,
+                    'https': proxy_url
+                }
+                
+                self.session.proxies.update(proxies)
+                print(f"✅ SOCKS прокси настроен: {proxy_url}")
+            else:
+                print(f"❌ Неверный формат прокси: {self.socks_proxy}")
+                
+        except ImportError as e:
+            print(f"❌ Для SOCKS прокси требуется requests[socks]: {e}")
+        except Exception as e:
+            print(f"❌ Ошибка настройки прокси: {e}")
         
     def _update_headers(self):
         """Обновляем заголовки с новым User-Agent и cookies"""
@@ -235,7 +281,7 @@ class QidianParser(BaseParser):
     
     def get_chapter_content(self, chapter_url: str) -> Dict:
         """
-        Получить содержимое главы
+        Получить содержимое главы с поддержкой расшифровки
         """
         html_content = self._get_page_content(chapter_url, description="Содержимое главы")
         
@@ -245,7 +291,7 @@ class QidianParser(BaseParser):
         try:
             soup = BeautifulSoup(html_content, 'html.parser')
             
-            # Извлекаем заголовок главы (обновленные селекторы на основе реальной структуры)
+            # Извлекаем заголовок главы
             title_selectors = [
                 'h2.title',
                 '.title',
@@ -259,12 +305,15 @@ class QidianParser(BaseParser):
                 title_elem = soup.select_one(selector)
                 if title_elem:
                     title = title_elem.get_text(strip=True)
-                    if title and len(title) > 5:  # Проверяем, что заголовок не слишком короткий
+                    if title and len(title) > 5:
                         break
             
-            # Извлекаем содержимое главы (исправленные селекторы на основе реальной структуры)
+            # Извлекаем chapter_id
+            chapter_id = self._extract_chapter_id(chapter_url)
+            
+            # Находим содержимое главы для анализа блокировки
             content_selectors = [
-                'main[data-type="cjk"]',  # Основной селектор для содержимого
+                'main[data-type="cjk"]',
                 'main.content',
                 '#reader-content main',
                 'main',
@@ -278,44 +327,118 @@ class QidianParser(BaseParser):
                     break
                     
             if not content_elem:
-                raise Exception("Не удалось найти содержимое главы (проверено: {', '.join(content_selectors)})")
+                raise Exception("Не удалось найти содержимое главы")
             
             # Проверяем на блокировку
-            if "lock-mask" in str(content_elem):
-                print(f"   🔒 Глава заблокирована (lock-mask) - возвращаем превью")
-                # Для заблокированных глав возвращаем превью с пометкой
-                content = self._clean_chapter_content(content_elem)
-                if len(content) < 200:  # Если содержимое слишком короткое
-                    return {
-                        'title': title,
-                        'content': f"[ЗАБЛОКИРОВАНА] {content}",
-                        'chapter_id': self._extract_chapter_id(chapter_url),
-                        'word_count': len(content),
-                        'is_locked': True
-                    }
+            is_locked = "lock-mask" in str(content_elem)
             
-            # Очищаем содержимое от лишних элементов
+            # Если глава заблокирована, СНАЧАЛА пробуем расшифровку
+            if is_locked:
+                print(f"   🔒 Глава заблокирована (lock-mask) - пробуем расшифровку...")
+                
+                # Ищем зашифрованный контент в JSON
+                encrypted_content = self._extract_encrypted_content(html_content)
+                
+                if encrypted_content:
+                    print(f"   🔐 Найден зашифрованный контент: {len(encrypted_content)} символов")
+                    
+                    # Сначала пробуем простые алгоритмы
+                    decrypted_text = self._decrypt_qidian_content(encrypted_content)
+                    
+                    if decrypted_text and len(decrypted_text) > 500:
+                        print(f"   ✅ Контент расшифрован простым алгоритмом: {len(decrypted_text)} символов")
+                        return {
+                            'title': title,
+                            'content': decrypted_text,
+                            'chapter_id': chapter_id,
+                            'word_count': len(decrypted_text),
+                            'is_locked': False,
+                            'is_decrypted': True
+                        }
+                    else:
+                        print(f"   ⚠️ Простая расшифровка не удалась, пробуем Selenium...")
+                        
+                        # Fallback: используем Selenium для JavaScript расшифровки
+                        if selenium_available and self.auth_cookies:
+                            selenium_result = self._decrypt_with_selenium(chapter_url)
+                            if selenium_result and len(selenium_result) > 500:
+                                print(f"   ✅ Контент расшифрован через Selenium: {len(selenium_result)} символов")
+                                return {
+                                    'title': title,
+                                    'content': selenium_result,
+                                    'chapter_id': chapter_id,
+                                    'word_count': len(selenium_result),
+                                    'is_locked': False,
+                                    'is_decrypted': True
+                                }
+                        
+                        print(f"   ❌ Расшифровка не удалась - возвращаем заблокированный контент")
+                else:
+                    print(f"   ❌ Зашифрованный контент не найден")
+            else:
+                # Если глава не заблокирована, всё равно проверяем на зашифрованный контент
+                encrypted_content = self._extract_encrypted_content(html_content)
+                if encrypted_content:
+                    print(f"   🔐 Найден зашифрованный контент (незаблокированная глава): {len(encrypted_content)} символов")
+                    
+                    # Пробуем простые алгоритмы
+                    decrypted_text = self._decrypt_qidian_content(encrypted_content)
+                    if decrypted_text and len(decrypted_text) > 500:
+                        print(f"   ✅ Контент расшифрован простым алгоритмом: {len(decrypted_text)} символов")
+                        return {
+                            'title': title,
+                            'content': decrypted_text,
+                            'chapter_id': chapter_id,
+                            'word_count': len(decrypted_text),
+                            'is_locked': False,
+                            'is_decrypted': True
+                        }
+                    else:
+                        print(f"   ⚠️ Простая расшифровка не удалась, пробуем Selenium...")
+                        
+                        # Fallback: используем Selenium для JavaScript расшифровки
+                        if selenium_available and self.auth_cookies:
+                            selenium_result = self._decrypt_with_selenium(chapter_url)
+                            if selenium_result and len(selenium_result) > 500:
+                                # Очищаем Selenium результат от лишнего
+                                cleaned_result = self._clean_selenium_result(selenium_result)
+                                print(f"   ✅ Контент расшифрован через Selenium: {len(cleaned_result)} символов")
+                                return {
+                                    'title': title,
+                                    'content': cleaned_result,
+                                    'chapter_id': chapter_id,
+                                    'word_count': len(cleaned_result),
+                                    'is_locked': False,
+                                    'is_decrypted': True
+                                }
+                        
+                        print(f"   ❌ Selenium расшифровка не удалась")
+            
+            # Обычный парсинг HTML контента (если расшифровка не удалась или не нужна)
             content = self._clean_chapter_content(content_elem)
             
-            # Извлекаем chapter_id из URL
-            chapter_id = self._extract_chapter_id(chapter_url)
-        
+            # Если глава заблокирована и контента мало, помечаем как заблокированную
+            if is_locked and len(content) < 200:
+                print(f"   🔒 Глава заблокирована, получено превью: {len(content)} символов")
+                content = f"[ЗАБЛОКИРОВАНА] {content}"
+            
             return {
                 'title': title,
                 'content': content,
                 'chapter_id': chapter_id,
                 'word_count': len(content),
-                'is_locked': False
+                'is_locked': is_locked,
+                'is_decrypted': False
             }
         except Exception as e:
             print(f"⚠️ Ошибка парсинга содержимого главы: {e}")
-            # Возвращаем пустой результат вместо исключения
             return {
                 'title': 'Недоступная глава',
                 'content': 'Содержимое главы недоступно из-за ограничений сайта.',
                 'chapter_id': self._extract_chapter_id(chapter_url) or '0',
                 'word_count': 0,
-                'is_locked': True
+                'is_locked': True,
+                'is_decrypted': False
             }
     
     def _delay_between_requests(self):
@@ -600,9 +723,359 @@ class QidianParser(BaseParser):
         result = '\n\n'.join(paragraphs) if paragraphs else "Нет содержимого"
         
         # Отладочная информация
-        print(f"   📝 Очищено содержимое: {len(paragraphs)} абзацев, {len(result)} символов")
+        if len(result) > 50:  # Показываем отладку только для непустого контента
+            print(f"   📝 Очищено содержимое: {len(paragraphs)} абзацев, {len(result)} символов")
         
         return result
+    
+    def _extract_encrypted_content(self, html_content: str) -> str:
+        """
+        Извлекаем зашифрованный контент из JSON данных страницы
+        """
+        try:
+            # Ищем специфичные для Qidian JSON паттерны
+            patterns = [
+                # Основной паттерн - content поле с длинной строкой
+                (r'"content"\s*:\s*"([^"]{1000,})"', "content field"),
+                # Дополнительные паттерны
+                (r'"chapterContent"\s*:\s*"([^"]{1000,})"', "chapterContent field"),
+                (r'"text"\s*:\s*"([^"]{1000,})"', "text field"),
+                (r'window\.__INITIAL_STATE__\s*=\s*({.+?});', "INITIAL_STATE"),
+                (r'window\.g_data\s*=\s*({.+?});', "g_data")
+            ]
+            
+            for pattern, name in patterns:
+                matches = re.findall(pattern, html_content, re.DOTALL)
+                for match in matches:
+                    try:
+                        if match.startswith('{'):
+                            # JSON объект
+                            data = json.loads(match)
+                            content = self._find_encrypted_in_json(data)
+                            if content:
+                                print(f"   🎯 Зашифрованный контент найден в {name}")
+                                return content
+                        elif len(match) > 1000:
+                            # Длинная строка - потенциально зашифрованный контент
+                            if self._looks_like_base64(match):
+                                print(f"   🎯 Зашифрованный контент найден в {name} (прямое совпадение)")
+                                return match
+                    except json.JSONDecodeError:
+                        continue
+            
+            print(f"   ❌ Зашифрованный контент не найден в известных паттернах")
+            return None
+            
+        except Exception as e:
+            print(f"   ⚠️ Ошибка извлечения зашифрованного контента: {e}")
+            return None
+    
+    def _find_encrypted_in_json(self, data, visited=None) -> str:
+        """
+        Рекурсивно ищем зашифрованные данные в JSON
+        """
+        if visited is None:
+            visited = set()
+        
+        if id(data) in visited:
+            return None
+        visited.add(id(data))
+        
+        try:
+            if isinstance(data, dict):
+                # Поиск по ключам, которые могут содержать контент
+                content_keys = ['content', 'chapterContent', 'text', 'body', 'data']
+                for key in content_keys:
+                    if key in data and isinstance(data[key], str) and len(data[key]) > 1000:
+                        return data[key]
+                
+                # Рекурсивный поиск
+                for value in data.values():
+                    result = self._find_encrypted_in_json(value, visited)
+                    if result:
+                        return result
+                        
+            elif isinstance(data, list):
+                for item in data:
+                    result = self._find_encrypted_in_json(item, visited)
+                    if result:
+                        return result
+            
+            elif isinstance(data, str) and len(data) > 1000:
+                # Проверяем, похоже ли контент на base64
+                if self._looks_like_base64(data):
+                    return data
+            
+            return None
+            
+        except Exception:
+            return None
+    
+    def _looks_like_base64(self, text: str) -> bool:
+        """
+        Проверяем, похож ли текст на base64
+        """
+        # Простая проверка: только base64 символы и правильная длина
+        base64_chars = set('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=')
+        return (
+            len(text) > 100 and
+            len(text) % 4 == 0 and  # Base64 всегда кратно 4
+            all(c in base64_chars for c in text) and
+            text.count('=') <= 2  # Максимум 2 знака padding
+        )
+    
+    def _decrypt_qidian_content(self, encrypted_content: str) -> str:
+        """
+        Расшифровка контента Qidian с использованием известных алгоритмов
+        """
+        # Алгоритмы расшифровки в порядке приоритета
+        decryption_methods = [
+            ('zGup5_xor', self._decrypt_with_key, 'zGup5'),
+            ('qidian_xor', self._decrypt_with_key, 'qidian'),
+            ('reader_xor', self._decrypt_with_key, 'reader'),
+            ('zGup5_zlib', self._decrypt_with_zlib, 'zGup5'),
+            ('qidian_zlib', self._decrypt_with_zlib, 'qidian')
+        ]
+        
+        for method_name, method_func, key in decryption_methods:
+            try:
+                result = method_func(encrypted_content, key)
+                if result and self._is_valid_chinese_text(result):
+                    print(f"   ✅ Расшифровка успешна методом: {method_name}")
+                    return result
+            except Exception as e:
+                continue
+        
+        print(f"   ⚠️ Не удалось расшифровать контент")
+        return None
+    
+    def _decrypt_with_key(self, encrypted_content: str, key: str) -> str:
+        """
+        Расшифровка с помощью XOR ключа
+        """
+        try:
+            # Декодируем base64
+            decoded = base64.b64decode(encrypted_content)
+            
+            # XOR дешифрование
+            key_bytes = key.encode('utf-8')
+            xored = bytes(decoded[i] ^ key_bytes[i % len(key_bytes)] for i in range(len(decoded)))
+            
+            # Пробуем декодировать UTF-8
+            return xored.decode('utf-8')
+            
+        except Exception:
+            return None
+    
+    def _decrypt_with_zlib(self, encrypted_content: str, key: str) -> str:
+        """
+        Расшифровка с помощью XOR + zlib декомпрессии
+        """
+        try:
+            # Декодируем base64
+            decoded = base64.b64decode(encrypted_content)
+            
+            # XOR дешифрование
+            key_bytes = key.encode('utf-8')
+            xored = bytes(decoded[i] ^ key_bytes[i % len(key_bytes)] for i in range(len(decoded)))
+            
+            # Декомпрессия zlib
+            decompressed = zlib.decompress(xored)
+            
+            # Пробуем декодировать UTF-8
+            return decompressed.decode('utf-8')
+            
+        except Exception:
+            return None
+    
+    def _is_valid_chinese_text(self, text: str) -> bool:
+        """
+        Проверяем, является ли текст качественным китайским текстом
+        """
+        if not text or len(text) < 100:
+            return False
+        
+        # Подсчитываем китайские символы
+        chinese_chars = sum(1 for char in text if '\u4e00' <= char <= '\u9fff')
+        chinese_ratio = chinese_chars / len(text)
+        
+        # Проверяем ключевые слова (например, из названия главы)
+        keywords_found = any(keyword in text for keyword in ['承诺', '完美', '我带', '孟昊'])
+        
+        # Критерии качества
+        return (
+            chinese_ratio > 0.15 or  # Минимум 15% китайских символов
+            keywords_found or  # Найдены ключевые слова
+            chinese_chars > 500  # Минимум 500 китайских символов
+        )
+    
+    def _decrypt_with_selenium(self, chapter_url: str) -> str:
+        """
+        Расшифровка контента с помощью Selenium (JavaScript выполнение)
+        """
+        if not selenium_available:
+            print(f"   ❌ Selenium не доступен")
+            return None
+        
+        try:
+            print(f"   🌐 Запуск Selenium для расшифровки...")
+            
+            # Настраиваем Chrome
+            chrome_options = Options()
+            chrome_options.add_argument('--headless')
+            chrome_options.add_argument('--no-sandbox')
+            chrome_options.add_argument('--disable-dev-shm-usage')
+            chrome_options.add_argument('--disable-gpu')
+            chrome_options.add_argument('--disable-extensions')
+            chrome_options.add_argument('--user-agent=Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1')
+            chrome_options.binary_location = "/usr/bin/chromium-browser"
+            
+            # Добавляем SOCKS прокси если настроен
+            if self.socks_proxy:
+                chrome_options.add_argument(f'--proxy-server=socks5://{self.socks_proxy}')
+                chrome_options.add_argument('--host-resolver-rules="MAP * 0.0.0.0 , EXCLUDE localhost"')
+                print(f"   🌐 Selenium использует SOCKS прокси: {self.socks_proxy}")
+            
+            service = Service('/usr/bin/chromedriver')
+            driver = webdriver.Chrome(service=service, options=chrome_options)
+            
+            # Загружаем главную страницу для установки cookies
+            driver.get("https://m.qidian.com/")
+            time.sleep(2)
+            
+            # Устанавливаем cookies
+            if self.auth_cookies:
+                cookies_set = 0
+                for cookie_pair in self.auth_cookies.split(';'):
+                    if '=' in cookie_pair:
+                        name, value = cookie_pair.strip().split('=', 1)
+                        try:
+                            driver.add_cookie({
+                                'name': name.strip(),
+                                'value': value.strip(),
+                                'domain': '.qidian.com'
+                            })
+                            cookies_set += 1
+                        except:
+                            pass
+                print(f"   🍪 Установлено cookies: {cookies_set}")
+            
+            # Загружаем страницу главы
+            driver.get(chapter_url)
+            
+            # Постепенно увеличиваем время ожидания JavaScript
+            wait_times = [5, 10, 15]
+            for wait_time in wait_times:
+                time.sleep(wait_time)
+                print(f"   ⏳ Ожидание JavaScript выполнения: {wait_time} секунд...")
+                
+                # Извлекаем расшифрованный контент
+                js_extractors = [
+                    # Основной контейнер
+                    "return document.querySelector('main') ? document.querySelector('main').innerText : '';",
+                    # Все параграфы
+                    "return Array.from(document.querySelectorAll('p')).map(p => p.innerText).join('\\n');",
+                    # Весь body
+                    "return document.body.innerText;",
+                    # Китайские строки
+                    "var allText = document.documentElement.innerText; var lines = allText.split('\\n'); var chineseLines = []; for (var i = 0; i < lines.length; i++) { var line = lines[i].trim(); if (line.length > 10) { var chineseCount = (line.match(/[\\u4e00-\\u9fff]/g) || []).length; if (chineseCount > 5) { chineseLines.push(line); } } } return chineseLines.join('\\n');",
+                    # Поиск в элементах с классами содержимого
+                    "var elements = document.querySelectorAll('div, section, article'); var texts = []; for (var i = 0; i < elements.length; i++) { var text = elements[i].innerText; if (text && text.length > 100) { var chineseCount = (text.match(/[\\u4e00-\\u9fff]/g) || []).length; if (chineseCount > 50) { texts.push(text); } } } return texts.join('\\n');"
+                ]
+                
+                for i, js_code in enumerate(js_extractors):
+                    try:
+                        result = driver.execute_script(js_code)
+                        if result and len(result.strip()) > 500:
+                            chinese_chars = sum(1 for char in result if '\u4e00' <= char <= '\u9fff')
+                            print(f"   📊 Метод {i+1} (ожидание {wait_time}s): {len(result)} символов, {chinese_chars} китайских")
+                            
+                            if chinese_chars > 200:  # Достаточно китайских символов
+                                print(f"   ✅ Selenium извлечение успешно!")
+                                driver.quit()
+                                return result
+                    except Exception as e:
+                        continue
+                
+                # Если на этом этапе нашли что-то, но недостаточно качественное, запоминаем
+                print(f"   ⏳ Продолжаем ожидание... (этап {wait_time}s завершен)")
+            
+            driver.quit()
+            print(f"   ❌ Selenium не смог извлечь качественный контент")
+            return None
+            
+        except Exception as e:
+            print(f"   ❌ Ошибка Selenium: {e}")
+            try:
+                driver.quit()
+            except:
+                pass
+            return None
+    
+    def _clean_selenium_result(self, selenium_text: str) -> str:
+        """
+        Очищаем результат Selenium от повторов и служебного текста
+        """
+        if not selenium_text:
+            return ""
+        
+        # Разбиваем на строки
+        lines = selenium_text.split('\n')
+        
+        # Убираем служебные строки (только самые очевидные)
+        excluded_keywords = [
+            '菜单', '章节加载失败', '不再显示订阅提醒', 'APP看广告免费解锁',
+            '订阅本章', '批量订阅', '下一章'
+        ]
+        
+        cleaned_lines = []
+        seen_content = set()  # Для удаления дубликатов контента
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+                
+            # Пропускаем служебные строки
+            is_service_line = False
+            for keyword in excluded_keywords:
+                if keyword in line:
+                    is_service_line = True
+                    break
+            
+            if is_service_line:
+                continue
+            
+            # Проверяем на дубликаты только для длинных строк (основной контент)
+            if len(line) > 20:
+                if line in seen_content:
+                    continue
+                seen_content.add(line)
+            
+            # Добавляем строки с контентом (менее строгий фильтр)
+            if len(line) > 3:
+                cleaned_lines.append(line)
+        
+        # Объединяем в текст
+        result = '\n\n'.join(cleaned_lines)
+        
+        # Мягкая очистка - убираем только повторяющиеся заголовки
+        # Оставляем основной заголовок, убираем повторы
+        title_pattern = r'第二卷 初入南域 第131章 我带承诺而来！'
+        title_matches = re.findall(title_pattern, result)
+        if len(title_matches) > 1:
+            # Убираем все кроме первого вхождения
+            result = re.sub(title_pattern, '', result)
+            result = title_pattern + '\n\n' + result.strip()
+        
+        # Убираем строки с номерами точек и баланса
+        result = re.sub(r'^\d+点$', '', result, flags=re.MULTILINE)
+        result = re.sub(r'^余额\d+点$', '', result, flags=re.MULTILINE)
+        
+        # Очищаем лишние переносы
+        result = re.sub(r'\n{3,}', '\n\n', result)
+        
+        return result.strip()
 
 
 def main():

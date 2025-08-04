@@ -122,6 +122,39 @@
                         </div>
                     </div>
                     
+                    <hr>
+                    <h6 class="mb-3">🌐 SOCKS прокси (опционально)</h6>
+                    
+                    <div class="alert alert-info">
+                        <i class="bi bi-info-circle"></i>
+                        <strong>Для китайских сайтов (Qidian, WebNovel):</strong>
+                        SOCKS прокси поможет обойти геоблокировки и WAF. Оставьте пустым если не нужен.
+                    </div>
+                    
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="proxy_enabled" name="proxy_enabled" value="true">
+                                    <label class="form-check-label" for="proxy_enabled">
+                                        <strong>Включить SOCKS прокси</strong>
+                                    </label>
+                                </div>
+                                <div class="form-text">Использовать прокси для обхода блокировок</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="socks_proxy" class="form-label">SOCKS прокси (host:port)</label>
+                                <input type="text" class="form-control" id="socks_proxy" name="socks_proxy" 
+                                       placeholder="192.168.0.61:1080">
+                                <div class="form-text">
+                                    <strong>Пример:</strong> <code>192.168.0.61:1080</code>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
                     <div class="d-flex justify-content-between">
                         <a href="{{ url_for('main.novels') }}" class="btn btn-outline-secondary">
                             <i class="bi bi-arrow-left"></i> Назад

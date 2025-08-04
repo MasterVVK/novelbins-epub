@@ -29,13 +29,14 @@ class ParserFactory:
     }
     
     @classmethod
-    def create_parser(cls, source: str, auth_cookies: str = None) -> BaseParser:
+    def create_parser(cls, source: str, auth_cookies: str = None, socks_proxy: str = None) -> BaseParser:
         """
         Создать парсер по названию источника
         
         Args:
             source: Название источника ('qidian', 'webnovel', etc.)
             auth_cookies: Cookies для авторизации (опционально)
+            socks_proxy: SOCKS прокси для обхода блокировок (опционально)
             
         Returns:
             Экземпляр парсера для указанного источника
@@ -50,16 +51,23 @@ class ParserFactory:
             raise ValueError(f"Парсер для '{source}' не найден. Доступные: {available}")
         
         parser_class = cls._parsers[source]
-        return parser_class(auth_cookies=auth_cookies)
+        
+        # Проверяем поддерживает ли парсер SOCKS прокси
+        try:
+            return parser_class(auth_cookies=auth_cookies, socks_proxy=socks_proxy)
+        except TypeError:
+            # Fallback для парсеров без поддержки прокси
+            return parser_class(auth_cookies=auth_cookies)
     
     @classmethod
-    def create_parser_from_url(cls, url: str, auth_cookies: str = None) -> BaseParser:
+    def create_parser_from_url(cls, url: str, auth_cookies: str = None, socks_proxy: str = None) -> BaseParser:
         """
         Создать парсер на основе URL
         
         Args:
             url: URL книги или сайта
             auth_cookies: Cookies для авторизации (опционально)
+            socks_proxy: SOCKS прокси для обхода блокировок (опционально)
             
         Returns:
             Экземпляр подходящего парсера
@@ -72,7 +80,7 @@ class ParserFactory:
         if not source:
             raise ValueError(f"Не удается определить источник по URL: {url}")
         
-        return cls.create_parser(source, auth_cookies=auth_cookies)
+        return cls.create_parser(source, auth_cookies=auth_cookies, socks_proxy=socks_proxy)
     
     @classmethod
     def detect_source_from_url(cls, url: str) -> Optional[str]:
@@ -162,14 +170,14 @@ class ParserFactory:
 
 
 # Удобные функции для быстрого использования
-def create_parser(source: str, auth_cookies: str = None) -> BaseParser:
+def create_parser(source: str, auth_cookies: str = None, socks_proxy: str = None) -> BaseParser:
     """Создать парсер по названию источника"""
-    return ParserFactory.create_parser(source, auth_cookies=auth_cookies)
+    return ParserFactory.create_parser(source, auth_cookies=auth_cookies, socks_proxy=socks_proxy)
 
 
-def create_parser_from_url(url: str, auth_cookies: str = None) -> BaseParser:
+def create_parser_from_url(url: str, auth_cookies: str = None, socks_proxy: str = None) -> BaseParser:
     """Создать парсер на основе URL"""
-    return ParserFactory.create_parser_from_url(url, auth_cookies=auth_cookies)
+    return ParserFactory.create_parser_from_url(url, auth_cookies=auth_cookies, socks_proxy=socks_proxy)
 
 
 def detect_source(url: str) -> Optional[str]:

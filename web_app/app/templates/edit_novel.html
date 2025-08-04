@@ -39,10 +39,22 @@
                     <div class="mb-3">
                         <label for="source_type" class="form-label">Тип источника</label>
                         <select class="form-select" id="source_type" name="source_type">
-                            <option value="novelbins" {{ 'selected' if novel.source_type == 'novelbins' else '' }}>NovelBins</option>
-                            <option value="webnovel" {{ 'selected' if novel.source_type == 'webnovel' else '' }}>WebNovel</option>
+                            {% for source in available_sources %}
+                            <option value="{{ source.id }}" 
+                                    data-description="{{ source.description }}" 
+                                    data-languages="{{ source.supported_languages|join(',') }}"
+                                    data-example="{{ source.example_url }}"
+                                    {{ 'selected' if novel.source_type == source.id else '' }}>
+                                {{ source.name }}
+                            </option>
+                            {% endfor %}
+                            <option value="novelbins" {{ 'selected' if novel.source_type == 'novelbins' else '' }}>NovelBins (Legacy)</option>
+                            <option value="webnovel" {{ 'selected' if novel.source_type == 'webnovel' else '' }}>WebNovel (Legacy)</option>
                             <option value="other" {{ 'selected' if novel.source_type == 'other' else '' }}>Другой</option>
                         </select>
+                        <div class="form-text">
+                            <span id="source-description">{{ novel.source_type }} - выберите правильный тип источника для вашей новеллы</span>
+                        </div>
                     </div>
                     
                     <div class="mb-3">
@@ -129,6 +141,47 @@
                                 <span class="text-success">✅ Авторизация активна</span>
                             {% else %}
                                 <span class="text-muted">❌ Авторизация не настроена</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                    
+                    <hr>
+                    <h6 class="mb-3">🌐 SOCKS прокси для обхода блокировок</h6>
+                    
+                    <div class="alert alert-warning">
+                        <i class="bi bi-shield-exclamation"></i>
+                        <strong>Для обхода WAF блокировок:</strong>
+                        <ol class="mb-0 mt-2">
+                            <li>Настройте SOCKS5 прокси-сервер (например, через VPN)</li>
+                            <li>Укажите адрес прокси в формате <code>host:port</code></li>
+                            <li>Прокси будет использоваться только для этой новеллы</li>
+                            <li>Особенно полезно для китайских сайтов (Qidian, WebNovel)</li>
+                        </ol>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="proxy_enabled" name="proxy_enabled" value="true"
+                                   {{ 'checked' if novel.proxy_enabled else '' }}>
+                            <label class="form-check-label" for="proxy_enabled">
+                                <strong>Включить SOCKS прокси</strong>
+                            </label>
+                        </div>
+                        <div class="form-text">Использовать SOCKS прокси для обхода геоблокировок и WAF</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="socks_proxy" class="form-label">SOCKS прокси (host:port)</label>
+                        <input type="text" class="form-control" id="socks_proxy" name="socks_proxy" 
+                               value="{{ novel.socks_proxy or '' }}" 
+                               placeholder="192.168.1.100:1080">
+                        <div class="form-text">
+                            <strong>Пример:</strong> <code>192.168.0.61:1080</code> или <code>proxy.example.com:1080</code><br>
+                            <strong>Статус:</strong> 
+                            {% if novel.proxy_enabled and novel.socks_proxy %}
+                                <span class="text-success">✅ SOCKS прокси активен: {{ novel.socks_proxy }}</span>
+                            {% else %}
+                                <span class="text-muted">❌ Прокси не настроен</span>
                             {% endif %}
                         </div>
                     </div>

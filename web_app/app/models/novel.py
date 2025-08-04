@@ -31,6 +31,10 @@ class Novel(db.Model):
     # Авторизация для парсинга
     auth_cookies = Column(Text)  # Cookies для авторизации на сайте-источнике
     auth_enabled = Column(Boolean, default=False)  # Включена ли авторизация
+    
+    # SOCKS прокси для обхода блокировок
+    socks_proxy = Column(String(255))  # SOCKS прокси в формате host:port
+    proxy_enabled = Column(Boolean, default=False)  # Включен ли прокси
 
     # Связь с шаблоном промпта
     prompt_template_id = Column(Integer, ForeignKey('prompt_templates.id'), nullable=True)
@@ -121,4 +125,24 @@ class Novel(db.Model):
         """Очистка данных авторизации"""
         self.auth_cookies = None
         self.auth_enabled = False
+        return self
+    
+    def set_socks_proxy(self, proxy: str):
+        """Установка SOCKS прокси"""
+        self.socks_proxy = proxy
+        self.proxy_enabled = bool(proxy and proxy.strip())
+        return self
+    
+    def get_socks_proxy(self) -> str:
+        """Получение SOCKS прокси"""
+        return self.socks_proxy or ""
+    
+    def is_proxy_enabled(self) -> bool:
+        """Проверка, включен ли прокси"""
+        return self.proxy_enabled and bool(self.socks_proxy)
+    
+    def clear_proxy(self):
+        """Очистка данных прокси"""
+        self.socks_proxy = None
+        self.proxy_enabled = False
         return self 

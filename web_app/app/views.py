@@ -110,6 +110,14 @@ def new_novel():
             }
         )
 
+        # Обрабатываем SOCKS прокси при создании
+        proxy_enabled = request.form.get('proxy_enabled', 'false') == 'true'
+        socks_proxy = request.form.get('socks_proxy', '').strip()
+        
+        if proxy_enabled and socks_proxy:
+            novel.set_socks_proxy(socks_proxy)
+            print(f"🌐 SOCKS прокси установлен для новой новеллы: {socks_proxy}")
+
         db.session.add(novel)
         db.session.commit()
 
@@ -248,6 +256,17 @@ def edit_novel(novel_id):
             novel.clear_auth()
             print(f"🔐 Авторизация отключена")
 
+        # Обрабатываем SOCKS прокси
+        proxy_enabled = request.form.get('proxy_enabled', 'false') == 'true'
+        socks_proxy = request.form.get('socks_proxy', '').strip()
+        
+        if proxy_enabled and socks_proxy:
+            novel.set_socks_proxy(socks_proxy)
+            print(f"🌐 SOCKS прокси включен: {socks_proxy}")
+        else:
+            novel.clear_proxy()
+            print(f"🌐 SOCKS прокси отключен")
+
         # Принудительно обновляем объект в сессии
         db.session.add(novel)
         db.session.commit()
@@ -266,7 +285,9 @@ def edit_novel(novel_id):
         print(f"   max_chapters: {novel.config.get('max_chapters')}")
         print(f"   request_delay: {novel.config.get('request_delay')}")
     
-    return render_template('edit_novel.html', novel=novel, prompt_templates=prompt_templates)
+    # Получаем доступные источники для формы
+    available_sources = ParserIntegrationService.get_available_sources_with_info()
+    return render_template('edit_novel.html', novel=novel, prompt_templates=prompt_templates, available_sources=available_sources)
 
 
 @main_bp.route('/novels/<int:novel_id>/delete', methods=['POST'])
