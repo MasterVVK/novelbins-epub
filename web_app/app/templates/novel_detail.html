@@ -189,13 +189,27 @@
         
         <!-- Главы -->
         <div class="card">
-            <div class="card-header">
+            <div class="card-header d-flex justify-content-between align-items-center">
                 <h5 class="card-title mb-0">
-                    <i class="bi bi-list-ul"></i> Главы ({{ chapters|length }})
+                    <i class="bi bi-list-ul"></i> Главы 
+                    <span class="badge bg-secondary">{{ chapters_pagination.total if chapters_pagination else 0 }}</span>
                 </h5>
+                
+                <!-- Настройки пагинации -->
+                {% if chapters_pagination and chapters_pagination.total > 0 %}
+                <div class="d-flex align-items-center">
+                    <label for="per_page" class="form-label me-2 mb-0">Глав на странице:</label>
+                    <select id="per_page" class="form-select form-select-sm" style="width: auto;" onchange="changePerPage(this.value)">
+                        <option value="10" {{ 'selected' if per_page == 10 else '' }}>10</option>
+                        <option value="25" {{ 'selected' if per_page == 25 else '' }}>25</option>
+                        <option value="50" {{ 'selected' if per_page == 50 else '' }}>50</option>
+                        <option value="100" {{ 'selected' if per_page == 100 else '' }}>100</option>
+                    </select>
+                </div>
+                {% endif %}
             </div>
             <div class="card-body">
-                {% if chapters %}
+                {% if chapters and chapters|length > 0 %}
                 <div class="table-responsive">
                     <table class="table table-hover">
                         <thead>
@@ -243,6 +257,66 @@
                         </tbody>
                     </table>
                 </div>
+                
+                <!-- Пагинация -->
+                {% if chapters_pagination and chapters_pagination.pages > 1 %}
+                <nav aria-label="Навигация по страницам глав">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div class="text-muted">
+                            Показано {{ chapters_pagination.first }} - {{ chapters_pagination.last }} из {{ chapters_pagination.total }} глав
+                        </div>
+                        <ul class="pagination pagination-sm mb-0">
+                            <!-- Кнопка "Предыдущая" -->
+                            {% if chapters_pagination.has_prev %}
+                            <li class="page-item">
+                                <a class="page-link" href="{{ url_for('main.novel_detail', novel_id=novel.id, page=chapters_pagination.prev_num, per_page=per_page) }}">
+                                    <i class="bi bi-chevron-left"></i>
+                                </a>
+                            </li>
+                            {% else %}
+                            <li class="page-item disabled">
+                                <span class="page-link"><i class="bi bi-chevron-left"></i></span>
+                            </li>
+                            {% endif %}
+                            
+                            <!-- Номера страниц -->
+                            {% for page_num in chapters_pagination.iter_pages(left_edge=2, left_current=2, right_current=3, right_edge=2) %}
+                                {% if page_num %}
+                                    {% if page_num != chapters_pagination.page %}
+                                    <li class="page-item">
+                                        <a class="page-link" href="{{ url_for('main.novel_detail', novel_id=novel.id, page=page_num, per_page=per_page) }}">
+                                            {{ page_num }}
+                                        </a>
+                                    </li>
+                                    {% else %}
+                                    <li class="page-item active">
+                                        <span class="page-link">{{ page_num }}</span>
+                                    </li>
+                                    {% endif %}
+                                {% else %}
+                                <li class="page-item disabled">
+                                    <span class="page-link">...</span>
+                                </li>
+                                {% endif %}
+                            {% endfor %}
+                            
+                            <!-- Кнопка "Следующая" -->
+                            {% if chapters_pagination.has_next %}
+                            <li class="page-item">
+                                <a class="page-link" href="{{ url_for('main.novel_detail', novel_id=novel.id, page=chapters_pagination.next_num, per_page=per_page) }}">
+                                    <i class="bi bi-chevron-right"></i>
+                                </a>
+                            </li>
+                            {% else %}
+                            <li class="page-item disabled">
+                                <span class="page-link"><i class="bi bi-chevron-right"></i></span>
+                            </li>
+                            {% endif %}
+                        </ul>
+                    </div>
+                </nav>
+                {% endif %}
+                
                 {% else %}
                 <div class="text-center py-4">
                     <i class="bi bi-file-text text-muted fs-1"></i>
@@ -310,6 +384,9 @@
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
                 <form method="POST" action="{{ url_for('main.delete_chapter', chapter_id=chapter.id) }}" style="display: inline;">
+                    <!-- Сохраняем параметры пагинации при удалении -->
+                    <input type="hidden" name="return_page" value="{{ current_page }}">
+                    <input type="hidden" name="return_per_page" value="{{ per_page }}">
                     <button type="submit" class="btn btn-danger">
                         <i class="bi bi-trash"></i> Удалить
                     </button>
@@ -357,4 +434,17 @@
         </div>
     </div>
 </div>
+
+<!-- JavaScript для пагинации -->
+<script>
+function changePerPage(perPage) {
+    // Сохраняем текущую страницу или переходим на первую
+    const urlParams = new URLSearchParams(window.location.search);
+    urlParams.set('per_page', perPage);
+    urlParams.set('page', '1'); // Всегда переходим на первую страницу при изменении количества
+    
+    // Перенаправляем на новую страницу
+    window.location.href = window.location.pathname + '?' + urlParams.toString();
+}
+</script>
 {% endblock %} 

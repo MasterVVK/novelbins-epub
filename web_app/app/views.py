@@ -480,6 +480,16 @@ def restore_novel(novel_id):
 @main_bp.route('/novels/<int:novel_id>')
 def novel_detail(novel_id):
     """Детальная страница новеллы"""
+    # Получаем параметры пагинации
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 50, type=int)  # По умолчанию 50 глав на страницу
+    
+    # Ограничиваем количество глав на страницу
+    if per_page > 100:
+        per_page = 100
+    elif per_page < 10:
+        per_page = 10
+    
     # Принудительно получаем свежие данные из базы без кеширования
     db.session.expire_all()
     
@@ -487,7 +497,14 @@ def novel_detail(novel_id):
     novel = Novel.query.get_or_404(novel_id)
     db.session.refresh(novel)
     
-    chapters = Chapter.query.filter_by(novel_id=novel_id).order_by(Chapter.chapter_number).all()
+    # Получаем главы с пагинацией
+    chapters_query = Chapter.query.filter_by(novel_id=novel_id).order_by(Chapter.chapter_number)
+    chapters_pagination = chapters_query.paginate(
+        page=page, 
+        per_page=per_page, 
+        error_out=False
+    )
+    chapters = chapters_pagination.items
     
     # Получаем задачи для новеллы (включая EPUB)
     tasks = Task.query.filter_by(novel_id=novel_id).order_by(Task.updated_at.desc()).all()
@@ -502,7 +519,13 @@ def novel_detail(novel_id):
             print(f"   config тип: {type(novel.config)}")
             print(f"   config значение: {novel.config}")
 
-    return render_template('novel_detail.html', novel=novel, chapters=chapters, tasks=tasks)
+    return render_template('novel_detail.html', 
+                         novel=novel, 
+                         chapters=chapters, 
+                         chapters_pagination=chapters_pagination,
+                         tasks=tasks,
+                         current_page=page,
+                         per_page=per_page)
 
 
 @main_bp.route('/novels/<int:novel_id>/parse', methods=['POST'])
@@ -1045,12 +1068,21 @@ def delete_chapter(chapter_id):
     novel_id = chapter.novel_id
     chapter_number = chapter.chapter_number
     
+    # Получаем параметры пагинации для возврата
+    return_page = request.form.get('return_page', 1, type=int)
+    return_per_page = request.form.get('return_per_page', 50, type=int)
+    
     # Полное удаление главы (включая промпты)
     db.session.delete(chapter)
     db.session.commit()
     
     flash(f'Глава {chapter_number} и вся связанная история промптов успешно удалены', 'success')
-    return redirect(url_for('main.novel_detail', novel_id=novel_id))
+    
+    # Возвращаемся на ту же страницу пагинации
+    return redirect(url_for('main.novel_detail', 
+                          novel_id=novel_id, 
+                          page=return_page, 
+                          per_page=return_per_page))
 
 
 
