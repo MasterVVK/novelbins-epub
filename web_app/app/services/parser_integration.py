@@ -163,6 +163,13 @@ class ParserIntegrationService:
         Returns:
             True если URL соответствует источнику
         """
+        # Специальная обработка для EPUB источников
+        if expected_source == 'epub':
+            # For EPUB, check if it's a file path ending with .epub or contains epub_files directory
+            return (url.lower().endswith('.epub') or 
+                   'epub_files' in url or 
+                   url.lower().endswith('.epub/'))
+        
         detected = cls.detect_source_from_url(url)
         return detected == expected_source
     

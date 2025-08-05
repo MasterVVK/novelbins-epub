@@ -143,10 +143,13 @@ def new_novel():
                 flash('Не удалось автоматически определить источник, используется выбранный', 'warning')
 
         # Проверка соответствия URL и источника
-        if source_url and source_type != 'epub' and not ParserIntegrationService.validate_url_for_source(source_url, source_type):
+        if source_url and not ParserIntegrationService.validate_url_for_source(source_url, source_type):
             detected = ParserIntegrationService.detect_source_from_url(source_url)
             if detected and detected != source_type:
-                flash(f'Внимание: URL больше подходит для источника "{detected}", но выбран "{source_type}"', 'warning')
+                if source_type == 'epub':
+                    flash(f'Предупреждение: Путь к файлу не похож на EPUB файл. Убедитесь, что указан правильный путь.', 'warning')
+                else:
+                    flash(f'Внимание: URL больше подходит для источника "{detected}", но выбран "{source_type}"', 'warning')
 
         # Вычисляем температуру редактирования на основе режима качества
         editing_quality_mode = request.form.get('editing_quality_mode', 'balanced')
@@ -331,6 +334,19 @@ def edit_novel(novel_id):
         novel.author = author if author else None
         novel.source_url = source_url
         novel.source_type = source_type
+        
+        # Для EPUB источников обновляем также epub_file_path
+        if source_type == 'epub':
+            novel.epub_file_path = source_url
+        
+        # Проверяем соответствие URL/пути и типа источника
+        if source_url and not ParserIntegrationService.validate_url_for_source(source_url, source_type):
+            detected = ParserIntegrationService.detect_source_from_url(source_url)
+            if detected and detected != source_type:
+                if source_type == 'epub':
+                    flash(f'Предупреждение: Путь к файлу не похож на EPUB файл. Убедитесь, что указан правильный путь.', 'warning')
+                else:
+                    flash(f'Внимание: URL больше подходит для источника "{detected}", но выбран "{source_type}"', 'warning')
         
         # Обновляем шаблон промпта
         if prompt_template_id:

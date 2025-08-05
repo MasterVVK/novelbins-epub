@@ -31,9 +31,24 @@
                     </div>
                     
                     <div class="mb-3">
-                        <label for="source_url" class="form-label">URL источника *</label>
-                        <input type="url" class="form-control" id="source_url" name="source_url" value="{{ novel.source_url }}" required>
-                        <div class="form-text">Ссылка на страницу новеллы</div>
+                        <label for="source_url" class="form-label" id="source_url_label">
+                            {% if novel.source_type == 'epub' %}
+                                Путь к EPUB файлу *
+                            {% else %}
+                                URL источника *
+                            {% endif %}
+                        </label>
+                        <input type="{% if novel.source_type == 'epub' %}text{% else %}url{% endif %}" 
+                               class="form-control" id="source_url" name="source_url" 
+                               value="{{ novel.source_url }}" required
+                               placeholder="{% if novel.source_type == 'epub' %}Путь к EPUB файлу{% else %}URL источника{% endif %}">
+                        <div class="form-text" id="source_url_help">
+                            {% if novel.source_type == 'epub' %}
+                                Укажите полный путь к EPUB файлу на сервере
+                            {% else %}
+                                Ссылка на страницу новеллы
+                            {% endif %}
+                        </div>
                     </div>
                     
                     <div class="mb-3">
@@ -307,6 +322,26 @@
 </div>
 
 <script>
+// Динамическое изменение поля source_url в зависимости от типа источника
+document.getElementById('source_type').addEventListener('change', function() {
+    const sourceType = this.value;
+    const sourceUrlInput = document.getElementById('source_url');
+    const sourceUrlLabel = document.getElementById('source_url_label');
+    const sourceUrlHelp = document.getElementById('source_url_help');
+    
+    if (sourceType === 'epub') {
+        sourceUrlInput.type = 'text';
+        sourceUrlInput.placeholder = 'Путь к EPUB файлу';
+        sourceUrlLabel.textContent = 'Путь к EPUB файлу *';
+        sourceUrlHelp.textContent = 'Укажите полный путь к EPUB файлу на сервере';
+    } else {
+        sourceUrlInput.type = 'url';
+        sourceUrlInput.placeholder = 'URL источника';
+        sourceUrlLabel.textContent = 'URL источника *';
+        sourceUrlHelp.textContent = 'Ссылка на страницу новеллы';
+    }
+});
+
 // Автоматическое обновление температуры редактирования при выборе режима качества
 document.getElementById('editing_quality_mode').addEventListener('change', function() {
     const mode = this.value;

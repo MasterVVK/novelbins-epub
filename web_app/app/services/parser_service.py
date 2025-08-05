@@ -122,7 +122,11 @@ class WebParserService:
                     LogService.log_error(f"❌ Для EPUB источника не указан путь к файлу", novel_id=novel.id)
                     return []
                 
-                parser = create_parser('epub', epub_path=epub_path)
+                # Определяем максимум глав для EPUB
+                all_chapters_enabled = novel.config.get('all_chapters', False) if novel.config else False
+                max_chapters = None if all_chapters_enabled else (novel.config.get('max_chapters', 10) if novel.config else 10)
+                
+                parser = create_parser('epub', epub_path=epub_path, max_chapters=max_chapters)
                 novel_url = epub_path  # Используем путь к файлу как URL
             else:
                 parser = create_parser_from_url(novel_url, auth_cookies=auth_cookies, socks_proxy=socks_proxy)
@@ -189,13 +193,19 @@ class WebParserService:
                         LogService.log_error(f"EPUB файл не найден: {epub_path}", novel_id=novel.id)
                         return []
                     
-                    parser = EPUBParser(epub_path=epub_path)
+                    # Определяем максимум глав
+                    all_chapters_enabled = novel.config.get('all_chapters', False) if novel.config else False
+                    max_chapters = None if all_chapters_enabled else (novel.config.get('max_chapters', 10) if novel.config else 10)
+                    
+                    parser = EPUBParser(epub_path=epub_path, max_chapters=max_chapters)
                     if not parser.load_epub(epub_path):
                         LogService.log_error("Не удалось загрузить EPUB файл", novel_id=novel.id)
                         return []
                     
                     chapters = parser.get_chapter_list()
-                    LogService.log_info(f"Извлечено глав из EPUB: {len(chapters)}", novel_id=novel.id)
+                    LogService.log_info(f"Извлечено глав из EPUB: {len(chapters)}" + 
+                                       (f" (лимит: {max_chapters})" if max_chapters else " (все главы)"), 
+                                       novel_id=novel.id)
                     
                     # Конвертируем в формат, ожидаемый веб-приложением
                     result_chapters = []

@@ -22,7 +22,7 @@ class EPUBParser(BaseParser):
     Извлекает главы и контент из EPUB архива
     """
     
-    def __init__(self, epub_path: str = None, auth_cookies: str = None, socks_proxy: str = None):
+    def __init__(self, epub_path: str = None, auth_cookies: str = None, socks_proxy: str = None, max_chapters: Optional[int] = None):
         """
         Инициализация EPUB парсера
         
@@ -30,11 +30,13 @@ class EPUBParser(BaseParser):
             epub_path: Путь к EPUB файлу
             auth_cookies: Не используется для EPUB (для совместимости)
             socks_proxy: Не используется для EPUB (для совместимости)
+            max_chapters: Максимальное количество глав для извлечения
         """
         super().__init__('epub')
         self.epub_path = epub_path
         self.epub_data = {}
         self.chapters = []
+        self.max_chapters = max_chapters
         
         if epub_path:
             self.load_epub(epub_path)
@@ -207,8 +209,14 @@ class EPUBParser(BaseParser):
         """Извлечение глав из EPUB"""
         self.chapters = []
         chapter_number = 1
+        extracted_count = 0
         
         for item_id in spine:
+            # Проверяем ограничение на количество глав
+            if self.max_chapters and extracted_count >= self.max_chapters:
+                logger.info(f"Достигнут лимит глав: {self.max_chapters}")
+                break
+            
             if item_id not in manifest:
                 logger.warning(f"Элемент {item_id} не найден в манифесте")
                 continue
@@ -245,6 +253,7 @@ class EPUBParser(BaseParser):
                 if chapter_info:
                     self.chapters.append(chapter_info)
                     chapter_number += 1
+                    extracted_count += 1
                 else:
                     logger.warning(f"Не удалось извлечь контент из главы {item_id}")
                     
@@ -252,7 +261,7 @@ class EPUBParser(BaseParser):
                 logger.warning(f"Ошибка извлечения главы {item_id}: {e}")
                 continue
         
-        logger.info(f"Извлечено глав: {len(self.chapters)}")
+        logger.info(f"Извлечено глав: {len(self.chapters)}" + (f" (лимит: {self.max_chapters})" if self.max_chapters else ""))
     
     def _parse_html_content(self, html_content: str, chapter_number: int) -> Optional[Dict]:
         """Парсинг HTML контента главы"""
