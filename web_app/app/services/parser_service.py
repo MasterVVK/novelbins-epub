@@ -25,7 +25,7 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..
 sys.path.insert(0, project_root)
 
 try:
-    from parsers import create_parser_from_url, detect_source, get_available_sources
+    from parsers import create_parser, create_parser_from_url, detect_source, get_available_sources
     PARSERS_AVAILABLE = True
     LogService.log_info("✅ Новая система парсеров загружена успешно")
 except ImportError as e:
@@ -115,7 +115,18 @@ class WebParserService:
                 LogService.log_info(f"🌐 Используем SOCKS прокси: {socks_proxy}", novel_id=novel.id)
             
             # Создаем парсер с настройками
-            parser = create_parser_from_url(novel_url, auth_cookies=auth_cookies, socks_proxy=socks_proxy)
+            if source_type == 'epub':
+                # Специальная обработка для EPUB файлов
+                epub_path = novel.get_epub_file_path()
+                if not epub_path:
+                    LogService.log_error(f"❌ Для EPUB источника не указан путь к файлу", novel_id=novel.id)
+                    return []
+                
+                parser = create_parser('epub', epub_path=epub_path)
+                novel_url = epub_path  # Используем путь к файлу как URL
+            else:
+                parser = create_parser_from_url(novel_url, auth_cookies=auth_cookies, socks_proxy=socks_proxy)
+            
             if not parser:
                 LogService.log_error(f"❌ Не удалось создать парсер для {source_type}", novel_id=novel.id)
                 return self._parse_with_legacy_system(novel, novel_url)
@@ -167,6 +178,41 @@ class WebParserService:
     def _parse_with_legacy_system(self, novel: Novel, novel_url: str) -> List[dict]:
         """Устаревший парсер для обратной совместимости"""
         try:
+            # Специальная обработка для EPUB источников
+            if novel.is_epub_source():
+                LogService.log_info("📖 Обработка EPUB файла в legacy системе", novel_id=novel.id)
+                try:
+                    from parsers.sources.epub_parser import EPUBParser
+                    epub_path = novel.get_epub_file_path()
+                    
+                    if not epub_path or not os.path.exists(epub_path):
+                        LogService.log_error(f"EPUB файл не найден: {epub_path}", novel_id=novel.id)
+                        return []
+                    
+                    parser = EPUBParser(epub_path=epub_path)
+                    if not parser.load_epub(epub_path):
+                        LogService.log_error("Не удалось загрузить EPUB файл", novel_id=novel.id)
+                        return []
+                    
+                    chapters = parser.get_chapter_list()
+                    LogService.log_info(f"Извлечено глав из EPUB: {len(chapters)}", novel_id=novel.id)
+                    
+                    # Конвертируем в формат, ожидаемый веб-приложением
+                    result_chapters = []
+                    for i, chapter in enumerate(chapters, 1):
+                        result_chapters.append({
+                            'url': f"chapter_{chapter['number']}",  # Используем ID главы как URL
+                            'title': chapter['title'],
+                            'number': chapter['number']
+                        })
+                    
+                    parser.close()
+                    return result_chapters
+                    
+                except Exception as e:
+                    LogService.log_error(f"Ошибка обработки EPUB в legacy системе: {e}", novel_id=novel.id)
+                    return []
+            
             # Исправляем URL - добавляем слеш в конце если его нет
             if not novel_url.endswith('/'):
                 novel_url += '/'
@@ -313,19 +359,25 @@ class WebParserService:
         # По умолчанию считаем главой истории
         return True
 
-    def parse_chapter_content(self, chapter_url: str, chapter_number: int) -> Optional[str]:
+    def parse_chapter_content(self, chapter_url: str, chapter_number: int, novel: Novel = None) -> Optional[str]:
         """Парсинг содержимого главы с использованием новой системы парсеров"""
         LogService.log_info(f"📄 Загрузка главы {chapter_number}: {chapter_url}")
         
-        # Получаем новеллу для передачи cookies
-        novel = Novel.query.filter_by(source_url=chapter_url).first()
+        # Если новелла не передана, пытаемся найти её
+        if not novel:
+            # Для EPUB глав ищем по source_type
+            if chapter_url.startswith('chapter_'):
+                novel = Novel.query.filter_by(source_type='epub').first()
+            else:
+                # Для веб-источников ищем по source_url
+                novel = Novel.query.filter_by(source_url=chapter_url).first()
 
         # Пробуем использовать новую систему парсеров
         if PARSERS_AVAILABLE:
             return self._parse_chapter_with_new_system(chapter_url, chapter_number, novel)
         else:
             LogService.log_warning("⚠️ Используется устаревший парсер для главы", chapter_id=chapter_number)
-            return self._parse_chapter_with_legacy_system(chapter_url, chapter_number)
+            return self._parse_chapter_with_legacy_system(chapter_url, chapter_number, novel)
 
     def _parse_chapter_with_new_system(self, chapter_url: str, chapter_number: int, novel: Novel = None) -> Optional[str]:
         """Парсинг содержимого главы с новой системой"""
@@ -349,10 +401,17 @@ class WebParserService:
                     LogService.log_info(f"🌐 Используем SOCKS прокси для главы {chapter_number}: {socks_proxy}", chapter_id=chapter_number)
             
             # Создаем парсер для URL главы с cookies и прокси
-            parser = create_parser_from_url(chapter_url, auth_cookies=auth_cookies, socks_proxy=socks_proxy)
+            if novel and novel.is_epub_source():
+                # Для EPUB используем специальный парсер
+                epub_path = novel.get_epub_file_path()
+                parser = create_parser('epub', epub_path=epub_path)
+            else:
+                # Для веб-источников используем URL
+                parser = create_parser_from_url(chapter_url, auth_cookies=auth_cookies, socks_proxy=socks_proxy)
+            
             if not parser:
                 LogService.log_warning(f"⚠️ Не удалось создать парсер для главы {chapter_number}, используем legacy", chapter_id=chapter_number)
-                return self._parse_chapter_with_legacy_system(chapter_url, chapter_number)
+                return self._parse_chapter_with_legacy_system(chapter_url, chapter_number, novel)
             
             # Получаем содержимое главы
             chapter_data = parser.get_chapter_content(chapter_url)
@@ -380,7 +439,7 @@ class WebParserService:
         except Exception as e:
             LogService.log_error(f"❌ Ошибка парсинга главы {chapter_number} новой системой: {e}", chapter_id=chapter_number)
             # Откат к старой системе
-            return self._parse_chapter_with_legacy_system(chapter_url, chapter_number)
+            return self._parse_chapter_with_legacy_system(chapter_url, chapter_number, novel)
 
     def _is_vip_chapter(self, chapter_number: int, chapter_url: str, novel) -> bool:
         """Определение VIP/платных глав"""
@@ -402,11 +461,42 @@ class WebParserService:
             LogService.log_warning(f"⚠️ Ошибка при определении VIP статуса главы {chapter_number}: {e}")
             return False
     
-    def _parse_chapter_with_legacy_system(self, chapter_url: str, chapter_number: int) -> Optional[str]:
+    def _parse_chapter_with_legacy_system(self, chapter_url: str, chapter_number: int, novel: Novel = None) -> Optional[str]:
         """Устаревший парсер для содержимого глав"""
 
         try:
-            # Загружаем страницу главы
+            # Специальная обработка для EPUB источников
+            if novel and novel.is_epub_source():
+                LogService.log_info(f"📖 Обработка EPUB главы {chapter_number} в legacy системе", chapter_id=chapter_number)
+                try:
+                    from parsers.sources.epub_parser import EPUBParser
+                    epub_path = novel.get_epub_file_path()
+                    
+                    if not epub_path or not os.path.exists(epub_path):
+                        LogService.log_error(f"EPUB файл не найден: {epub_path}", chapter_id=chapter_number)
+                        return None
+                    
+                    parser = EPUBParser(epub_path=epub_path)
+                    if not parser.load_epub(epub_path):
+                        LogService.log_error("Не удалось загрузить EPUB файл", chapter_id=chapter_number)
+                        return None
+                    
+                    # Получаем содержимое главы
+                    chapter_data = parser.get_chapter_content(chapter_url)
+                    parser.close()
+                    
+                    if chapter_data and chapter_data.get('content'):
+                        LogService.log_info(f"✅ EPUB глава {chapter_number} загружена: {len(chapter_data['content'])} символов", chapter_id=chapter_number)
+                        return chapter_data['content']
+                    else:
+                        LogService.log_error(f"❌ Пустое содержимое EPUB главы {chapter_number}", chapter_id=chapter_number)
+                        return None
+                        
+                except Exception as e:
+                    LogService.log_error(f"Ошибка обработки EPUB главы {chapter_number} в legacy системе: {e}", chapter_id=chapter_number)
+                    return None
+            
+            # Для веб-источников загружаем страницу главы
             headers = {
                 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
             }
@@ -525,7 +615,7 @@ class WebParserService:
                 # Парсим содержимое
                 LogService.log_info(f"Загрузка содержимого главы {chapter_data['number']}...", 
                                   novel_id=novel_id, task_id=task_id)
-                content = self.parse_chapter_content(chapter_data['url'], chapter_data['number'])
+                content = self.parse_chapter_content(chapter_data['url'], chapter_data['number'], novel)
                 if not content:
                     LogService.log_warning(f"Не удалось загрузить содержимое главы {chapter_data['number']}", 
                                          novel_id=novel_id, task_id=task_id)

@@ -13,7 +13,8 @@ class Novel(db.Model):
     original_title = Column(String(255))
     author = Column(String(255))
     source_url = Column(String(500))
-    source_type = Column(String(50), default='novelbins')  # novelbins, webnovel, etc.
+    source_type = Column(String(50), default='novelbins')  # novelbins, webnovel, epub, etc.
+    epub_file_path = Column(String(500))  # Путь к EPUB файлу для source_type='epub'
 
     # Статистика
     total_chapters = Column(Integer, default=0)
@@ -168,4 +169,18 @@ class Novel(db.Model):
         """Очистка данных прокси"""
         self.socks_proxy = None
         self.proxy_enabled = False
-        return self 
+        return self
+    
+    def set_epub_file(self, file_path: str):
+        """Установка пути к EPUB файлу"""
+        self.epub_file_path = file_path
+        self.source_type = 'epub'
+        return self
+    
+    def get_epub_file_path(self) -> str:
+        """Получение пути к EPUB файлу"""
+        return self.epub_file_path or ""
+    
+    def is_epub_source(self) -> bool:
+        """Проверка, является ли источником EPUB файл"""
+        return self.source_type == 'epub' and bool(self.epub_file_path) 

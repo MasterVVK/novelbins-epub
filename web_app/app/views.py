@@ -64,9 +64,74 @@ def new_novel():
         source_type = request.form.get('source_type', 'novelbins')
         auto_detect = request.form.get('auto_detect', 'false') == 'true'
 
-        if not title or not source_url:
-            flash('Заполните все обязательные поля', 'error')
+        if not title:
+            flash('Заполните название новеллы', 'error')
             return redirect(url_for('main.new_novel'))
+
+        # Специальная обработка для EPUB источника
+        if source_type == 'epub':
+            # Проверяем загруженный файл
+            epub_file = request.files.get('epub_file')
+            if epub_file and epub_file.filename:
+                # Валидация файла
+                if not epub_file.filename.lower().endswith('.epub'):
+                    flash('Выберите файл с расширением .epub', 'error')
+                    return redirect(url_for('main.new_novel'))
+                
+                # Проверка размера файла (100MB)
+                epub_file.seek(0, 2)  # Перемещаемся в конец файла
+                file_size = epub_file.tell()
+                epub_file.seek(0)  # Возвращаемся в начало
+                
+                max_size = 100 * 1024 * 1024  # 100MB
+                if file_size > max_size:
+                    flash(f'Файл слишком большой: {file_size / 1024 / 1024:.1f}MB (максимум 100MB)', 'error')
+                    return redirect(url_for('main.new_novel'))
+                
+                # Сохраняем файл
+                import os
+                from werkzeug.utils import secure_filename
+                
+                # Создаем папку для EPUB файлов
+                epub_dir = os.path.join(current_app.instance_path, 'epub_files')
+                os.makedirs(epub_dir, exist_ok=True)
+                
+                # Генерируем уникальное имя файла
+                filename = secure_filename(epub_file.filename)
+                base_name, ext = os.path.splitext(filename)
+                counter = 1
+                while os.path.exists(os.path.join(epub_dir, filename)):
+                    filename = f"{base_name}_{counter}{ext}"
+                    counter += 1
+                
+                epub_path = os.path.join(epub_dir, filename)
+                epub_file.save(epub_path)
+                
+                # Проверяем, что файл действительно EPUB
+                try:
+                    import zipfile
+                    with zipfile.ZipFile(epub_path, 'r') as epub_zip:
+                        if 'META-INF/container.xml' not in epub_zip.namelist():
+                            os.remove(epub_path)  # Удаляем некорректный файл
+                            flash('Выбранный файл не является корректным EPUB файлом', 'error')
+                            return redirect(url_for('main.new_novel'))
+                except Exception as e:
+                    if os.path.exists(epub_path):
+                        os.remove(epub_path)
+                    flash(f'Ошибка при проверке EPUB файла: {str(e)}', 'error')
+                    return redirect(url_for('main.new_novel'))
+                
+                # Устанавливаем путь к файлу как source_url
+                source_url = epub_path
+                flash(f'EPUB файл загружен: {filename}', 'info')
+            elif not source_url:
+                flash('Для EPUB источника необходимо загрузить файл', 'error')
+                return redirect(url_for('main.new_novel'))
+        else:
+            # Для других источников проверяем URL
+            if not source_url:
+                flash('Заполните URL источника', 'error')
+                return redirect(url_for('main.new_novel'))
 
         # Автоопределение источника если включено
         if auto_detect and source_url:
@@ -78,7 +143,7 @@ def new_novel():
                 flash('Не удалось автоматически определить источник, используется выбранный', 'warning')
 
         # Проверка соответствия URL и источника
-        if source_url and not ParserIntegrationService.validate_url_for_source(source_url, source_type):
+        if source_url and source_type != 'epub' and not ParserIntegrationService.validate_url_for_source(source_url, source_type):
             detected = ParserIntegrationService.detect_source_from_url(source_url)
             if detected and detected != source_type:
                 flash(f'Внимание: URL больше подходит для источника "{detected}", но выбран "{source_type}"', 'warning')
@@ -110,6 +175,10 @@ def new_novel():
             }
         )
 
+        # Устанавливаем путь к EPUB файлу если это EPUB источник
+        if source_type == 'epub':
+            novel.set_epub_file(source_url)
+
         # Обрабатываем SOCKS прокси при создании
         proxy_enabled = request.form.get('proxy_enabled', 'false') == 'true'
         socks_proxy = request.form.get('socks_proxy', '').strip()
@@ -127,6 +196,80 @@ def new_novel():
     # Получаем доступные источники для формы
     available_sources = ParserIntegrationService.get_available_sources_with_info()
     return render_template('new_novel.html', available_sources=available_sources)
+
+
+@main_bp.route('/api/preview-epub', methods=['POST'])
+def api_preview_epub():
+    """API endpoint для предпросмотра EPUB файла"""
+    try:
+        if 'epub_file' not in request.files:
+            return jsonify({'error': 'Файл не загружен'}), 400
+        
+        epub_file = request.files['epub_file']
+        if not epub_file.filename:
+            return jsonify({'error': 'Файл не выбран'}), 400
+        
+        # Проверка расширения
+        if not epub_file.filename.lower().endswith('.epub'):
+            return jsonify({'error': 'Выберите файл с расширением .epub'}), 400
+        
+        # Проверка размера
+        epub_file.seek(0, 2)
+        file_size = epub_file.tell()
+        epub_file.seek(0)
+        
+        max_size = 100 * 1024 * 1024  # 100MB
+        if file_size > max_size:
+            return jsonify({'error': f'Файл слишком большой: {file_size / 1024 / 1024:.1f}MB'}), 400
+        
+        # Сохраняем временно для анализа
+        import tempfile
+        import os
+        
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.epub') as temp_file:
+            epub_file.save(temp_file.name)
+            temp_path = temp_file.name
+        
+        try:
+            # Анализируем EPUB
+            from parsers.sources.epub_parser import EPUBParser
+            
+            parser = EPUBParser(epub_path=temp_path)
+            if not parser.chapters:
+                return jsonify({'error': 'Не удалось извлечь главы из EPUB файла'}), 400
+            
+            book_info = parser.get_book_info()
+            
+            # Получаем информацию о первых главах
+            preview_chapters = []
+            for i, chapter in enumerate(parser.chapters[:5]):  # Первые 5 глав
+                preview_chapters.append({
+                    'number': chapter['number'],
+                    'title': chapter['title'],
+                    'word_count': chapter['word_count']
+                })
+            
+            result = {
+                'success': True,
+                'book_info': {
+                    'title': book_info['title'],
+                    'author': book_info['author'],
+                    'total_chapters': book_info['total_chapters'],
+                    'language': book_info['language']
+                },
+                'preview_chapters': preview_chapters,
+                'file_size_mb': round(file_size / 1024 / 1024, 1)
+            }
+            
+            return jsonify(result)
+            
+        finally:
+            # Удаляем временный файл
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
+                
+    except Exception as e:
+        return jsonify({'error': f'Ошибка при анализе EPUB: {str(e)}'}), 500
 
 
 @main_bp.route('/api/detect-source', methods=['POST'])

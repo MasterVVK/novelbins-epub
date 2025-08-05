@@ -55,6 +55,13 @@ class ParserIntegrationService:
             'supported_languages': ['en'],
             'example_url': 'https://novelbins.net/novel/...',
             'features': ['Стандартный парсер']
+        },
+        'epub': {
+            'name': 'EPUB файл',
+            'description': 'Локальный EPUB файл для импорта',
+            'supported_languages': ['en', 'zh', 'ru', 'auto'],
+            'example_url': 'book.epub',
+            'features': ['Локальный файл', 'Автоопределение языка', 'Извлечение глав']
         }
     }
     

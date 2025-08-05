@@ -9,6 +9,7 @@ import re
 
 from .base.base_parser import BaseParser
 from .sources.qidian_parser import QidianParser
+from .sources.epub_parser import EPUBParser
 
 
 class ParserFactory:
@@ -19,6 +20,7 @@ class ParserFactory:
     # Реестр доступных парсеров
     _parsers: Dict[str, Type[BaseParser]] = {
         'qidian': QidianParser,
+        'epub': EPUBParser,
     }
     
     # Паттерны URL для автоматического определения парсера
@@ -26,17 +28,19 @@ class ParserFactory:
         r'qidian\.com': 'qidian',
         r'm\.qidian\.com': 'qidian',
         r'book\.qidian\.com': 'qidian',
+        r'\.epub$': 'epub',  # Файлы EPUB
     }
     
     @classmethod
-    def create_parser(cls, source: str, auth_cookies: str = None, socks_proxy: str = None) -> BaseParser:
+    def create_parser(cls, source: str, auth_cookies: str = None, socks_proxy: str = None, epub_path: str = None) -> BaseParser:
         """
         Создать парсер по названию источника
         
         Args:
-            source: Название источника ('qidian', 'webnovel', etc.)
+            source: Название источника ('qidian', 'webnovel', 'epub', etc.)
             auth_cookies: Cookies для авторизации (опционально)
             socks_proxy: SOCKS прокси для обхода блокировок (опционально)
+            epub_path: Путь к EPUB файлу (только для source='epub')
             
         Returns:
             Экземпляр парсера для указанного источника
@@ -51,6 +55,12 @@ class ParserFactory:
             raise ValueError(f"Парсер для '{source}' не найден. Доступные: {available}")
         
         parser_class = cls._parsers[source]
+        
+        # Специальная обработка для EPUB парсера
+        if source == 'epub':
+            if not epub_path:
+                raise ValueError("Для EPUB парсера необходимо указать путь к файлу (epub_path)")
+            return parser_class(epub_path=epub_path)
         
         # Проверяем поддерживает ли парсер SOCKS прокси
         try:
@@ -170,9 +180,9 @@ class ParserFactory:
 
 
 # Удобные функции для быстрого использования
-def create_parser(source: str, auth_cookies: str = None, socks_proxy: str = None) -> BaseParser:
+def create_parser(source: str, auth_cookies: str = None, socks_proxy: str = None, epub_path: str = None) -> BaseParser:
     """Создать парсер по названию источника"""
-    return ParserFactory.create_parser(source, auth_cookies=auth_cookies, socks_proxy=socks_proxy)
+    return ParserFactory.create_parser(source, auth_cookies=auth_cookies, socks_proxy=socks_proxy, epub_path=epub_path)
 
 
 def create_parser_from_url(url: str, auth_cookies: str = None, socks_proxy: str = None) -> BaseParser:
