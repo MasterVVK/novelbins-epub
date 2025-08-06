@@ -20,6 +20,12 @@ class PromptTemplate(db.Model):
     summary_prompt = Column(Text)
     terms_extraction_prompt = Column(Text)
     
+    # Промпты редактуры
+    editing_analysis_prompt = Column(Text)
+    editing_style_prompt = Column(Text)
+    editing_dialogue_prompt = Column(Text)
+    editing_final_prompt = Column(Text)
+    
     # Настройки
     temperature = Column(db.Float, default=0.1)
     max_tokens = Column(Integer, default=24000)
@@ -58,6 +64,10 @@ class PromptTemplate(db.Model):
             translation_prompt=self.translation_prompt,
             summary_prompt=self.summary_prompt,
             terms_extraction_prompt=self.terms_extraction_prompt,
+            editing_analysis_prompt=self.editing_analysis_prompt,
+            editing_style_prompt=self.editing_style_prompt,
+            editing_dialogue_prompt=self.editing_dialogue_prompt,
+            editing_final_prompt=self.editing_final_prompt,
             temperature=self.temperature,
             max_tokens=self.max_tokens,
             is_default=False

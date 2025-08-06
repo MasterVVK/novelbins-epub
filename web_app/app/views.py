@@ -1313,6 +1313,10 @@ def new_prompt_template():
             'translation_prompt': request.form.get('translation_prompt'),
             'summary_prompt': request.form.get('summary_prompt'),
             'terms_extraction_prompt': request.form.get('terms_extraction_prompt'),
+            'editing_analysis_prompt': request.form.get('editing_analysis_prompt'),
+            'editing_style_prompt': request.form.get('editing_style_prompt'),
+            'editing_dialogue_prompt': request.form.get('editing_dialogue_prompt'),
+            'editing_final_prompt': request.form.get('editing_final_prompt'),
             'temperature': float(request.form.get('temperature', 0.1)),
             'max_tokens': int(request.form.get('max_tokens', 24000))
         }
@@ -1354,6 +1358,10 @@ def edit_prompt_template(template_id):
             'translation_prompt': request.form.get('translation_prompt'),
             'summary_prompt': request.form.get('summary_prompt'),
             'terms_extraction_prompt': request.form.get('terms_extraction_prompt'),
+            'editing_analysis_prompt': request.form.get('editing_analysis_prompt'),
+            'editing_style_prompt': request.form.get('editing_style_prompt'),
+            'editing_dialogue_prompt': request.form.get('editing_dialogue_prompt'),
+            'editing_final_prompt': request.form.get('editing_final_prompt'),
             'temperature': float(request.form.get('temperature', 0.1)),
             'max_tokens': int(request.form.get('max_tokens', 24000))
         }

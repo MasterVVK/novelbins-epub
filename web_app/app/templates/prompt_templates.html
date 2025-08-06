@@ -43,11 +43,21 @@
                 </div>
                 
                 <div class="mb-3">
-                    <small class="text-muted">Промпты:</small>
+                    <small class="text-muted">Промпты перевода:</small>
                     <ul class="list-unstyled small text-muted">
                         <li>Перевод: {{ '✓' if template.translation_prompt else '✗' }}</li>
                         <li>Резюме: {{ '✓' if template.summary_prompt else '✗' }}</li>
                         <li>Извлечение терминов: {{ '✓' if template.terms_extraction_prompt else '✗' }}</li>
+                    </ul>
+                </div>
+                
+                <div class="mb-3">
+                    <small class="text-muted">Промпты редактуры:</small>
+                    <ul class="list-unstyled small text-muted">
+                        <li>Анализ качества: {{ '✓' if template.editing_analysis_prompt else '✗' }}</li>
+                        <li>Улучшение стиля: {{ '✓' if template.editing_style_prompt else '✗' }}</li>
+                        <li>Полировка диалогов: {{ '✓' if template.editing_dialogue_prompt else '✗' }}</li>
+                        <li>Финальная полировка: {{ '✓' if template.editing_final_prompt else '✗' }}</li>
                     </ul>
                 </div>
                 

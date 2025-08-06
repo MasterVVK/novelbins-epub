@@ -65,6 +65,36 @@
                     </div>
                     
                     <hr>
+                    <h6 class="mb-3">
+                        <i class="bi bi-pencil"></i> Промпты редактуры
+                        <small class="text-muted">(опционально, для улучшения качества переводов)</small>
+                    </h6>
+                    
+                    <div class="mb-3">
+                        <label for="editing_analysis_prompt" class="form-label">Промпт анализа качества</label>
+                        <textarea class="form-control" id="editing_analysis_prompt" name="editing_analysis_prompt" rows="6">{{ template.editing_analysis_prompt or '' }}</textarea>
+                        <div class="form-text">Промпт для анализа качества переведенного текста и определения стратегии редактуры. Используйте {text} для вставки текста.</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="editing_style_prompt" class="form-label">Промпт улучшения стиля</label>
+                        <textarea class="form-control" id="editing_style_prompt" name="editing_style_prompt" rows="6">{{ template.editing_style_prompt or '' }}</textarea>
+                        <div class="form-text">Промпт для улучшения стиля и читаемости текста. Используйте {text} для вставки текста.</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="editing_dialogue_prompt" class="form-label">Промпт полировки диалогов</label>
+                        <textarea class="form-control" id="editing_dialogue_prompt" name="editing_dialogue_prompt" rows="6">{{ template.editing_dialogue_prompt or '' }}</textarea>
+                        <div class="form-text">Промпт для улучшения диалогов и речи персонажей. Используйте {text} для вставки текста.</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="editing_final_prompt" class="form-label">Промпт финальной полировки</label>
+                        <textarea class="form-control" id="editing_final_prompt" name="editing_final_prompt" rows="6">{{ template.editing_final_prompt or '' }}</textarea>
+                        <div class="form-text">Промпт для финальной полировки и устранения мелких ошибок. Используйте {text} для вставки текста.</div>
+                    </div>
+                    
+                    <hr>
                     <h6 class="mb-3">Настройки</h6>
                     
                     <div class="row">

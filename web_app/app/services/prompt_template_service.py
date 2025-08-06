@@ -1,5 +1,5 @@
 """
-Сервис для управления шаблонами промптов перевода
+Сервис для управления шаблонами промптов перевода и редактуры
 """
 from typing import List, Dict, Optional
 from app.models import PromptTemplate
@@ -475,7 +475,62 @@ class PromptTemplateService:
 - Используй точные переводы, соответствующие контексту""",
                 
                 'temperature': 0.1,
-                'max_tokens': 24000
+                'max_tokens': 24000,
+                
+                # Промпты редактуры для сянься (ISSTH)
+                'editing_analysis_prompt': """Проанализируй качество этого переведенного текста сянься "Я хочу запечатать небеса" и определи стратегию редактуры:
+
+{text}
+
+Оцени качество по шкале 1-10, учитывая:
+- Полноту перевода китайских терминов
+- Последовательность терминологии культивации
+- Естественность диалогов
+- Поэтичность описаний культивации
+- Философскую глубину размышлений Мэн Хао
+- Юмористические моменты и иронию
+
+ФОРМАТ ОТВЕТА:
+КАЧЕСТВО: [число от 1 до 10]
+ПРОБЛЕМЫ: [список основных проблем]
+СТРАТЕГИЯ: [style/dialogue/polish/all]
+ОПИСАНИЕ: [краткое описание проблем]""",
+                
+                'editing_style_prompt': """Улучши стиль этого переведенного текста "Я хочу запечатать небеса". Сохраняй поэтичность и философскую глубину Эргена:
+
+{text}
+
+Правила для ISSTH:
+- Улучши плавность переходов между описаниями культивации
+- Исправь неловкие обороты в терминологии культивации
+- Сохрани мистическую атмосферу и юмор
+- Передай эмоциональную насыщенность Мэн Хао
+- Подчеркни философские размышления о Дао
+- Не меняй термины культивации и имена персонажей""",
+                
+                'editing_dialogue_prompt': """Отполируй диалоги в этом тексте "Я хочу запечатать небеса". Сделай их более выразительными и характерными:
+
+{text}
+
+Правила для диалогов ISSTH:
+- Сделай речь более торжественной для культиваторов
+- Передай статус и иерархию через обращения
+- Сохрани мудрость старших персонажей
+- Подчеркни решимость и хитрость Мэн Хао
+- Сохрани ироничные и юмористические реплики
+- Не меняй смысл реплик и обращения""",
+                
+                'editing_final_prompt': """Сделай финальную полировку этого текста "Я хочу запечатать небеса":
+
+{text}
+
+Правила финальной полировки ISSTH:
+- Проверь согласованность терминов культивации
+- Обеспечь плавность повествования
+- Сохрани философские размышления о пути Дао
+- Подчеркни эмоциональные переживания Мэн Хао
+- Проверь все детали алхимии и артефактов
+- Сохрани баланс между серьезностью и юмором"""
             }
         ]
         
@@ -503,6 +558,118 @@ class PromptTemplateService:
     def get_template_by_id(template_id: int) -> Optional[PromptTemplate]:
         """Получение шаблона по ID"""
         return PromptTemplate.query.get(template_id)
+    
+    @staticmethod
+    def get_template(template_name: str, prompt_type: str = 'translation') -> str:
+        """Получение промпта по имени шаблона и типу
+        
+        Args:
+            template_name: Название шаблона
+            prompt_type: Тип промпта ('translation', 'summary', 'terms_extraction', 
+                        'editing_analysis', 'editing_style', 'editing_dialogue', 'editing_final')
+        
+        Returns:
+            Текст промпта или дефолтный промпт если не найден
+        """
+        template = PromptTemplate.query.filter_by(name=template_name, is_active=True).first()
+        if not template:
+            return PromptTemplateService._get_default_prompt(prompt_type)
+        
+        # Базовые промпты перевода
+        if prompt_type == 'translation':
+            return template.translation_prompt or PromptTemplateService._get_default_prompt('translation')
+        elif prompt_type == 'summary':
+            return template.summary_prompt or PromptTemplateService._get_default_prompt('summary')
+        elif prompt_type == 'terms_extraction':
+            return template.terms_extraction_prompt or PromptTemplateService._get_default_prompt('terms_extraction')
+        
+        # Промпты редактуры - получаем из шаблона или дефолтные
+        elif prompt_type == 'editing_analysis':
+            return getattr(template, 'editing_analysis_prompt', None) or PromptTemplateService._get_default_prompt('editing_analysis')
+        elif prompt_type == 'editing_style':
+            return getattr(template, 'editing_style_prompt', None) or PromptTemplateService._get_default_prompt('editing_style')
+        elif prompt_type == 'editing_dialogue':
+            return getattr(template, 'editing_dialogue_prompt', None) or PromptTemplateService._get_default_prompt('editing_dialogue')
+        elif prompt_type == 'editing_final':
+            return getattr(template, 'editing_final_prompt', None) or PromptTemplateService._get_default_prompt('editing_final')
+        
+        return PromptTemplateService._get_default_prompt(prompt_type)
+    
+    @staticmethod
+    def _get_default_prompt(prompt_type: str) -> str:
+        """Получение дефолтных промптов"""
+        defaults = {
+            'translation': """Переведи следующий текст с английского на русский, сохраняя стиль и структуру:
+
+{text}
+
+Правила:
+- Переводи весь текст полностью
+- Сохраняй абзацы и структуру
+- Не добавляй пояснения
+- Сохраняй имена собственные""",
+            
+            'summary': """Создай краткое резюме главы (максимум 150 слов).
+Включи ключевые события, персонажей и важные моменты.
+Пиши в прошедшем времени, только факты.""",
+            
+            'terms_extraction': """Извлеки из текста новые элементы:
+
+ПЕРСОНАЖИ:
+- English Name = Русское Имя
+
+ЛОКАЦИИ:
+- English Location = Русская Локация
+
+ТЕРМИНЫ:
+- English Term = Русский Термин
+
+Если в категории нет новых элементов, напиши "нет новых".""",
+            
+            'editing_analysis': """Проанализируй качество этого переведенного текста и определи стратегию редактуры:
+
+{text}
+
+Оцени качество по шкале 1-10 и определи, какие улучшения нужны.
+
+ФОРМАТ ОТВЕТА:
+КАЧЕСТВО: [число от 1 до 10]
+ПРОБЛЕМЫ: [список основных проблем]
+СТРАТЕГИЯ: [style/dialogue/polish/all]
+ОПИСАНИЕ: [краткое описание проблем]""",
+            
+            'editing_style': """Улучши стиль этого переведенного текста. Сделай его более читаемым и литературным:
+
+{text}
+
+Правила:
+- Улучши плавность предложений
+- Исправь неловкие обороты
+- Сохрани смысл и структуру
+- Не меняй имена и термины""",
+            
+            'editing_dialogue': """Отполируй диалоги в этом тексте. Сделай их более естественными:
+
+{text}
+
+Правила:
+- Сделай диалоги более живыми
+- Исправь пунктуацию в диалогах
+- Сохрани характер персонажей
+- Не меняй смысл реплик""",
+            
+            'editing_final': """Сделай финальную полировку этого текста:
+
+{text}
+
+Правила:
+- Исправь мелкие ошибки
+- Улучши читаемость
+- Проверь согласованность
+- Сохрани все важные детали"""
+        }
+        
+        return defaults.get(prompt_type, defaults['translation'])
     
     @staticmethod
     def create_template(data: Dict) -> PromptTemplate:

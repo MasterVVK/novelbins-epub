@@ -10,6 +10,7 @@ from app import db
 from app.models import Chapter, Novel, Task
 from app.services.translator_service import TranslatorService
 from app.services.log_service import LogService
+from app.services.prompt_template_service import PromptTemplateService
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +19,7 @@ class EditorService:
     
     def __init__(self, translator_service: TranslatorService):
         self.translator = translator_service
+        self.template_service = PromptTemplateService
         
     def edit_chapter(self, chapter: Chapter) -> bool:
         """Редактирование одной главы"""
@@ -91,17 +93,10 @@ class EditorService:
             
     def analyze_text_quality(self, text: str, chapter_id: int = None) -> Dict:
         """Анализ качества текста"""
-        prompt = f"""Проанализируй качество этого переведенного текста и определи стратегию редактуры:
-
-{text[:2000]}...
-
-Оцени качество по шкале 1-10 и определи, какие улучшения нужны.
-
-ФОРМАТ ОТВЕТА:
-КАЧЕСТВО: [число от 1 до 10]
-ПРОБЛЕМЫ: [список основных проблем]
-СТРАТЕГИЯ: [style/dialogue/polish/all]
-ОПИСАНИЕ: [краткое описание проблем]"""
+        # Получаем шаблон промпта для главы
+        template_name = self._get_template_name_for_chapter(chapter_id)
+        prompt_template = self.template_service.get_template(template_name, 'editing_analysis')
+        prompt = prompt_template.format(text=text[:2000] + "...")
 
         try:
             # Устанавливаем тип промпта для анализа качества
@@ -151,15 +146,10 @@ class EditorService:
             
     def improve_text_style(self, text: str, chapter_id: int = None) -> str:
         """Улучшение стиля текста"""
-        prompt = f"""Улучши стиль этого переведенного текста. Сделай его более читаемым и литературным:
-
-{text}
-
-Правила:
-- Улучши плавность предложений
-- Исправь неловкие обороты
-- Сохрани смысл и структуру
-- Не меняй имена и термины"""
+        # Получаем шаблон промпта для главы
+        template_name = self._get_template_name_for_chapter(chapter_id)
+        prompt_template = self.template_service.get_template(template_name, 'editing_style')
+        prompt = prompt_template.format(text=text)
 
         try:
             # Устанавливаем тип промпта для улучшения стиля
@@ -176,15 +166,10 @@ class EditorService:
             
     def polish_dialogues(self, text: str, chapter_id: int = None) -> str:
         """Полировка диалогов"""
-        prompt = f"""Отполируй диалоги в этом тексте. Сделай их более естественными:
-
-{text}
-
-Правила:
-- Сделай диалоги более живыми
-- Исправь пунктуацию в диалогах
-- Сохрани характер персонажей
-- Не меняй смысл реплик"""
+        # Получаем шаблон промпта для главы
+        template_name = self._get_template_name_for_chapter(chapter_id)
+        prompt_template = self.template_service.get_template(template_name, 'editing_dialogue')
+        prompt = prompt_template.format(text=text)
 
         try:
             # Устанавливаем тип промпта для полировки диалогов
@@ -201,15 +186,10 @@ class EditorService:
             
     def final_polish(self, text: str, chapter_id: int = None) -> str:
         """Финальная полировка"""
-        prompt = f"""Сделай финальную полировку этого текста:
-
-{text}
-
-Правила:
-- Исправь мелкие ошибки
-- Улучши читаемость
-- Проверь согласованность
-- Сохрани все важные детали"""
+        # Получаем шаблон промпта для главы
+        template_name = self._get_template_name_for_chapter(chapter_id)
+        prompt_template = self.template_service.get_template(template_name, 'editing_final')
+        prompt = prompt_template.format(text=text)
 
         try:
             # Устанавливаем тип промпта для финальной полировки
@@ -226,19 +206,19 @@ class EditorService:
             
     def validate_edit(self, original: str, edited: str) -> bool:
         """Валидация результата редактуры"""
-        # Проверяем, что текст не стал слишком коротким
-        if len(edited) < len(original) * 0.5:
-            LogService.log_warning("Отредактированный текст слишком короткий")
+        # Проверяем, что текст не стал слишком коротким (смягчаем до 30%)
+        if len(edited) < len(original) * 0.3:
+            LogService.log_warning(f"Отредактированный текст слишком короткий: {len(edited)} vs {len(original)}")
             return False
             
         # Проверяем, что текст не стал слишком длинным
-        if len(edited) > len(original) * 2.0:
-            LogService.log_warning("Отредактированный текст слишком длинный")
+        if len(edited) > len(original) * 2.5:
+            LogService.log_warning(f"Отредактированный текст слишком длинный: {len(edited)} vs {len(original)}")
             return False
             
         # Проверяем, что текст не пустой
-        if not edited or len(edited.strip()) < 100:
-            LogService.log_warning("Отредактированный текст слишком короткий или пустой")
+        if not edited or len(edited.strip()) < 50:
+            LogService.log_warning("Отредактированный текст пустой или слишком короткий")
             return False
             
         return True
@@ -273,4 +253,18 @@ class EditorService:
         except Exception as e:
             LogService.log_error(f"Ошибка сохранения отредактированной главы {chapter.chapter_number}: {e}", 
                                novel_id=chapter.novel_id, chapter_id=chapter.id)
-            db.session.rollback() 
+            db.session.rollback()
+    
+    def _get_template_name_for_chapter(self, chapter_id: int = None) -> str:
+        """Получение имени шаблона для главы"""
+        if not chapter_id:
+            return 'Сянься (Покрывая Небеса)'
+        
+        try:
+            from app.models import Chapter
+            chapter = Chapter.query.get(chapter_id)
+            if chapter and chapter.novel and chapter.novel.prompt_template:
+                return chapter.novel.prompt_template.name
+            return 'Сянься (Покрывая Небеса)'
+        except:
+            return 'Сянься (Покрывая Небеса)' 
