@@ -242,7 +242,7 @@ class EditorService:
                 summary=original_translation.summary if original_translation else None,
                 translation_type='edited',
                 api_used='gemini-editor',
-                model_used=self.model,
+                model_used=self.translator.config.model_name,
                 quality_score=min(quality_score + 2, 9),
                 translation_time=editing_time,
                 context_used={
