@@ -989,7 +989,8 @@ class TranslatorService:
                         russian_term=rus,
                         category=category,
                         first_appearance_chapter=chapter_number,
-                        is_auto_generated=True
+                        is_auto_generated=True,
+                        is_active=True
                     )
                     db.session.add(glossary_item)
                     total_saved += 1

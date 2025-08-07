@@ -88,12 +88,12 @@ class GlossaryService:
     
     @staticmethod
     def delete_term(term_id: int) -> bool:
-        """Удаление термина (мягкое удаление)"""
+        """Удаление термина (полное удаление)"""
         term = GlossaryItem.query.get(term_id)
         if not term:
             return False
         
-        term.is_active = False
+        db.session.delete(term)
         db.session.commit()
         return True
     
@@ -277,15 +277,11 @@ class GlossaryService:
     
     @staticmethod
     def clear_glossary(novel_id: int) -> int:
-        """Очистка всего глоссария новеллы (мягкое удаление)"""
-        terms = GlossaryItem.query.filter_by(
-            novel_id=novel_id,
-            is_active=True
-        ).all()
-        
-        count = len(terms)
-        for term in terms:
-            term.is_active = False
+        """Очистка всего глоссария новеллы (полное удаление)"""
+        # Удаляем все термины для данной новеллы
+        count = GlossaryItem.query.filter_by(
+            novel_id=novel_id
+        ).delete()
         
         db.session.commit()
         return count 
