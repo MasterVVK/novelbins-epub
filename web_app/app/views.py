@@ -169,6 +169,7 @@ def new_novel():
             source_type=source_type,
             config={
                 'max_chapters': int(request.form.get('max_chapters', 100)),
+                'start_chapter': int(request.form.get('start_chapter', 1)),
                 'all_chapters': all_chapters,
                 'request_delay': float(request.form.get('request_delay', 1.0)),
                 'translation_model': request.form.get('translation_model', 'gemini-2.5-flash-preview-05-20'),
@@ -360,6 +361,7 @@ def edit_novel(novel_id):
         
         # Получаем данные формы
         max_chapters = request.form.get('max_chapters')
+        start_chapter = request.form.get('start_chapter')
         request_delay = request.form.get('request_delay')
         translation_model = request.form.get('translation_model')
         translation_temperature = request.form.get('translation_temperature')
@@ -388,6 +390,7 @@ def edit_novel(novel_id):
         # Обновляем конфигурацию с проверкой значений
         new_config = {
             'max_chapters': int(max_chapters) if max_chapters else 100,
+            'start_chapter': int(start_chapter) if start_chapter else 1,
             'all_chapters': all_chapters,
             'request_delay': float(request_delay) if request_delay else 1.0,
             'translation_model': translation_model or 'gemini-2.5-flash-preview-05-20',
@@ -882,44 +885,38 @@ def generate_epub(novel_id):
     db.session.add(task)
     db.session.commit()
 
-    def generate_epub_task():
-        """Фоновая задача генерации EPUB"""
-        try:
-            # Создаем контекст приложения для фонового потока
-            with current_app.app_context():
-                epub_service = EPUBService(current_app)
-                
-                # Получаем главы для EPUB
-                chapters = epub_service.get_edited_chapters_from_db(novel_id)
-                
-                if not chapters:
-                    task.status = 'failed'
-                    task.error_message = 'Нет переведенных глав для создания EPUB'
-                    db.session.commit()
-                    return
-
-                # Создаем EPUB
-                epub_path = epub_service.create_epub(novel_id, chapters)
-                
-                # Обновляем статус задачи
-                task.status = 'completed'
-                task.result = {'epub_path': epub_path}
-                db.session.commit()
-                
-                logger.info(f"EPUB создан успешно: {epub_path}")
-                
-        except Exception as e:
-            logger.error(f"Ошибка при создании EPUB: {e}")
+    try:
+        # Выполняем синхронно без фоновых потоков
+        epub_service = EPUBService(current_app)
+        
+        # Получаем главы для EPUB
+        chapters = epub_service.get_edited_chapters_from_db(novel_id)
+        
+        if not chapters:
             task.status = 'failed'
-            task.error_message = str(e)
+            task.error_message = 'Нет переведенных глав для создания EPUB'
             db.session.commit()
+            flash('Ошибка: нет переведенных глав для создания EPUB', 'error')
+            return redirect(url_for('main.novel_detail', novel_id=novel_id))
 
-    # Запускаем задачу в фоновом потоке
-    thread = threading.Thread(target=generate_epub_task)
-    thread.daemon = True
-    thread.start()
+        # Создаем EPUB
+        epub_path = epub_service.create_epub(novel_id, chapters)
+        
+        # Обновляем статус задачи
+        task.status = 'completed'
+        task.result = epub_path  # Сохраняем путь как строку
+        db.session.commit()
+        
+        logger.info(f"EPUB создан успешно: {epub_path}")
+        flash('EPUB файл успешно создан!', 'success')
+        
+    except Exception as e:
+        logger.error(f"Ошибка при создании EPUB: {e}")
+        task.status = 'failed'
+        task.error_message = str(e)
+        db.session.commit()
+        flash(f'Ошибка при создании EPUB: {str(e)}', 'error')
 
-    flash('Генерация EPUB запущена в фоновом режиме', 'success')
     return redirect(url_for('main.novel_detail', novel_id=novel_id))
 
 
@@ -936,11 +933,11 @@ def download_epub(novel_id):
         status='completed'
     ).order_by(Task.updated_at.desc()).first()
     
-    if not task or not task.result or 'epub_path' not in task.result:
+    if not task or not task.result:
         flash('EPUB файл не найден. Сначала создайте EPUB.', 'error')
         return redirect(url_for('main.novel_detail', novel_id=novel_id))
     
-    epub_path = Path(task.result['epub_path'])
+    epub_path = Path(task.result)  # task.result теперь содержит путь как строку
     
     if not epub_path.exists():
         flash('EPUB файл не найден на диске.', 'error')

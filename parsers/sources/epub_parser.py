@@ -22,7 +22,7 @@ class EPUBParser(BaseParser):
     Извлекает главы и контент из EPUB архива
     """
     
-    def __init__(self, epub_path: str = None, auth_cookies: str = None, socks_proxy: str = None, max_chapters: Optional[int] = None):
+    def __init__(self, epub_path: str = None, auth_cookies: str = None, socks_proxy: str = None, max_chapters: Optional[int] = None, start_chapter: Optional[int] = None):
         """
         Инициализация EPUB парсера
         
@@ -31,12 +31,16 @@ class EPUBParser(BaseParser):
             auth_cookies: Не используется для EPUB (для совместимости)
             socks_proxy: Не используется для EPUB (для совместимости)
             max_chapters: Максимальное количество глав для извлечения
+            start_chapter: Номер главы, с которой начать парсинг (1-based)
         """
         super().__init__('epub')
         self.epub_path = epub_path
         self.epub_data = {}
         self.chapters = []
         self.max_chapters = max_chapters
+        self.start_chapter = start_chapter or 1
+        
+        logger.info(f"EPUBParser инициализирован: start_chapter={self.start_chapter}, max_chapters={self.max_chapters}")
         
         if epub_path:
             self.load_epub(epub_path)
@@ -208,15 +212,13 @@ class EPUBParser(BaseParser):
     def _extract_chapters(self, manifest: Dict, spine: List[str], epub_zip: zipfile.ZipFile):
         """Извлечение глав из EPUB"""
         self.chapters = []
-        chapter_number = 1
+        html_chapter_count = 0  # Счетчик HTML глав (реальных глав)
         extracted_count = 0
         
+        logger.info(f"Начинаем извлечение глав. start_chapter={self.start_chapter}, max_chapters={self.max_chapters}")
+        logger.info(f"Всего элементов в spine: {len(spine)}")
+        
         for item_id in spine:
-            # Проверяем ограничение на количество глав
-            if self.max_chapters and extracted_count >= self.max_chapters:
-                logger.info(f"Достигнут лимит глав: {self.max_chapters}")
-                break
-            
             if item_id not in manifest:
                 logger.warning(f"Элемент {item_id} не найден в манифесте")
                 continue
@@ -228,6 +230,24 @@ class EPUBParser(BaseParser):
             if media_type not in ['application/xhtml+xml', 'text/html']:
                 logger.debug(f"Пропускаем элемент {item_id} с типом {media_type}")
                 continue
+            
+            # Увеличиваем счетчик HTML глав
+            html_chapter_count += 1
+            
+            # Логирование для отладки
+            logger.info(f"HTML глава #{html_chapter_count}: {item_id} ({item.get('href', 'no href')})")
+            
+            # Пропускаем главы до start_chapter
+            if html_chapter_count < self.start_chapter:
+                logger.info(f"  -> Пропускаем (меньше start_chapter={self.start_chapter})")
+                continue
+            
+            logger.info(f"  -> Извлекаем главу")
+            
+            # Проверяем ограничение на количество глав
+            if self.max_chapters and extracted_count >= self.max_chapters:
+                logger.info(f"Достигнут лимит глав: {self.max_chapters}")
+                break
             
             try:
                 full_path = item['full_path']
@@ -248,11 +268,11 @@ class EPUBParser(BaseParser):
                         logger.warning(f"Не удалось декодировать файл {full_path}")
                         continue
                 
-                # Парсим HTML контент
-                chapter_info = self._parse_html_content(content, chapter_number)
+                # Парсим HTML контент, используем номер главы из EPUB (html_chapter_count)
+                result_chapter_number = html_chapter_count
+                chapter_info = self._parse_html_content(content, result_chapter_number)
                 if chapter_info:
                     self.chapters.append(chapter_info)
-                    chapter_number += 1
                     extracted_count += 1
                 else:
                     logger.warning(f"Не удалось извлечь контент из главы {item_id}")
@@ -261,7 +281,9 @@ class EPUBParser(BaseParser):
                 logger.warning(f"Ошибка извлечения главы {item_id}: {e}")
                 continue
         
-        logger.info(f"Извлечено глав: {len(self.chapters)}" + (f" (лимит: {self.max_chapters})" if self.max_chapters else ""))
+        skipped_info = f" (пропущено первых: {self.start_chapter - 1})" if self.start_chapter > 1 else ""
+        limit_info = f" (лимит: {self.max_chapters})" if self.max_chapters else ""
+        logger.info(f"Извлечено глав: {len(self.chapters)}{skipped_info}{limit_info}")
     
     def _parse_html_content(self, html_content: str, chapter_number: int) -> Optional[Dict]:
         """Парсинг HTML контента главы"""
@@ -271,9 +293,17 @@ class EPUBParser(BaseParser):
             html_content = re.sub(r'<\?xml[^>]*\?>', '', html_content)
             html_content = re.sub(r'<!DOCTYPE[^>]*>', '', html_content)
             
-            # Извлекаем заголовок
-            title_match = re.search(r'<title[^>]*>(.*?)</title>', html_content, re.IGNORECASE | re.DOTALL)
-            title = title_match.group(1).strip() if title_match else f"Глава {chapter_number}"
+            # Извлекаем заголовок - сначала пробуем h2, потом h1, потом title
+            h2_match = re.search(r'<h2[^>]*>(.*?)</h2>', html_content, re.IGNORECASE | re.DOTALL)
+            if h2_match:
+                title = re.sub(r'<[^>]+>', '', h2_match.group(1)).strip()
+            else:
+                h1_match = re.search(r'<h1[^>]*>(.*?)</h1>', html_content, re.IGNORECASE | re.DOTALL)
+                if h1_match:
+                    title = re.sub(r'<[^>]+>', '', h1_match.group(1)).strip()
+                else:
+                    title_match = re.search(r'<title[^>]*>(.*?)</title>', html_content, re.IGNORECASE | re.DOTALL)
+                    title = title_match.group(1).strip() if title_match else f"Глава {chapter_number}"
             
             # Извлекаем содержимое body
             body_match = re.search(r'<body[^>]*>(.*?)</body>', html_content, re.IGNORECASE | re.DOTALL)
@@ -293,6 +323,7 @@ class EPUBParser(BaseParser):
                 'title': title,
                 'content': content,
                 'chapter_id': f"chapter_{chapter_number}",
+                'url': f"chapter_{chapter_number}",  # Добавляем URL для совместимости
                 'word_count': len(content.split())
             }
             

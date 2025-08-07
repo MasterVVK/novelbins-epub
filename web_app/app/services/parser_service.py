@@ -86,6 +86,7 @@ class WebParserService:
         
         # Пробуем использовать новую систему парсеров
         if PARSERS_AVAILABLE:
+            LogService.log_info("✅ Новая система парсеров доступна", novel_id=novel.id)
             return self._parse_with_new_system(novel, novel_url)
         else:
             LogService.log_warning("⚠️ Используется устаревший парсер", novel_id=novel.id)
@@ -94,6 +95,7 @@ class WebParserService:
     def _parse_with_new_system(self, novel: Novel, novel_url: str) -> List[dict]:
         """Парсинг с использованием новой системы парсеров"""
         try:
+            LogService.log_info("🚀 Начинаем парсинг новой системой", novel_id=novel.id)
             LogService.log_info("🔍 Определение источника...", novel_id=novel.id)
             
             # Определяем источник
@@ -126,7 +128,11 @@ class WebParserService:
                 all_chapters_enabled = novel.config.get('all_chapters', False) if novel.config else False
                 max_chapters = None if all_chapters_enabled else (novel.config.get('max_chapters', 10) if novel.config else 10)
                 
-                parser = create_parser('epub', epub_path=epub_path, max_chapters=max_chapters)
+                # Получаем начальную главу
+                start_chapter = novel.config.get('start_chapter', 1) if novel.config else 1
+                LogService.log_info(f"📖 Настройки EPUB: начальная глава = {start_chapter}, макс. глав = {max_chapters or 'все'}", novel_id=novel.id)
+                
+                parser = create_parser('epub', epub_path=epub_path, max_chapters=max_chapters, start_chapter=start_chapter)
                 novel_url = epub_path  # Используем путь к файлу как URL
             else:
                 parser = create_parser_from_url(novel_url, auth_cookies=auth_cookies, socks_proxy=socks_proxy)
@@ -161,11 +167,15 @@ class WebParserService:
             # Конвертируем в формат, ожидаемый веб-приложением
             result_chapters = []
             for i, chapter in enumerate(limited_chapters, 1):
+                if 'url' not in chapter:
+                    LogService.log_error(f"⚠️ Глава не содержит URL: {chapter}", novel_id=novel.id)
+                    chapter['url'] = chapter.get('chapter_id', f"chapter_{i}")
                 result_chapters.append({
                     'url': chapter['url'],
                     'title': chapter['title'],
                     'number': chapter.get('number', i)
                 })
+                LogService.log_info(f"  -> Глава для сохранения: #{chapter.get('number', i)} - {chapter['title'][:50]}...", novel_id=novel.id)
             
             # Закрываем парсер
             parser.close()
@@ -174,7 +184,9 @@ class WebParserService:
             return result_chapters
             
         except Exception as e:
+            import traceback
             LogService.log_error(f"❌ Ошибка в новой системе парсеров: {e}", novel_id=novel.id)
+            LogService.log_error(f"Полный стек ошибки: {traceback.format_exc()}", novel_id=novel.id)
             LogService.log_info("🔄 Переключаемся на старую систему парсинга", novel_id=novel.id)
             # Откат к старой системе при ошибке
             return self._parse_with_legacy_system(novel, novel_url)
@@ -197,7 +209,12 @@ class WebParserService:
                     all_chapters_enabled = novel.config.get('all_chapters', False) if novel.config else False
                     max_chapters = None if all_chapters_enabled else (novel.config.get('max_chapters', 10) if novel.config else 10)
                     
-                    parser = EPUBParser(epub_path=epub_path, max_chapters=max_chapters)
+                    # Получаем начальную главу
+                    start_chapter = novel.config.get('start_chapter', 1) if novel.config else 1
+                    LogService.log_info(f"📖 Настройки EPUB (legacy): начальная глава = {start_chapter}, макс. глав = {max_chapters or 'все'}", novel_id=novel.id)
+                    
+                    LogService.log_info(f"📖 [Legacy] Создаем EPUB парсер: start_chapter={start_chapter}, max_chapters={max_chapters}", novel_id=novel.id)
+                    parser = EPUBParser(epub_path=epub_path, max_chapters=max_chapters, start_chapter=start_chapter)
                     if not parser.load_epub(epub_path):
                         LogService.log_error("Не удалось загрузить EPUB файл", novel_id=novel.id)
                         return []
@@ -215,6 +232,7 @@ class WebParserService:
                             'title': chapter['title'],
                             'number': chapter['number']
                         })
+                        LogService.log_info(f"  -> [Legacy] Глава для сохранения: #{chapter['number']} - {chapter['title'][:50]}...", novel_id=novel.id)
                     
                     parser.close()
                     return result_chapters
@@ -414,7 +432,10 @@ class WebParserService:
             if novel and novel.is_epub_source():
                 # Для EPUB используем специальный парсер
                 epub_path = novel.get_epub_file_path()
-                parser = create_parser('epub', epub_path=epub_path)
+                # ВАЖНО: передаем start_chapter, чтобы парсер правильно индексировал главы
+                start_chapter = novel.config.get('start_chapter', 1) if novel.config else 1
+                LogService.log_info(f"📖 Создаем EPUB парсер для главы с start_chapter={start_chapter}", chapter_id=chapter_number)
+                parser = create_parser('epub', epub_path=epub_path, start_chapter=start_chapter)
             else:
                 # Для веб-источников используем URL
                 parser = create_parser_from_url(chapter_url, auth_cookies=auth_cookies, socks_proxy=socks_proxy)
@@ -486,7 +507,12 @@ class WebParserService:
                         LogService.log_error(f"EPUB файл не найден: {epub_path}", chapter_id=chapter_number)
                         return None
                     
-                    parser = EPUBParser(epub_path=epub_path)
+                    # Получаем начальную главу из конфига новеллы
+                    start_chapter = novel.config.get('start_chapter', 1) if novel and novel.config else 1
+                    
+                    # При загрузке контента главы тоже нужно учитывать start_chapter
+                    LogService.log_info(f"📖 [Legacy content] Создаем EPUB парсер для главы {chapter_number}: start_chapter={start_chapter}", chapter_id=chapter_number)
+                    parser = EPUBParser(epub_path=epub_path, start_chapter=start_chapter)
                     if not parser.load_epub(epub_path):
                         LogService.log_error("Не удалось загрузить EPUB файл", chapter_id=chapter_number)
                         return None
@@ -645,6 +671,13 @@ class WebParserService:
                                       novel_id=novel_id, task_id=task_id, chapter_id=chapter.id)
                 else:
                     # Создаем новую главу
+                    LogService.log_info(f"🆕 Создаем новую главу в БД:", novel_id=novel_id, task_id=task_id)
+                    LogService.log_info(f"   - Номер: {chapter_data['number']}", novel_id=novel_id, task_id=task_id)
+                    LogService.log_info(f"   - Заголовок: {chapter_data['title']}", novel_id=novel_id, task_id=task_id)
+                    LogService.log_info(f"   - URL: {chapter_data['url']}", novel_id=novel_id, task_id=task_id)
+                    LogService.log_info(f"   - Размер контента: {len(content) if content else 0} символов", novel_id=novel_id, task_id=task_id)
+                    LogService.log_info(f"   - Первые 100 символов: {content[:100] if content else 'пусто'}...", novel_id=novel_id, task_id=task_id)
+                    
                     chapter = Chapter(
                         novel_id=novel_id,
                         chapter_number=chapter_data['number'],
