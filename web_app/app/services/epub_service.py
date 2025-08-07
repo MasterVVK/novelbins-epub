@@ -114,7 +114,7 @@ class EPUBService:
         book.set_identifier(f'{novel.title.lower().replace(" ", "-")}-{timestamp}')
         book.set_title(novel.title)
         book.set_language('ru')
-        book.add_author(novel.config.get('author', 'Неизвестный автор'))
+        book.add_author(novel.author or 'Неизвестный автор')
 
         # Добавляем описание
         book.add_metadata('DC', 'description',
@@ -293,7 +293,7 @@ class EPUBService:
         <body>
             <h1>{novel.title}</h1>
             <p style="text-align: center; font-size: 1.2em; margin: 2em 0;">
-                Автор: {novel.config.get('author', 'Неизвестный автор')}
+                Автор: {novel.author or 'Неизвестный автор'}
             </p>
             <p style="text-align: center; margin: 2em 0;">
                 Перевод с китайского языка<br>
@@ -404,11 +404,6 @@ class EPUBService:
         # Конвертируем markdown в HTML
         content_html = self._convert_markdown_to_html(chapter['content'])
         
-        # Добавляем резюме если есть
-        summary_html = ""
-        if chapter.get('summary'):
-            summary_html = f'<div class="summary"><strong>Резюме:</strong> {chapter["summary"]}</div>'
-
         # Добавляем информацию о качестве если глава отредактирована
         quality_html = ""
         if chapter['is_edited'] and chapter.get('quality_score'):
@@ -418,12 +413,11 @@ class EPUBService:
         <!DOCTYPE html>
         <html>
         <head>
-            <title>{chapter['title']}</title>
+            <title>Глава {chapter['number']}: {chapter['title']}</title>
             <link rel="stylesheet" type="text/css" href="style/nav.css"/>
         </head>
         <body>
-            <h2 class="chapter-title">{chapter['title']}</h2>
-            {summary_html}
+            <h2 class="chapter-title">Глава {chapter['number']}: {chapter['title']}</h2>
             {content_html}
             {quality_html}
         </body>
@@ -431,7 +425,7 @@ class EPUBService:
         """
         
         chapter_page = epub.EpubHtml(
-            title=chapter['title'],
+            title=f"Глава {chapter['number']}: {chapter['title']}",
             file_name=f'chapter_{chapter["number"]:03d}.xhtml',
             content=chapter_content
         )
