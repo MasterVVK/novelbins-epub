@@ -694,7 +694,8 @@ class TranslatorService:
             if prompt_template.terms_extraction_prompt:
                 LogService.log_info(f"Извлекаем новые термины из главы {chapter.chapter_number}", 
                                   novel_id=chapter.novel_id, chapter_id=chapter.id)
-                new_terms = self.extract_new_terms(content, prompt_template.terms_extraction_prompt, context.glossary, chapter.id)
+                # Используем исходный китайский текст для извлечения терминов
+                new_terms = self.extract_new_terms(chapter.original_text, prompt_template.terms_extraction_prompt, context.glossary, chapter.id)
                 if new_terms:
                     LogService.log_info(f"Найдено {len(new_terms)} новых терминов", 
                                       novel_id=chapter.novel_id, chapter_id=chapter.id)

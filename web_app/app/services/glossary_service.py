@@ -273,4 +273,19 @@ class GlossaryService:
         return GlossaryItem.query.filter_by(
             novel_id=novel_id,
             is_active=True
-        ).order_by(GlossaryItem.created_at.desc()).limit(limit).all() 
+        ).order_by(GlossaryItem.created_at.desc()).limit(limit).all()
+    
+    @staticmethod
+    def clear_glossary(novel_id: int) -> int:
+        """Очистка всего глоссария новеллы (мягкое удаление)"""
+        terms = GlossaryItem.query.filter_by(
+            novel_id=novel_id,
+            is_active=True
+        ).all()
+        
+        count = len(terms)
+        for term in terms:
+            term.is_active = False
+        
+        db.session.commit()
+        return count 

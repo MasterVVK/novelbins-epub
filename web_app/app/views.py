@@ -1515,6 +1515,22 @@ def delete_glossary_term(novel_id, term_id):
     return redirect(url_for('main.novel_glossary', novel_id=novel_id))
 
 
+@main_bp.route('/novels/<int:novel_id>/glossary/clear', methods=['POST'])
+def clear_glossary(novel_id):
+    """Очистка всего глоссария новеллы"""
+    from app.services.glossary_service import GlossaryService
+    from app.models import Novel
+    
+    # Проверка существования новеллы
+    novel = Novel.query.get_or_404(novel_id)
+    
+    # Очищаем глоссарий
+    deleted_count = GlossaryService.clear_glossary(novel_id)
+    
+    flash(f'Глоссарий новеллы "{novel.title}" полностью очищен. Удалено {deleted_count} терминов.', 'success')
+    return redirect(url_for('main.novel_glossary', novel_id=novel_id))
+
+
 # WebSocket события
 @socketio.on('connect')
 def handle_connect():

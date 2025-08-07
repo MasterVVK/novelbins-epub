@@ -10,6 +10,11 @@
         <a href="{{ url_for('main.novel_detail', novel_id=novel.id) }}" class="btn btn-outline-secondary me-2">
             <i class="bi bi-arrow-left"></i> К новелле
         </a>
+        {% if glossary and stats.total > 0 %}
+        <button type="button" class="btn btn-outline-danger me-2" data-bs-toggle="modal" data-bs-target="#clearGlossaryModal">
+            <i class="bi bi-trash3"></i> Очистить глоссарий
+        </button>
+        {% endif %}
         <a href="{{ url_for('main.add_glossary_term', novel_id=novel.id) }}" class="btn btn-primary">
             <i class="bi bi-plus-circle"></i> Добавить термин
         </a>
@@ -232,5 +237,44 @@
 </div>
 {% endfor %}
 {% endfor %}
+{% endif %}
+
+<!-- Модальное окно для очистки глоссария -->
+{% if glossary and stats.total > 0 %}
+<div class="modal fade" id="clearGlossaryModal" tabindex="-1" aria-labelledby="clearGlossaryModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="clearGlossaryModalLabel">
+                    <i class="bi bi-exclamation-triangle text-danger"></i> Подтверждение очистки глоссария
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p>Вы действительно хотите удалить <strong>все {{ stats.total }} термина(ов)</strong> из глоссария?</p>
+                <div class="alert alert-danger">
+                    <i class="bi bi-exclamation-triangle"></i>
+                    <strong>Внимание!</strong> Это действие удалит все термины глоссария для новеллы "{{ novel.title }}". Это действие нельзя отменить!
+                </div>
+                <p class="text-muted">Будут удалены:</p>
+                <ul class="text-muted">
+                    {% if stats.characters > 0 %}<li>{{ stats.characters }} персонажей</li>{% endif %}
+                    {% if stats.locations > 0 %}<li>{{ stats.locations }} локаций</li>{% endif %}
+                    {% if stats.terms > 0 %}<li>{{ stats.terms }} терминов</li>{% endif %}
+                    {% if stats.techniques > 0 %}<li>{{ stats.techniques }} техник</li>{% endif %}
+                    {% if stats.artifacts > 0 %}<li>{{ stats.artifacts }} артефактов</li>{% endif %}
+                </ul>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                <form method="POST" action="{{ url_for('main.clear_glossary', novel_id=novel.id) }}" style="display: inline;">
+                    <button type="submit" class="btn btn-danger">
+                        <i class="bi bi-trash3"></i> Очистить весь глоссарий
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
 {% endif %}
 {% endblock %} 
