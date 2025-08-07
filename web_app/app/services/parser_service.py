@@ -165,6 +165,7 @@ class WebParserService:
                 LogService.log_info(f"📊 Выбрано для обработки: {len(limited_chapters)} из {len(chapters)} глав", novel_id=novel.id)
             
             # Конвертируем в формат, ожидаемый веб-приложением
+            # ВАЖНО: используем последовательную нумерацию начиная с 1
             result_chapters = []
             for i, chapter in enumerate(limited_chapters, 1):
                 if 'url' not in chapter:
@@ -173,9 +174,9 @@ class WebParserService:
                 result_chapters.append({
                     'url': chapter['url'],
                     'title': chapter['title'],
-                    'number': chapter.get('number', i)
+                    'number': i  # Используем последовательный номер, а не номер из EPUB
                 })
-                LogService.log_info(f"  -> Глава для сохранения: #{chapter.get('number', i)} - {chapter['title'][:50]}...", novel_id=novel.id)
+                LogService.log_info(f"  -> Глава для сохранения: #{i} - {chapter['title'][:50]}... (оригинальный номер из EPUB: {chapter.get('number', 'н/д')})", novel_id=novel.id)
             
             # Закрываем парсер
             parser.close()
@@ -225,14 +226,15 @@ class WebParserService:
                                        novel_id=novel.id)
                     
                     # Конвертируем в формат, ожидаемый веб-приложением
+                    # ВАЖНО: используем последовательную нумерацию начиная с 1
                     result_chapters = []
                     for i, chapter in enumerate(chapters, 1):
                         result_chapters.append({
                             'url': f"chapter_{chapter['number']}",  # Используем ID главы как URL
                             'title': chapter['title'],
-                            'number': chapter['number']
+                            'number': i  # Используем последовательный номер, а не номер из EPUB
                         })
-                        LogService.log_info(f"  -> [Legacy] Глава для сохранения: #{chapter['number']} - {chapter['title'][:50]}...", novel_id=novel.id)
+                        LogService.log_info(f"  -> [Legacy] Глава для сохранения: #{i} - {chapter['title'][:50]}... (оригинальный номер из EPUB: {chapter['number']})", novel_id=novel.id)
                     
                     parser.close()
                     return result_chapters
