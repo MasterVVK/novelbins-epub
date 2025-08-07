@@ -112,6 +112,21 @@
                     </div>
                     
                     <div class="row">
+                        <div class="col-12">
+                            <div class="mb-3">
+                                <label for="filter_text" class="form-label">Фильтровать текст при парсинге</label>
+                                <textarea class="form-control" id="filter_text" name="filter_text" rows="3" 
+                                          placeholder="Введите текст для удаления (каждая строка - отдельный фильтр)"></textarea>
+                                <div class="form-text">
+                                    Текст, который будет автоматически удаляться из глав при парсинге. 
+                                    Например: "Txt,Epub,Mobi www.qinkan.net" или рекламные ссылки.
+                                    Каждая строка - отдельный текст для удаления.
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="row">
                         <div class="col-md-6">
                             <div class="mb-3">
                                 <label for="translation_model" class="form-label">Модель перевода</label>

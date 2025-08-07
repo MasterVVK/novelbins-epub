@@ -175,7 +175,8 @@ def new_novel():
                 'translation_model': request.form.get('translation_model', 'gemini-2.5-flash-preview-05-20'),
                 'translation_temperature': float(request.form.get('translation_temperature', 0.1)),
                 'editing_temperature': editing_temperature,
-                'editing_quality_mode': editing_quality_mode
+                'editing_quality_mode': editing_quality_mode,
+                'filter_text': request.form.get('filter_text', '').strip()
             }
         )
 
@@ -396,7 +397,8 @@ def edit_novel(novel_id):
             'translation_model': translation_model or 'gemini-2.5-flash-preview-05-20',
             'translation_temperature': float(translation_temperature) if translation_temperature else 0.1,
             'editing_temperature': float(editing_temperature) if editing_temperature else 0.7,
-            'editing_quality_mode': editing_quality_mode or 'balanced'
+            'editing_quality_mode': editing_quality_mode or 'balanced',
+            'filter_text': request.form.get('filter_text', '').strip()
         }
         
         # Принудительно обновляем поле config

@@ -42,6 +42,32 @@ class WebParserService:
     def __init__(self):
         self.driver = None
         self.wait = None
+    
+    def _apply_text_filters(self, content: str, filter_text: str) -> str:
+        """Применение фильтров для удаления нежелательного текста"""
+        if not filter_text or not content:
+            return content
+        
+        # Разбиваем фильтры по строкам
+        filters = [f.strip() for f in filter_text.split('\n') if f.strip()]
+        
+        original_length = len(content)
+        
+        # Применяем каждый фильтр
+        for filter_pattern in filters:
+            if filter_pattern:
+                # Удаляем все вхождения фильтра
+                content = content.replace(filter_pattern, '')
+                LogService.log_info(f"🔧 Применен фильтр: '{filter_pattern}'")
+        
+        # Убираем лишние пробелы и пустые строки
+        content = re.sub(r'\n\s*\n\s*\n', '\n\n', content)
+        content = content.strip()
+        
+        if original_length != len(content):
+            LogService.log_info(f"✂️ Фильтрация удалила {original_length - len(content)} символов")
+        
+        return content
 
     def setup_driver(self):
         """Настройка Chrome драйвера"""
@@ -464,6 +490,10 @@ class WebParserService:
             else:
                 LogService.log_info(f"✅ Глава {chapter_number} загружена: {len(content)} символов", chapter_id=chapter_number)
             
+            # Применяем фильтры текста из конфигурации новеллы
+            if novel and novel.config and novel.config.get('filter_text'):
+                content = self._apply_text_filters(content, novel.config.get('filter_text'))
+            
             # Закрываем парсер
             parser.close()
             
@@ -525,7 +555,13 @@ class WebParserService:
                     
                     if chapter_data and chapter_data.get('content'):
                         LogService.log_info(f"✅ EPUB глава {chapter_number} загружена: {len(chapter_data['content'])} символов", chapter_id=chapter_number)
-                        return chapter_data['content']
+                        content = chapter_data['content']
+                        
+                        # Применяем фильтры текста из конфигурации новеллы
+                        if novel and novel.config and novel.config.get('filter_text'):
+                            content = self._apply_text_filters(content, novel.config.get('filter_text'))
+                        
+                        return content
                     else:
                         LogService.log_error(f"❌ Пустое содержимое EPUB главы {chapter_number}", chapter_id=chapter_number)
                         return None
@@ -570,6 +606,11 @@ class WebParserService:
                 paragraphs = [line for line in lines if len(line) > 50]
 
             content = '\n\n'.join(paragraphs)
+            
+            # Применяем фильтры текста из конфигурации новеллы
+            if novel and novel.config and novel.config.get('filter_text'):
+                content = self._apply_text_filters(content, novel.config.get('filter_text'))
+            
             word_count = len(content.split())
 
             LogService.log_info(f"Извлечено {len(paragraphs)} параграфов, {word_count} слов")
