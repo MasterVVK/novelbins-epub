@@ -227,20 +227,31 @@ class EditorService:
                           quality_score: int, strategy: Dict):
         """Сохранение отредактированной главы"""
         try:
-            # Создаем новый перевод с типом 'edited'
+            # Получаем оригинальный перевод для копирования заголовка
             from app.models import Translation
+            original_translation = Translation.query.filter_by(
+                chapter_id=chapter.id,
+                translation_type='initial'
+            ).first()
+            
+            # Создаем новый перевод с типом 'edited'
             translation = Translation(
                 chapter_id=chapter.id,
+                translated_title=original_translation.translated_title if original_translation else f"Глава {chapter.chapter_number}",
                 translated_text=edited_text,
+                summary=original_translation.summary if original_translation else None,
                 translation_type='edited',
                 api_used='gemini-editor',
-                metadata=json.dumps({
+                model_used=self.model,
+                quality_score=min(quality_score + 2, 9),
+                translation_time=editing_time,
+                context_used={
                     'editing_time': editing_time,
                     'quality_score_before': quality_score,
                     'quality_score_after': min(quality_score + 2, 9),
                     'strategy_used': strategy,
                     'edited_at': datetime.now().isoformat()
-                }, ensure_ascii=False)
+                }
             )
             
             db.session.add(translation)
