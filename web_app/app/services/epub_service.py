@@ -406,8 +406,8 @@ class EPUBService:
         
         # Добавляем информацию о качестве если глава отредактирована
         quality_html = ""
-        if chapter['is_edited'] and chapter.get('quality_score'):
-            quality_html = f'<div class="quality-score">Качество редактуры: {chapter["quality_score"]}/10</div>'
+        #if chapter['is_edited'] and chapter.get('quality_score'):
+        #    quality_html = f'<div class="quality-score">Качество редактуры: {chapter["quality_score"]}/10</div>'
 
         chapter_content = f"""
         <!DOCTYPE html>

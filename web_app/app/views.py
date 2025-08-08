@@ -625,7 +625,7 @@ def start_translation(novel_id):
     # Изменяем логику: переводим все главы, которые НЕ имеют статус 'translated'
     chapters = Chapter.query.filter(
         Chapter.novel_id == novel_id,
-        Chapter.status != 'translated',
+        Chapter.status == 'parsed',
         Chapter.id.isnot(None)
     ).order_by(Chapter.chapter_number).all()
 
