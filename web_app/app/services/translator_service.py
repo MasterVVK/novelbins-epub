@@ -664,15 +664,67 @@ class TranslatorService:
             LogService.log_info(f"Заголовок: '{title}', длина контента: {len(content)} символов", 
                               novel_id=chapter.novel_id, chapter_id=chapter.id)
             
-            # Валидируем перевод
+            # Валидируем перевод с возможностью повторной попытки
             LogService.log_info(f"Валидируем перевод главы {chapter.chapter_number}", 
                               novel_id=chapter.novel_id, chapter_id=chapter.id)
             validation = self.validate_translation(chapter.original_text, content, chapter.chapter_number)
+            
+            # Если есть критические проблемы с абзацами, пробуем перевести еще раз
             if validation['critical']:
-                LogService.log_error(f"Критические проблемы в переводе главы {chapter.chapter_number}: {validation['critical_issues']}", 
-                                   novel_id=chapter.novel_id, chapter_id=chapter.id)
-                print(f"   ⚠️ Критические проблемы в переводе: {validation['critical_issues']}")
-                return False
+                # Проверяем, является ли проблема связанной с абзацами
+                paragraph_issue = any('абзац' in issue.lower() for issue in validation['critical_issues'])
+                
+                if paragraph_issue:
+                    LogService.log_warning(f"Проблема с абзацами в главе {chapter.chapter_number}, пробуем перевести заново", 
+                                         novel_id=chapter.novel_id, chapter_id=chapter.id)
+                    print(f"   ⚠️ Проблема с абзацами: {validation['critical_issues']}")
+                    print(f"   🔄 Повторная попытка перевода...")
+                    
+                    # Повторный перевод
+                    translated_parts_retry = []
+                    for i, part in enumerate(text_parts):
+                        LogService.log_info(f"Повторный перевод части {i+1}/{len(text_parts)} главы {chapter.chapter_number}", 
+                                          novel_id=chapter.novel_id, chapter_id=chapter.id)
+                        print(f"   📝 Повторный перевод части {i+1}/{len(text_parts)}")
+                        
+                        translated_part = self.translator.translate_text(
+                            part, 
+                            prompt_template.translation_prompt,
+                            context_prompt,
+                            chapter.id,
+                            temperature=translation_temperature
+                        )
+                        
+                        if not translated_part:
+                            LogService.log_error(f"Ошибка повторного перевода части {i+1} главы {chapter.chapter_number}", 
+                                               novel_id=chapter.novel_id, chapter_id=chapter.id)
+                            break
+                        
+                        translated_parts_retry.append(translated_part)
+                    
+                    if len(translated_parts_retry) == len(text_parts):
+                        # Объединяем части повторного перевода
+                        full_translation = '\n\n'.join(translated_parts_retry)
+                        title, content = self.extract_title_and_content(full_translation)
+                        
+                        # Повторная валидация
+                        validation = self.validate_translation(chapter.original_text, content, chapter.chapter_number)
+                        
+                        if validation['critical']:
+                            LogService.log_error(f"Критические проблемы остались после повторного перевода главы {chapter.chapter_number}: {validation['critical_issues']}", 
+                                               novel_id=chapter.novel_id, chapter_id=chapter.id)
+                            print(f"   ❌ Критические проблемы остались после повторной попытки: {validation['critical_issues']}")
+                            return False
+                        else:
+                            LogService.log_info(f"Повторный перевод успешен, качество: {self.calculate_quality_score(validation)}", 
+                                              novel_id=chapter.novel_id, chapter_id=chapter.id)
+                            print(f"   ✅ Повторный перевод успешен")
+                else:
+                    # Если проблема не с абзацами, сразу возвращаем ошибку
+                    LogService.log_error(f"Критические проблемы в переводе главы {chapter.chapter_number}: {validation['critical_issues']}", 
+                                       novel_id=chapter.novel_id, chapter_id=chapter.id)
+                    print(f"   ❌ Критические проблемы в переводе: {validation['critical_issues']}")
+                    return False
             
             LogService.log_info(f"Валидация пройдена, качество: {self.calculate_quality_score(validation)}", 
                               novel_id=chapter.novel_id, chapter_id=chapter.id)
