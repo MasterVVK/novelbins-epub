@@ -1246,6 +1246,8 @@ def settings():
         
         # Обновление настроек
         settings_data = {
+            'gemini_api_keys': request.form.get('gemini_api_keys', ''),
+            'openai_api_key': request.form.get('openai_api_key', ''),
             'default_translation_model': request.form.get('default_translation_model'),
             'default_translation_temperature': translation_temperature,
             'default_translation_accuracy_mode': translation_accuracy_mode,
