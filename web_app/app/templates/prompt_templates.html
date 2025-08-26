@@ -67,6 +67,11 @@
                         <a href="{{ url_for('main.edit_prompt_template', template_id=template.id) }}" class="btn btn-outline-primary btn-sm me-1" title="Редактировать">
                             <i class="bi bi-pencil"></i>
                         </a>
+                        <button type="button" class="btn btn-outline-success btn-sm me-1" 
+                                onclick="copyTemplate({{ template.id }}, '{{ template.name }}')" 
+                                title="Копировать">
+                            <i class="bi bi-files"></i>
+                        </button>
                         {% if not template.is_default %}
                         <button type="button" class="btn btn-outline-danger btn-sm" 
                                 data-bs-toggle="modal" 
@@ -128,4 +133,129 @@
     </a>
 </div>
 {% endif %}
+
+<!-- Модальное окно для копирования шаблона -->
+<div class="modal fade" id="copyTemplateModal" tabindex="-1" aria-labelledby="copyTemplateModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="copyTemplateModalLabel">
+                    <i class="bi bi-files text-success"></i> Копирование шаблона
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="templateIdToCopy">
+                <input type="hidden" id="templateNameOriginal">
+                
+                <div class="mb-3">
+                    <label for="newTemplateName" class="form-label">Название копии:</label>
+                    <input type="text" class="form-control" id="newTemplateName" 
+                           placeholder="Оставьте пустым для автоматического названия">
+                    <small class="text-muted">Если не указано, будет добавлено "(копия)" к оригинальному названию</small>
+                </div>
+                
+                <div class="mb-3">
+                    <label for="newTemplateDescription" class="form-label">Описание:</label>
+                    <textarea class="form-control" id="newTemplateDescription" rows="3"
+                              placeholder="Оставьте пустым для копирования оригинального описания"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                    <i class="bi bi-x-circle"></i> Отмена
+                </button>
+                <button type="button" class="btn btn-success" onclick="confirmCopyTemplate()">
+                    <i class="bi bi-files"></i> Создать копию
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Функция копирования шаблона
+function copyTemplate(templateId, templateName) {
+    document.getElementById('templateIdToCopy').value = templateId;
+    document.getElementById('templateNameOriginal').value = templateName;
+    document.getElementById('newTemplateName').value = '';
+    document.getElementById('newTemplateDescription').value = '';
+    
+    // Получаем предлагаемое имя
+    fetch(`/api/prompt-templates/${templateId}/duplicate-check`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.suggested_name) {
+                document.getElementById('newTemplateName').placeholder = data.suggested_name;
+            }
+        })
+        .catch(error => {
+            console.error('Ошибка:', error);
+        });
+    
+    // Показываем модальное окно
+    var modal = new bootstrap.Modal(document.getElementById('copyTemplateModal'));
+    modal.show();
+}
+
+// Подтверждение копирования
+function confirmCopyTemplate() {
+    const templateId = document.getElementById('templateIdToCopy').value;
+    const newName = document.getElementById('newTemplateName').value;
+    const newDescription = document.getElementById('newTemplateDescription').value;
+    
+    const requestData = {};
+    if (newName) requestData.name = newName;
+    if (newDescription) requestData.description = newDescription;
+    
+    fetch(`/api/prompt-templates/${templateId}/copy`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(requestData)
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Закрываем модальное окно
+            var modal = bootstrap.Modal.getInstance(document.getElementById('copyTemplateModal'));
+            modal.hide();
+            
+            // Показываем уведомление
+            showNotification(data.message || 'Шаблон успешно скопирован', 'success');
+            
+            // Перезагружаем страницу через 1.5 секунды
+            setTimeout(() => {
+                location.reload();
+            }, 1500);
+        } else {
+            showNotification(data.error || 'Ошибка при копировании', 'danger');
+        }
+    })
+    .catch(error => {
+        console.error('Ошибка:', error);
+        showNotification('Ошибка при копировании шаблона', 'danger');
+    });
+}
+
+// Функция показа уведомлений
+function showNotification(message, type) {
+    const alertDiv = document.createElement('div');
+    alertDiv.className = `alert alert-${type} alert-dismissible fade show position-fixed top-0 start-50 translate-middle-x mt-3`;
+    alertDiv.style.zIndex = '9999';
+    alertDiv.innerHTML = `
+        ${message}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    `;
+    
+    document.body.appendChild(alertDiv);
+    
+    // Автоматическое скрытие через 3 секунды
+    setTimeout(() => {
+        alertDiv.remove();
+    }, 3000);
+}
+</script>
+
 {% endblock %} 
