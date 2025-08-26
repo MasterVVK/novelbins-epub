@@ -982,13 +982,22 @@ class TranslatorService:
         para_diff = abs(orig_paragraphs - trans_paragraphs)
         para_ratio = trans_paragraphs / orig_paragraphs if orig_paragraphs > 0 else 0
 
-        # Менее 60% абзацев - критично (как в рабочем скрипте)
-        if para_ratio < 0.6:
-            critical_issues.append(f"Критическая разница в абзацах: {orig_paragraphs} → {trans_paragraphs} ({para_ratio:.1%})")
-        elif para_diff > 2:
-            issues.append(f"Разница в количестве абзацев: {orig_paragraphs} → {trans_paragraphs}")
-        elif para_diff > 0:
-            warnings.append(f"Небольшая разница в абзацах: {orig_paragraphs} → {trans_paragraphs}")
+        # Для очень коротких глав (менее 200 символов) - это скорее всего авторские примечания
+        # Не применяем строгую проверку абзацев
+        is_short_note = orig_len < 200
+        
+        if not is_short_note:
+            # Менее 60% абзацев - критично (как в рабочем скрипте)
+            if para_ratio < 0.6:
+                critical_issues.append(f"Критическая разница в абзацах: {orig_paragraphs} → {trans_paragraphs} ({para_ratio:.1%})")
+            elif para_diff > 2:
+                issues.append(f"Разница в количестве абзацев: {orig_paragraphs} → {trans_paragraphs}")
+            elif para_diff > 0:
+                warnings.append(f"Небольшая разница в абзацах: {orig_paragraphs} → {trans_paragraphs}")
+        else:
+            # Для коротких примечаний просто предупреждаем
+            if para_diff > 0:
+                warnings.append(f"Авторское примечание: разница в абзацах {orig_paragraphs} → {trans_paragraphs} (допустимо для коротких глав)")
 
         # Проверка наличия чисел (важно для сянься)
         import re
