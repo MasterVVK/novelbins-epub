@@ -184,19 +184,43 @@ class LLMTranslator:
                 LogService.log_info(f"Попытка {attempts + 1}: используем ключ #{self.current_key_index + 1} из {len(self.config.api_keys)}")
                 print(f"   Используем ключ #{self.current_key_index + 1} из {len(self.config.api_keys)}")
 
+                # Подготавливаем запрос с safety settings
+                request_payload = {
+                    "generationConfig": generation_config,
+                    "contents": [{
+                        "parts": [
+                            {"text": system_prompt},
+                            {"text": user_prompt}
+                        ]
+                    }],
+                    "safetySettings": [
+                        {
+                            "category": "HARM_CATEGORY_HATE_SPEECH",
+                            "threshold": "BLOCK_NONE"
+                        },
+                        {
+                            "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                            "threshold": "BLOCK_NONE"
+                        },
+                        {
+                            "category": "HARM_CATEGORY_HARASSMENT",
+                            "threshold": "BLOCK_NONE"
+                        },
+                        {
+                            "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+                            "threshold": "BLOCK_NONE"
+                        }
+                    ]
+                }
+                
+                # Логируем safety settings для отладки
+                LogService.log_info(f"Safety settings: {request_payload['safetySettings']}")
+
                 response = self.client.post(
                     self.api_url,
                     params={"key": self.current_key},
                     headers={"Content-Type": "application/json"},
-                    json={
-                        "generationConfig": generation_config,
-                        "contents": [{
-                            "parts": [
-                                {"text": system_prompt},
-                                {"text": user_prompt}
-                            ]
-                        }]
-                    }
+                    json=request_payload
                 )
 
                 if response.status_code == 200:
@@ -216,7 +240,69 @@ class LLMTranslator:
                         if feedback.get("blockReason"):
                             LogService.log_error(f"Промпт заблокирован: {feedback['blockReason']}")
                             print(f"  ❌ Промпт заблокирован: {feedback['blockReason']}")
-                            return None
+                            
+                            # Выводим дополнительную информацию для диагностики
+                            if "safetyRatings" in feedback:
+                                LogService.log_info(f"Safety ratings: {feedback['safetyRatings']}")
+                            
+                            # Если блокировка PROHIBITED_CONTENT, попробуем разбить текст
+                            if feedback.get("blockReason") == "PROHIBITED_CONTENT":
+                                LogService.log_warning("PROHIBITED_CONTENT detected. Trying to split text...")
+                                print(f"  🔄 Пробуем разбить текст на меньшие части...")
+                                
+                                # Извлекаем только текст для перевода из user_prompt
+                                if "ТЕКСТ ДЛЯ ПЕРЕВОДА:" in user_prompt:
+                                    text_to_translate = user_prompt.split("ТЕКСТ ДЛЯ ПЕРЕВОДА:")[-1].strip()
+                                else:
+                                    text_to_translate = user_prompt
+                                
+                                # Если текст большой, берём только первую половину
+                                if len(text_to_translate) > 1500:
+                                    half_text = text_to_translate[:len(text_to_translate)//2]
+                                    new_user_prompt = user_prompt.replace(text_to_translate, half_text)
+                                    
+                                    LogService.log_info(f"Trying with reduced text: {len(half_text)} chars instead of {len(text_to_translate)}")
+                                    
+                                    # Повторяем запрос с уменьшенным текстом
+                                    retry_response = self.client.post(
+                                        self.api_url,
+                                        params={"key": self.current_key},
+                                        headers={"Content-Type": "application/json"},
+                                        json={
+                                            "generationConfig": generation_config,
+                                            "contents": [{
+                                                "parts": [
+                                                    {"text": system_prompt},
+                                                    {"text": new_user_prompt}
+                                                ]
+                                            }],
+                                            "safetySettings": [
+                                                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+                                                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+                                                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+                                                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
+                                            ]
+                                        }
+                                    )
+                                    
+                                    if retry_response.status_code == 200:
+                                        retry_data = retry_response.json()
+                                        if "promptFeedback" not in retry_data or not retry_data.get("promptFeedback", {}).get("blockReason"):
+                                            LogService.log_info("Reduced text passed! The problem is in text size or specific content.")
+                                            print(f"  ✅ Уменьшенный текст прошёл! Проблема в размере или содержимом.")
+                                            # Возвращаем результат с уменьшенным текстом
+                                            data = retry_data
+                                        else:
+                                            LogService.log_error(f"Even reduced text blocked: {retry_data.get('promptFeedback', {})}")
+                                            return None
+                                    else:
+                                        LogService.log_error(f"Retry failed with status: {retry_response.status_code}")
+                                        return None
+                                else:
+                                    LogService.log_error("Text too small to split further")
+                                    return None
+                            else:
+                                return None
 
                     if candidates:
                         candidate = candidates[0]
@@ -311,7 +397,25 @@ class LLMTranslator:
                                     {"text": system_prompt},
                                     {"text": user_prompt}
                                 ]
-                            }]
+                            }],
+                            "safetySettings": [
+                                {
+                                    "category": "HARM_CATEGORY_HATE_SPEECH",
+                                    "threshold": "BLOCK_NONE"
+                                },
+                                {
+                                    "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                                    "threshold": "BLOCK_NONE"
+                                },
+                                {
+                                    "category": "HARM_CATEGORY_HARASSMENT",
+                                    "threshold": "BLOCK_NONE"
+                                },
+                                {
+                                    "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+                                    "threshold": "BLOCK_NONE"
+                                }
+                            ]
                         }
                     )
 
