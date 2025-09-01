@@ -24,7 +24,7 @@ class SettingsService:
     @staticmethod
     def get_default_model() -> str:
         """Получить модель по умолчанию"""
-        return SystemSettings.get_setting('default_model', 'gemini-2.5-flash-preview-05-20')
+        return SystemSettings.get_setting('default_model', 'gemini-2.5-flash')
     
     @staticmethod
     def get_default_translation_temperature() -> float:

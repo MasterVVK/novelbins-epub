@@ -27,10 +27,11 @@ class EditorService:
         LogService.log_info(f"Начинаем редактуру главы {chapter.chapter_number}", 
                           novel_id=chapter.novel_id, chapter_id=chapter.id)
         
-        # Получаем переведенный текст из последнего перевода
+        # Получаем переведенный текст из последнего INITIAL перевода (не редактированного)
         from app.models import Translation
         latest_translation = Translation.query.filter_by(
-            chapter_id=chapter.id
+            chapter_id=chapter.id,
+            translation_type='initial'
         ).order_by(Translation.created_at.desc()).first()
         
         if not latest_translation or not latest_translation.translated_text:
@@ -52,14 +53,24 @@ class EditorService:
             
             edited_text = original_text
             
+            # Логируем стратегию
+            LogService.log_info(f"Стратегия редактуры: needs_style={strategy.get('needs_style')}, "
+                              f"needs_dialogue={strategy.get('needs_dialogue')}, "
+                              f"needs_polish={strategy.get('needs_polish')}", 
+                              novel_id=chapter.novel_id, chapter_id=chapter.id)
+            
             # Этап 2: Улучшение стиля
             if strategy.get('needs_style'):
+                LogService.log_info(f"Глава {chapter.chapter_number}: начинаем улучшение стиля", 
+                                  novel_id=chapter.novel_id, chapter_id=chapter.id)
                 edited_text = self.improve_text_style(edited_text, chapter.id)
                 LogService.log_info(f"Глава {chapter.chapter_number}: стилистика улучшена", 
                                   novel_id=chapter.novel_id, chapter_id=chapter.id)
                 
             # Этап 3: Работа с диалогами
-            if strategy.get('needs_dialogue') and ('—' in edited_text or '«' in edited_text):
+            if strategy.get('needs_dialogue'):
+                LogService.log_info(f"Глава {chapter.chapter_number}: начинаем полировку диалогов", 
+                                  novel_id=chapter.novel_id, chapter_id=chapter.id)
                 edited_text = self.polish_dialogues(edited_text, chapter.id)
                 LogService.log_info(f"Глава {chapter.chapter_number}: диалоги отполированы", 
                                   novel_id=chapter.novel_id, chapter_id=chapter.id)
@@ -108,8 +119,13 @@ class EditorService:
             # Используем translate_text для анализа качества
             result = self.translator.translator.translate_text(text, prompt, "", chapter_id)
             if not result:
+                LogService.log_info(f"Анализ качества не вернул результат, используем стандартную стратегию", 
+                                  chapter_id=chapter_id)
                 return {'quality_score': 5, 'needs_style': True, 'needs_dialogue': True, 'needs_polish': True}
                 
+            # Логируем результат анализа
+            LogService.log_info(f"Результат анализа качества: {result[:200]}...", chapter_id=chapter_id)
+            
             # Парсим результат
             lines = result.split('\n')
             quality_score = 5
@@ -132,6 +148,19 @@ class EditorService:
                         needs_dialogue = True
                     if 'polish' in strategy or 'all' in strategy:
                         needs_polish = True
+            
+            # Если не нашли маркеры в ответе, включаем все этапы редактуры
+            if 'КАЧЕСТВО:' not in result and 'СТРАТЕГИЯ:' not in result:
+                LogService.log_info(f"Анализ не содержит маркеров, включаем полную редактуру", 
+                                  chapter_id=chapter_id)
+                needs_style = True
+                needs_dialogue = True
+                needs_polish = True
+                # Пытаемся найти оценку качества по числам в тексте
+                import re
+                numbers = re.findall(r'\b([1-9]|10)\b', result[:100])
+                if numbers:
+                    quality_score = int(numbers[0])
                         
             return {
                 'quality_score': quality_score,
@@ -256,6 +285,16 @@ class EditorService:
             
             db.session.add(translation)
             chapter.status = 'edited'
+            
+            # Обновляем счетчик отредактированных глав в новелле
+            novel = Novel.query.get(chapter.novel_id)
+            if novel:
+                edited_count = db.session.query(Chapter).filter_by(
+                    novel_id=chapter.novel_id,
+                    status='edited'
+                ).count()
+                novel.edited_chapters = edited_count + 1  # +1 так как текущая глава еще не сохранена
+                
             db.session.commit()
             
             LogService.log_info(f"Глава {chapter.chapter_number} сохранена как отредактированная", 

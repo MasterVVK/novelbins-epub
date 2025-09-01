@@ -172,7 +172,7 @@ def new_novel():
                 'start_chapter': int(request.form.get('start_chapter', 1)),
                 'all_chapters': all_chapters,
                 'request_delay': float(request.form.get('request_delay', 1.0)),
-                'translation_model': request.form.get('translation_model', 'gemini-2.5-flash-preview-05-20'),
+                'translation_model': request.form.get('translation_model', 'gemini-2.5-flash'),
                 'translation_temperature': float(request.form.get('translation_temperature', 0.1)),
                 'editing_temperature': editing_temperature,
                 'editing_quality_mode': editing_quality_mode,
@@ -394,7 +394,7 @@ def edit_novel(novel_id):
             'start_chapter': int(start_chapter) if start_chapter else 1,
             'all_chapters': all_chapters,
             'request_delay': float(request_delay) if request_delay else 1.0,
-            'translation_model': translation_model or 'gemini-2.5-flash-preview-05-20',
+            'translation_model': translation_model or 'gemini-2.5-flash',
             'translation_temperature': float(translation_temperature) if translation_temperature else 0.1,
             'editing_temperature': float(editing_temperature) if editing_temperature else 0.7,
             'editing_quality_mode': editing_quality_mode or 'balanced',
@@ -670,7 +670,13 @@ def start_translation(novel_id):
                     print("❌ Не удалось получить объекты из базы данных")
                     return
                 
-                translator = TranslatorService()
+                # Создаем конфигурацию из настроек новеллы
+                config = {}
+                if novel.config:
+                    config['model_name'] = novel.config.get('translation_model')
+                    config['temperature'] = novel.config.get('translation_temperature')
+                    print(f"🔍 Конфигурация новеллы: model={config.get('model_name')}, temp={config.get('temperature')}")
+                translator = TranslatorService(config=config)
                 total_chapters = len(chapters)
                 print(f"🔄 Начинаем перевод {total_chapters} глав")
                 
@@ -784,8 +790,18 @@ def start_editing(novel_id):
                 from app.services.translator_service import TranslatorService
                 from app.services.editor_service import EditorService
                 
-                # Инициализируем сервисы
-                translator_service = TranslatorService()
+                # Получаем свежий объект новеллы в контексте текущей сессии
+                fresh_novel = Novel.query.get(novel_id)
+                if not fresh_novel:
+                    logger.error(f"❌ Новелла с ID {novel_id} не найдена")
+                    return
+                
+                # Инициализируем сервисы с конфигурацией из новеллы
+                config = {}
+                if fresh_novel.config:
+                    config['model_name'] = fresh_novel.config.get('translation_model')
+                    config['temperature'] = fresh_novel.config.get('editing_temperature', fresh_novel.config.get('translation_temperature'))
+                translator_service = TranslatorService(config=config)
                 editor_service = EditorService(translator_service)
                 
                 total_chapters = len(chapter_ids)
@@ -961,7 +977,18 @@ def download_epub(novel_id):
 def chapter_detail(chapter_id):
     """Детальная страница главы"""
     chapter = Chapter.query.get_or_404(chapter_id)
-    
+
+    # Находим предыдущую и следующую главы
+    previous_chapter = Chapter.query.filter_by(
+        novel_id=chapter.novel_id,
+        chapter_number=chapter.chapter_number - 1
+    ).first()
+
+    next_chapter = Chapter.query.filter_by(
+        novel_id=chapter.novel_id,
+        chapter_number=chapter.chapter_number + 1
+    ).first()
+
     # Загружаем историю промптов для главы
     prompt_history = []
     prompt_groups = {}
@@ -1000,6 +1027,8 @@ def chapter_detail(chapter_id):
     
     return render_template('chapter_detail.html', 
                          chapter=chapter, 
+                         previous_chapter=previous_chapter,
+                         next_chapter=next_chapter,
                          prompt_history=prompt_history,
                          prompt_groups=prompt_groups)
 
