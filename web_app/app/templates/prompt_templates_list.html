@@ -1,0 +1,297 @@
+{% extends "base.html" %}
+
+{% block title %}Шаблоны промптов{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="row">
+        <div class="col-12">
+            <div class="card shadow-sm">
+                <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                    <h4 class="mb-0">
+                        <i class="fas fa-file-alt"></i> Шаблоны промптов
+                    </h4>
+                    <button class="btn btn-light btn-sm" onclick="location.href='/prompt-templates/new'">
+                        <i class="fas fa-plus"></i> Новый шаблон
+                    </button>
+                </div>
+                
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Название</th>
+                                    <th>Категория</th>
+                                    <th>Описание</th>
+                                    <th>Temperature</th>
+                                    <th>Статус</th>
+                                    <th style="width: 200px;">Действия</th>
+                                </tr>
+                            </thead>
+                            <tbody id="templates-list">
+                                <!-- Шаблоны будут загружены через JavaScript -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Модальное окно для копирования -->
+<div class="modal fade" id="copyModal" tabindex="-1" role="dialog">
+    <div class="modal-dialog" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Копирование шаблона</h5>
+                <button type="button" class="close" data-dismiss="modal">
+                    <span>&times;</span>
+                </button>
+            </div>
+            <div class="modal-body">
+                <form id="copyForm">
+                    <input type="hidden" id="templateIdToCopy">
+                    <div class="form-group">
+                        <label for="newTemplateName">Название копии:</label>
+                        <input type="text" class="form-control" id="newTemplateName" 
+                               placeholder="Оставьте пустым для автоматического названия">
+                    </div>
+                    <div class="form-group">
+                        <label for="newTemplateDescription">Описание:</label>
+                        <textarea class="form-control" id="newTemplateDescription" rows="3"
+                                  placeholder="Оставьте пустым для копирования описания"></textarea>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">Отмена</button>
+                <button type="button" class="btn btn-primary" onclick="confirmCopy()">
+                    <i class="fas fa-copy"></i> Создать копию
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Загрузка списка шаблонов
+function loadTemplates() {
+    fetch('/api/prompt-templates/templates')
+        .then(response => response.json())
+        .then(data => {
+            const tbody = document.getElementById('templates-list');
+            tbody.innerHTML = '';
+            
+            if (data.templates && data.templates.length > 0) {
+                data.templates.forEach(template => {
+                    const row = createTemplateRow(template);
+                    tbody.appendChild(row);
+                });
+            } else {
+                tbody.innerHTML = '<tr><td colspan="6" class="text-center">Нет доступных шаблонов</td></tr>';
+            }
+        })
+        .catch(error => {
+            console.error('Ошибка загрузки шаблонов:', error);
+            showNotification('Ошибка загрузки шаблонов', 'error');
+        });
+}
+
+// Создание строки таблицы для шаблона
+function createTemplateRow(template) {
+    const tr = document.createElement('tr');
+    
+    const categoryBadge = getCategoryBadge(template.category);
+    const statusBadge = template.is_active 
+        ? '<span class="badge badge-success">Активен</span>' 
+        : '<span class="badge badge-secondary">Неактивен</span>';
+    
+    tr.innerHTML = `
+        <td>
+            <strong>${template.name}</strong>
+            ${template.is_default ? '<span class="badge badge-primary ml-2">По умолчанию</span>' : ''}
+        </td>
+        <td>${categoryBadge}</td>
+        <td>${template.description || '-'}</td>
+        <td>${template.temperature || '0.7'}</td>
+        <td>${statusBadge}</td>
+        <td>
+            <div class="btn-group btn-group-sm" role="group">
+                <button class="btn btn-outline-info" onclick="viewTemplate(${template.id})" 
+                        title="Просмотр">
+                    <i class="fas fa-eye"></i>
+                </button>
+                <button class="btn btn-outline-primary" onclick="editTemplate(${template.id})"
+                        title="Редактировать">
+                    <i class="fas fa-edit"></i>
+                </button>
+                <button class="btn btn-outline-success" onclick="copyTemplate(${template.id}, '${template.name}')"
+                        title="Копировать">
+                    <i class="fas fa-copy"></i>
+                </button>
+                <button class="btn btn-outline-danger" onclick="deleteTemplate(${template.id}, '${template.name}')"
+                        title="Удалить">
+                    <i class="fas fa-trash"></i>
+                </button>
+            </div>
+        </td>
+    `;
+    
+    return tr;
+}
+
+// Получение бейджа для категории
+function getCategoryBadge(category) {
+    const badges = {
+        'xianxia': '<span class="badge badge-purple">Сянься</span>',
+        'wuxia': '<span class="badge badge-warning">Уся</span>',
+        'modern': '<span class="badge badge-info">Современный</span>',
+        'fantasy': '<span class="badge badge-success">Фэнтези</span>',
+        'general': '<span class="badge badge-secondary">Общий</span>'
+    };
+    return badges[category] || `<span class="badge badge-secondary">${category}</span>`;
+}
+
+// Функция копирования шаблона
+function copyTemplate(templateId, templateName) {
+    // Сохраняем ID шаблона для копирования
+    document.getElementById('templateIdToCopy').value = templateId;
+    
+    // Получаем предлагаемое имя для копии
+    fetch(`/api/prompt-templates/${templateId}/duplicate-check`)
+        .then(response => response.json())
+        .then(data => {
+            document.getElementById('newTemplateName').value = data.suggested_name || '';
+            document.getElementById('newTemplateDescription').value = '';
+            
+            // Показываем модальное окно
+            $('#copyModal').modal('show');
+        })
+        .catch(error => {
+            console.error('Ошибка:', error);
+            // Всё равно показываем окно
+            $('#copyModal').modal('show');
+        });
+}
+
+// Подтверждение копирования
+function confirmCopy() {
+    const templateId = document.getElementById('templateIdToCopy').value;
+    const newName = document.getElementById('newTemplateName').value;
+    const newDescription = document.getElementById('newTemplateDescription').value;
+    
+    const requestData = {};
+    if (newName) requestData.name = newName;
+    if (newDescription) requestData.description = newDescription;
+    
+    fetch(`/api/prompt-templates/${templateId}/copy`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(requestData)
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            $('#copyModal').modal('hide');
+            showNotification(data.message || 'Шаблон успешно скопирован', 'success');
+            
+            // Перезагружаем список
+            loadTemplates();
+            
+            // Предлагаем открыть копию для редактирования
+            if (data.template && data.template.id) {
+                setTimeout(() => {
+                    if (confirm('Хотите открыть скопированный шаблон для редактирования?')) {
+                        editTemplate(data.template.id);
+                    }
+                }, 500);
+            }
+        } else {
+            showNotification(data.error || 'Ошибка при копировании', 'error');
+        }
+    })
+    .catch(error => {
+        console.error('Ошибка:', error);
+        showNotification('Ошибка при копировании шаблона', 'error');
+    });
+}
+
+// Функции для других действий
+function viewTemplate(templateId) {
+    window.location.href = `/prompt-templates/${templateId}/view`;
+}
+
+function editTemplate(templateId) {
+    window.location.href = `/prompt-templates/${templateId}/edit`;
+}
+
+function deleteTemplate(templateId, templateName) {
+    if (confirm(`Вы уверены, что хотите удалить шаблон "${templateName}"?`)) {
+        fetch(`/api/prompt-templates/templates/${templateId}`, {
+            method: 'DELETE'
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showNotification('Шаблон успешно удалён', 'success');
+                loadTemplates();
+            } else {
+                showNotification(data.error || 'Ошибка при удалении', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Ошибка:', error);
+            showNotification('Ошибка при удалении шаблона', 'error');
+        });
+    }
+}
+
+// Функция показа уведомлений
+function showNotification(message, type) {
+    const alertClass = type === 'error' ? 'alert-danger' : 
+                      type === 'success' ? 'alert-success' : 'alert-info';
+    
+    const alertDiv = document.createElement('div');
+    alertDiv.className = `alert ${alertClass} alert-dismissible fade show position-fixed`;
+    alertDiv.style.top = '20px';
+    alertDiv.style.right = '20px';
+    alertDiv.style.zIndex = '9999';
+    alertDiv.innerHTML = `
+        ${message}
+        <button type="button" class="close" data-dismiss="alert">
+            <span>&times;</span>
+        </button>
+    `;
+    
+    document.body.appendChild(alertDiv);
+    
+    setTimeout(() => {
+        alertDiv.remove();
+    }, 5000);
+}
+
+// Загрузка при открытии страницы
+document.addEventListener('DOMContentLoaded', function() {
+    loadTemplates();
+});
+</script>
+
+<style>
+.badge-purple {
+    background-color: #6f42c1;
+    color: white;
+}
+
+.btn-group-sm .btn {
+    padding: 0.25rem 0.5rem;
+}
+
+.table td {
+    vertical-align: middle;
+}
+</style>
+{% endblock %}

@@ -1,0 +1,294 @@
+{% extends "base.html" %}
+
+{% block title %}Менеджер глоссариев{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <h1>🔤 Менеджер глоссариев</h1>
+    
+    <!-- Табы для разных операций -->
+    <ul class="nav nav-tabs mb-3" id="glossaryTabs" role="tablist">
+        <li class="nav-item" role="presentation">
+            <button class="nav-link active" id="extract-tab" data-bs-toggle="tab" data-bs-target="#extract" type="button">
+                Извлечение
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="copy-tab" data-bs-toggle="tab" data-bs-target="#copy" type="button">
+                Копирование
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="merge-tab" data-bs-toggle="tab" data-bs-target="#merge" type="button">
+                Объединение
+            </button>
+        </li>
+    </ul>
+    
+    <div class="tab-content" id="glossaryTabContent">
+        <!-- Извлечение из переведенных глав -->
+        <div class="tab-pane fade show active" id="extract" role="tabpanel">
+            <div class="card">
+                <div class="card-header">
+                    <h5>📖 Извлечь глоссарий из переведенных глав</h5>
+                </div>
+                <div class="card-body">
+                    <form id="extractForm">
+                        <div class="mb-3">
+                            <label for="extractNovel" class="form-label">Выберите роман</label>
+                            <select class="form-select" id="extractNovel" required>
+                                <option value="">-- Выберите роман --</option>
+                                {% for novel in novels %}
+                                <option value="{{ novel.id }}">
+                                    {{ novel.title }} ({{ novel.translated_chapters }} глав)
+                                </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="minFrequency" class="form-label">
+                                Минимальная частота появления
+                            </label>
+                            <input type="number" class="form-control" id="minFrequency" value="2" min="1">
+                            <small class="text-muted">Термины, встречающиеся реже, будут исключены</small>
+                        </div>
+                        
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-search"></i> Извлечь термины
+                        </button>
+                    </form>
+                    
+                    <div id="extractResults" class="mt-3" style="display: none;">
+                        <h6>Результаты извлечения:</h6>
+                        <div id="extractStats"></div>
+                        <button class="btn btn-success mt-2" id="saveExtracted">
+                            <i class="bi bi-save"></i> Сохранить в глоссарий
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Копирование между книгами -->
+        <div class="tab-pane fade" id="copy" role="tabpanel">
+            <div class="card">
+                <div class="card-header">
+                    <h5>📋 Копировать глоссарий между книгами</h5>
+                </div>
+                <div class="card-body">
+                    <form id="copyForm">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <label for="sourceNovel" class="form-label">Источник</label>
+                                <select class="form-select" id="sourceNovel" required>
+                                    <option value="">-- Выберите источник --</option>
+                                    {% for novel in novels %}
+                                    {% if novel.glossary_count > 0 %}
+                                    <option value="{{ novel.id }}">
+                                        {{ novel.title }} ({{ novel.glossary_count }} терминов)
+                                    </option>
+                                    {% endif %}
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            
+                            <div class="col-md-6">
+                                <label for="targetNovel" class="form-label">Цель</label>
+                                <select class="form-select" id="targetNovel" required>
+                                    <option value="">-- Выберите цель --</option>
+                                    {% for novel in novels %}
+                                    <option value="{{ novel.id }}">
+                                        {{ novel.title }}
+                                    </option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <div class="mt-3">
+                            <label class="form-label">Категории для копирования</label>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" value="characters" id="copyCharacters" checked>
+                                <label class="form-check-label" for="copyCharacters">Персонажи</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" value="locations" id="copyLocations" checked>
+                                <label class="form-check-label" for="copyLocations">Локации</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" value="terms" id="copyTerms" checked>
+                                <label class="form-check-label" for="copyTerms">Термины</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" value="techniques" id="copyTechniques" checked>
+                                <label class="form-check-label" for="copyTechniques">Техники</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" value="artifacts" id="copyArtifacts" checked>
+                                <label class="form-check-label" for="copyArtifacts">Артефакты</label>
+                            </div>
+                        </div>
+                        
+                        <div class="mt-3">
+                            <label for="themeFilter" class="form-label">Тематический фильтр (опционально)</label>
+                            <select class="form-select" id="themeFilter">
+                                <option value="">Без фильтра</option>
+                                <option value="ballistics">Баллистика</option>
+                                <option value="cultivation">Культивация</option>
+                                <option value="military">Военная</option>
+                                <option value="medicine">Медицина</option>
+                            </select>
+                        </div>
+                        
+                        <button type="submit" class="btn btn-primary mt-3">
+                            <i class="bi bi-files"></i> Копировать глоссарий
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Объединение глоссариев -->
+        <div class="tab-pane fade" id="merge" role="tabpanel">
+            <div class="card">
+                <div class="card-header">
+                    <h5>🔀 Объединить несколько глоссариев</h5>
+                </div>
+                <div class="card-body">
+                    <form id="mergeForm">
+                        <div class="mb-3">
+                            <label for="mergeTarget" class="form-label">Целевой роман</label>
+                            <select class="form-select" id="mergeTarget" required>
+                                <option value="">-- Выберите роман --</option>
+                                {% for novel in novels %}
+                                <option value="{{ novel.id }}">{{ novel.title }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label class="form-label">Источники для объединения</label>
+                            {% for novel in novels %}
+                            {% if novel.glossary_count > 0 %}
+                            <div class="form-check">
+                                <input class="form-check-input merge-source" type="checkbox" 
+                                       value="{{ novel.id }}" id="merge{{ novel.id }}">
+                                <label class="form-check-label" for="merge{{ novel.id }}">
+                                    {{ novel.title }} ({{ novel.glossary_count }} терминов)
+                                </label>
+                            </div>
+                            {% endif %}
+                            {% endfor %}
+                        </div>
+                        
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-arrow-down-up"></i> Объединить глоссарии
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Результаты операций -->
+    <div class="alert alert-info mt-3" id="operationResult" style="display: none;"></div>
+</div>
+
+<script>
+// Извлечение глоссария
+document.getElementById('extractForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const novelId = document.getElementById('extractNovel').value;
+    const minFreq = document.getElementById('minFrequency').value;
+    
+    const response = await fetch(`/api/glossary/extract/${novelId}?min_frequency=${minFreq}`);
+    const data = await response.json();
+    
+    if (data.success) {
+        document.getElementById('extractStats').innerHTML = `
+            <ul>
+                ${Object.entries(data.stats).map(([cat, count]) => 
+                    `<li>${cat}: ${count} терминов</li>`
+                ).join('')}
+            </ul>
+        `;
+        document.getElementById('extractResults').style.display = 'block';
+        document.getElementById('saveExtracted').dataset.novelId = novelId;
+        document.getElementById('saveExtracted').dataset.glossary = JSON.stringify(data.glossary);
+    }
+});
+
+// Сохранение извлеченного глоссария
+document.getElementById('saveExtracted').addEventListener('click', async (e) => {
+    const novelId = e.target.dataset.novelId;
+    const glossary = JSON.parse(e.target.dataset.glossary);
+    
+    const response = await fetch(`/api/glossary/save-extracted/${novelId}`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(glossary)
+    });
+    
+    const data = await response.json();
+    showResult(`Сохранено ${data.saved} новых терминов`);
+});
+
+// Копирование глоссария
+document.getElementById('copyForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    
+    const categories = [];
+    document.querySelectorAll('#copy input[type="checkbox"]:checked').forEach(cb => {
+        categories.push(cb.value);
+    });
+    
+    const params = {
+        source: document.getElementById('sourceNovel').value,
+        target: document.getElementById('targetNovel').value,
+        categories: categories,
+        theme: document.getElementById('themeFilter').value
+    };
+    
+    const response = await fetch('/api/glossary/copy', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(params)
+    });
+    
+    const data = await response.json();
+    showResult(`Скопировано ${data.copied} терминов`);
+});
+
+// Объединение глоссариев
+document.getElementById('mergeForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    
+    const sources = [];
+    document.querySelectorAll('.merge-source:checked').forEach(cb => {
+        sources.push(cb.value);
+    });
+    
+    const params = {
+        target: document.getElementById('mergeTarget').value,
+        sources: sources
+    };
+    
+    const response = await fetch('/api/glossary/merge', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(params)
+    });
+    
+    const data = await response.json();
+    showResult(`Объединено ${data.merged} терминов`);
+});
+
+function showResult(message) {
+    const alert = document.getElementById('operationResult');
+    alert.textContent = message;
+    alert.style.display = 'block';
+    setTimeout(() => alert.style.display = 'none', 5000);
+}
+</script>
+{% endblock %}
