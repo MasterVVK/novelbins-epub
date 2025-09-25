@@ -289,11 +289,12 @@ class LLMTranslator:
                                         data = retry_data
                                         candidates = data.get("candidates", [])
                                     else:
-                                        LogService.log_error("Fiction disclaimer didn't help. Content is truly prohibited.")
-                                        print(f"  ❌ Контент заблокирован политиками Google")
-                                        # Сохраняем информацию об ошибке для дальнейшего анализа
-                                        LogService.log_error(f"Chapter blocked - feedback: {retry_data.get('promptFeedback', {})}")
-                                        return None
+                                        LogService.log_error("Fiction disclaimer didn't help. Will try splitting content...")
+                                        print(f"  ⚠️ Контент всё ещё заблокирован. Пробуем разбить на части...")
+                                        
+                                        # Возвращаем специальный маркер для обработки в вызывающем коде
+                                        # Это сигнализирует о необходимости разбить текст
+                                        return "CONTENT_BLOCKED_NEED_SPLIT"
                                 else:
                                     LogService.log_error(f"Retry with fiction disclaimer failed: {retry_response.status_code}")
                                     return None
@@ -753,7 +754,61 @@ class TranslatorService:
                     temperature=translation_temperature
                 )
                 
-                if not translated_part:
+                # Проверяем, не заблокирован ли контент
+                if translated_part == "CONTENT_BLOCKED_NEED_SPLIT":
+                    LogService.log_warning(f"Часть {i+1} заблокирована, пробуем разбить на более мелкие фрагменты", 
+                                         novel_id=chapter.novel_id, chapter_id=chapter.id)
+                    print(f"   ⚠️ Часть {i+1} заблокирована, разбиваем на меньшие фрагменты...")
+                    
+                    # Разбиваем проблемную часть на ещё более мелкие фрагменты
+                    sub_parts = []
+                    sentences = part.split('。')  # Разбиваем по китайским точкам
+                    current_fragment = ""
+                    
+                    for sentence in sentences:
+                        if len(current_fragment) + len(sentence) < 200:  # Очень маленькие фрагменты
+                            current_fragment += sentence + "。"
+                        else:
+                            if current_fragment:
+                                sub_parts.append(current_fragment)
+                            current_fragment = sentence + "。"
+                    
+                    if current_fragment:
+                        sub_parts.append(current_fragment)
+                    
+                    LogService.log_info(f"Часть {i+1} разбита на {len(sub_parts)} мини-фрагментов", 
+                                      novel_id=chapter.novel_id, chapter_id=chapter.id)
+                    
+                    # Переводим мини-фрагменты
+                    sub_translations = []
+                    for j, sub_part in enumerate(sub_parts):
+                        LogService.log_info(f"Перевод мини-фрагмента {j+1}/{len(sub_parts)} части {i+1}", 
+                                          novel_id=chapter.novel_id, chapter_id=chapter.id)
+                        
+                        sub_translation = self.translator.translate_text(
+                            sub_part,
+                            prompt_template.translation_prompt,
+                            context_prompt,
+                            chapter.id,
+                            temperature=translation_temperature
+                        )
+                        
+                        if sub_translation and sub_translation != "CONTENT_BLOCKED_NEED_SPLIT":
+                            sub_translations.append(sub_translation)
+                        else:
+                            # Если даже маленький фрагмент заблокирован, пропускаем его с заметкой
+                            LogService.log_warning(f"Мини-фрагмент {j+1} всё ещё заблокирован, добавляем заметку", 
+                                                 novel_id=chapter.novel_id, chapter_id=chapter.id)
+                            sub_translations.append("[Фрагмент временно недоступен для перевода]")
+                        
+                        time.sleep(0.5)  # Маленькая пауза между мини-фрагментами
+                    
+                    # Объединяем мини-переводы
+                    translated_part = " ".join(sub_translations)
+                    LogService.log_info(f"Мини-фрагменты части {i+1} успешно объединены", 
+                                      novel_id=chapter.novel_id, chapter_id=chapter.id)
+                
+                elif not translated_part:
                     LogService.log_error(f"Ошибка перевода части {i+1} главы {chapter.chapter_number}", 
                                        novel_id=chapter.novel_id, chapter_id=chapter.id)
                     print(f"   ❌ Ошибка перевода части {i+1}")
