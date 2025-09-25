@@ -93,6 +93,42 @@ class EPUBService:
         logger.info(f"Загружено глав: {len(result)}, отредактировано: {edited_count}")
         return result
 
+    def _format_chapter_title(self, chapter_number: int, title: str, prefix_mode: str = 'auto', prefix_text: str = 'Глава') -> str:
+        """Форматирование заголовка главы с учетом настроек префикса
+        
+        Args:
+            chapter_number: Номер главы
+            title: Исходный заголовок
+            prefix_mode: Режим добавления префикса ('always', 'never', 'auto')
+            prefix_text: Текст префикса (по умолчанию 'Глава')
+        """
+        import re
+        
+        if prefix_mode == 'never':
+            # Никогда не добавляем префикс
+            return title
+        
+        elif prefix_mode == 'always':
+            # Всегда добавляем префикс
+            return f"{prefix_text} {chapter_number}: {title}"
+        
+        else:  # auto mode
+            # Проверяем, начинается ли заголовок уже с "Глава X:" или "Chapter X:" или подобного
+            patterns = [
+                r'^(Глава|Chapter|Часть|Part)\s*\d+[:\s]',  # Различные языки
+                r'^第\s*\d+\s*[章回]',  # Китайский формат (第100章 или 第100回)
+                r'^\d+\.\s',  # Начинается с "1. "
+                r'^\d+:\s',    # Начинается с "1: "
+            ]
+            
+            for pattern in patterns:
+                if re.match(pattern, title, re.IGNORECASE):
+                    # Заголовок уже содержит номер главы, возвращаем как есть
+                    return title
+            
+            # Заголовок не содержит номер, добавляем префикс
+            return f"{prefix_text} {chapter_number}: {title}"
+    
     def create_epub(self, novel_id: int, chapters: List[Dict], config: Optional[EPUBConfig] = None) -> str:
         """Создание EPUB файла"""
         if not epub:
@@ -105,6 +141,10 @@ class EPUBService:
         novel = Novel.query.get(novel_id)
         if not novel:
             raise ValueError(f"Новелла с ID {novel_id} не найдена")
+        
+        # Получаем настройки префикса для этой новеллы
+        prefix_mode = novel.epub_add_chapter_prefix or 'auto'
+        prefix_text = novel.epub_chapter_prefix_text or 'Глава'
 
         # Создаём книгу
         book = epub.EpubBook()
@@ -138,11 +178,11 @@ class EPUBService:
 
         # Создаём страницу с информацией о редактировании
         if any(ch['is_edited'] for ch in chapters):
-            edit_info_page = self._create_edit_info_page(chapters)
+            edit_info_page = self._create_edit_info_page(chapters, prefix_mode, prefix_text)
             book.add_item(edit_info_page)
 
         # Создаём оглавление
-        toc_page = self._create_toc_page(chapters)
+        toc_page = self._create_toc_page(chapters, prefix_mode, prefix_text)
         book.add_item(toc_page)
 
         # Список для навигации
@@ -156,7 +196,7 @@ class EPUBService:
 
         # Добавляем главы
         for chapter in chapters:
-            ch = self._create_chapter_page(chapter, nav_css)
+            ch = self._create_chapter_page(chapter, nav_css, prefix_mode, prefix_text)
             book.add_item(ch)
             spine_list.append(ch)
             toc_list.append(ch)
@@ -323,14 +363,15 @@ class EPUBService:
         
         return title_page
 
-    def _create_edit_info_page(self, chapters: List[Dict]) -> epub.EpubHtml:
+    def _create_edit_info_page(self, chapters: List[Dict], prefix_mode: str = 'auto', prefix_text: str = 'Глава') -> epub.EpubHtml:
         """Создание страницы с информацией о редактировании"""
         edited_chapters = [ch for ch in chapters if ch['is_edited']]
         
         chapters_info = ""
         for ch in edited_chapters:
             quality_text = f" (качество: {ch['quality_score']}/10)" if ch['quality_score'] else ""
-            chapters_info += f"<div class='toc-item'>Глава {ch['number']}: {ch['title']}{quality_text}</div>"
+            formatted_title = self._format_chapter_title(ch['number'], ch['title'], prefix_mode, prefix_text)
+            chapters_info += f"<div class='toc-item'>{formatted_title}{quality_text}</div>"
 
         content = f"""
         <!DOCTYPE html>
@@ -364,12 +405,13 @@ class EPUBService:
         
         return edit_info_page
 
-    def _create_toc_page(self, chapters: List[Dict]) -> epub.EpubHtml:
+    def _create_toc_page(self, chapters: List[Dict], prefix_mode: str = 'auto', prefix_text: str = 'Глава') -> epub.EpubHtml:
         """Создание оглавления"""
         toc_items = ""
         for ch in chapters:
             edited_class = " toc-edited" if ch['is_edited'] else ""
-            toc_items += f"<div class='toc-item toc-chapter{edited_class}'>Глава {ch['number']}: {ch['title']}</div>"
+            formatted_title = self._format_chapter_title(ch['number'], ch['title'], prefix_mode, prefix_text)
+            toc_items += f"<div class='toc-item toc-chapter{edited_class}'>{formatted_title}</div>"
 
         content = f"""
         <!DOCTYPE html>
@@ -399,10 +441,13 @@ class EPUBService:
         
         return toc_page
 
-    def _create_chapter_page(self, chapter: Dict, nav_css: epub.EpubItem) -> epub.EpubHtml:
+    def _create_chapter_page(self, chapter: Dict, nav_css: epub.EpubItem, prefix_mode: str = 'auto', prefix_text: str = 'Глава') -> epub.EpubHtml:
         """Создание страницы главы"""
         # Конвертируем markdown в HTML
         content_html = self._convert_markdown_to_html(chapter['content'])
+        
+        # Форматируем заголовок с учетом настроек
+        formatted_title = self._format_chapter_title(chapter['number'], chapter['title'], prefix_mode, prefix_text)
         
         # Добавляем информацию о качестве если глава отредактирована
         quality_html = ""
@@ -413,11 +458,11 @@ class EPUBService:
         <!DOCTYPE html>
         <html>
         <head>
-            <title>Глава {chapter['number']}: {chapter['title']}</title>
+            <title>{formatted_title}</title>
             <link rel="stylesheet" type="text/css" href="style/nav.css"/>
         </head>
         <body>
-            <h2 class="chapter-title">Глава {chapter['number']}: {chapter['title']}</h2>
+            <h2 class="chapter-title">{formatted_title}</h2>
             {content_html}
             {quality_html}
         </body>
@@ -425,7 +470,7 @@ class EPUBService:
         """
         
         chapter_page = epub.EpubHtml(
-            title=f"Глава {chapter['number']}: {chapter['title']}",
+            title=formatted_title,
             file_name=f'chapter_{chapter["number"]:03d}.xhtml',
             content=chapter_content
         )

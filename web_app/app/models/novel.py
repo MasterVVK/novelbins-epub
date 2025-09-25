@@ -29,6 +29,10 @@ class Novel(db.Model):
     # Конфигурация
     config = Column(JSON)  # Настройки парсинга, перевода, редактуры
     
+    # Настройки EPUB генерации
+    epub_add_chapter_prefix = Column(String(10), default='auto')  # always, never, auto
+    epub_chapter_prefix_text = Column(String(50), default='Глава')
+    
     # Авторизация для парсинга
     auth_cookies = Column(Text)  # Cookies для авторизации на сайте-источнике
     auth_enabled = Column(Boolean, default=False)  # Включена ли авторизация

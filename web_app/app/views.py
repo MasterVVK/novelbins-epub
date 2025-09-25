@@ -442,6 +442,15 @@ def edit_novel(novel_id):
         else:
             novel.clear_proxy()
             print(f"🌐 SOCKS прокси отключен")
+        
+        # Обрабатываем настройки EPUB
+        epub_add_chapter_prefix = request.form.get('epub_add_chapter_prefix', 'auto')
+        epub_chapter_prefix_text = request.form.get('epub_chapter_prefix_text', 'Глава').strip()
+        
+        novel.epub_add_chapter_prefix = epub_add_chapter_prefix
+        novel.epub_chapter_prefix_text = epub_chapter_prefix_text or 'Глава'
+        
+        print(f"📚 Настройки EPUB: префикс={epub_add_chapter_prefix}, текст='{epub_chapter_prefix_text}'")
 
         # Принудительно обновляем объект в сессии
         db.session.add(novel)
