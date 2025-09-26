@@ -259,6 +259,7 @@ class LLMTranslator:
                                 fiction_user_prompt = "Переведи следующий отрывок из ХУДОЖЕСТВЕННОГО РОМАНА:\n\n" + user_prompt
                                 
                                 # Повторяем запрос с уточнением
+                                LogService.log_info("Отправляем повторный запрос с fiction disclaimer...")
                                 retry_response = self.client.post(
                                     self.api_url,
                                     params={"key": self.current_key},
@@ -281,8 +282,13 @@ class LLMTranslator:
                                     }
                                 )
                                 
+                                LogService.log_info(f"Retry response status: {retry_response.status_code}")
                                 if retry_response.status_code == 200:
                                     retry_data = retry_response.json()
+                                    LogService.log_info(f"Retry data received. Has promptFeedback: {'promptFeedback' in retry_data}")
+                                    if "promptFeedback" in retry_data:
+                                        LogService.log_info(f"Retry promptFeedback: {retry_data.get('promptFeedback', {})}")
+                                    
                                     if "promptFeedback" not in retry_data or not retry_data.get("promptFeedback", {}).get("blockReason"):
                                         LogService.log_info("Fiction disclaimer helped! Content passed.")
                                         print(f"  ✅ Пометка о художественной литературе помогла!")
@@ -290,14 +296,24 @@ class LLMTranslator:
                                         candidates = data.get("candidates", [])
                                     else:
                                         LogService.log_error("Fiction disclaimer didn't help. Will try splitting content...")
+                                        LogService.log_error(f"Block reason after retry: {retry_data.get('promptFeedback', {}).get('blockReason')}")
                                         print(f"  ⚠️ Контент всё ещё заблокирован. Пробуем разбить на части...")
+                                        print(f"  ⚠️ Причина блокировки: {retry_data.get('promptFeedback', {}).get('blockReason')}")
                                         
                                         # Возвращаем специальный маркер для обработки в вызывающем коде
                                         # Это сигнализирует о необходимости разбить текст
                                         return "CONTENT_BLOCKED_NEED_SPLIT"
                                 else:
                                     LogService.log_error(f"Retry with fiction disclaimer failed: {retry_response.status_code}")
-                                    return None
+                                    try:
+                                        error_data = retry_response.json()
+                                        LogService.log_error(f"Error data: {error_data}")
+                                    except:
+                                        LogService.log_error(f"Error text: {retry_response.text[:500]}")
+                                    
+                                    # Даже если повторный запрос не удался, возвращаем маркер для разбиения
+                                    LogService.log_warning("Returning CONTENT_BLOCKED_NEED_SPLIT due to retry failure")
+                                    return "CONTENT_BLOCKED_NEED_SPLIT"
                             else:
                                 return None
 
@@ -728,11 +744,20 @@ class TranslatorService:
             # Разбиваем длинный текст на части
             LogService.log_info(f"Разбиваем текст главы {chapter.chapter_number} на части", 
                               novel_id=chapter.novel_id, chapter_id=chapter.id)
-            text_parts = self.split_long_text(text_to_translate)
+            
+            # Проверяем, была ли глава заблокирована ранее
+            force_small_parts = False
+            if hasattr(chapter, 'translation_attempts') and chapter.translation_attempts > 0:
+                force_small_parts = True
+                LogService.log_info(f"Глава {chapter.chapter_number} была заблокирована ранее, используем мелкое разбиение", 
+                                  novel_id=chapter.novel_id, chapter_id=chapter.id)
+            
+            text_parts = self.split_long_text(text_to_translate, force_small=force_small_parts)
             LogService.log_info(f"Текст разбит на {len(text_parts)} частей", 
                               novel_id=chapter.novel_id, chapter_id=chapter.id)
             
             translated_parts = []
+            retry_with_smaller_parts = False
             
             for i, part in enumerate(text_parts):
                 LogService.log_info(f"Перевод части {i+1}/{len(text_parts)} главы {chapter.chapter_number}", 
@@ -760,18 +785,48 @@ class TranslatorService:
                                          novel_id=chapter.novel_id, chapter_id=chapter.id)
                     print(f"   ⚠️ Часть {i+1} заблокирована, разбиваем на меньшие фрагменты...")
                     
+                    # Если это первая часть и текст был разбит только на 1 часть, нужно переразбить весь текст
+                    if i == 0 and len(text_parts) == 1:
+                        LogService.log_info(f"Глава {chapter.chapter_number} целиком заблокирована, переразбиваем на мелкие части", 
+                                          novel_id=chapter.novel_id, chapter_id=chapter.id)
+                        print(f"   🔄 Переразбиваем всю главу на мелкие части...")
+                        retry_with_smaller_parts = True
+                        break  # Выходим из цикла и переразбиваем
+                    
                     # Разбиваем проблемную часть на ещё более мелкие фрагменты
                     sub_parts = []
-                    sentences = part.split('。')  # Разбиваем по китайским точкам
-                    current_fragment = ""
                     
+                    # Определяем разделители в зависимости от языка
+                    if '。' in part:  # Китайский текст
+                        sentences = part.split('。')
+                        separator = '。'
+                    elif '. ' in part:  # Английский/западный текст
+                        sentences = part.split('. ')
+                        separator = '. '
+                    else:  # Если нет явных разделителей, разбиваем по словам
+                        words = part.split()
+                        sentences = []
+                        temp_sentence = []
+                        for word in words:
+                            temp_sentence.append(word)
+                            if len(' '.join(temp_sentence)) > 150:
+                                sentences.append(' '.join(temp_sentence))
+                                temp_sentence = []
+                        if temp_sentence:
+                            sentences.append(' '.join(temp_sentence))
+                        separator = ' '
+                    
+                    current_fragment = ""
                     for sentence in sentences:
                         if len(current_fragment) + len(sentence) < 200:  # Очень маленькие фрагменты
-                            current_fragment += sentence + "。"
+                            if current_fragment:
+                                current_fragment += separator + sentence
+                            else:
+                                current_fragment = sentence
                         else:
                             if current_fragment:
                                 sub_parts.append(current_fragment)
-                            current_fragment = sentence + "。"
+                            current_fragment = sentence
                     
                     if current_fragment:
                         sub_parts.append(current_fragment)
@@ -818,6 +873,67 @@ class TranslatorService:
                                   novel_id=chapter.novel_id, chapter_id=chapter.id)
                 translated_parts.append(translated_part)
                 time.sleep(1)  # Пауза между частями
+            
+            # Если нужно переразбить на более мелкие части
+            if retry_with_smaller_parts and len(text_parts) == 1:
+                LogService.log_info(f"Повторная попытка с мелким разбиением для главы {chapter.chapter_number}", 
+                                  novel_id=chapter.novel_id, chapter_id=chapter.id)
+                print(f"   🔄 Повторная попытка с мелким разбиением...")
+                
+                # Разбиваем текст на очень маленькие части
+                text_parts = self.split_long_text(text_to_translate, force_small=True)
+                LogService.log_info(f"Текст переразбит на {len(text_parts)} мелких частей", 
+                                  novel_id=chapter.novel_id, chapter_id=chapter.id)
+                
+                translated_parts = []
+                for i, part in enumerate(text_parts):
+                    LogService.log_info(f"Перевод мелкой части {i+1}/{len(text_parts)}", 
+                                      novel_id=chapter.novel_id, chapter_id=chapter.id)
+                    print(f"   📝 Перевод мелкой части {i+1}/{len(text_parts)}")
+                    
+                    translated_part = self.translator.translate_text(
+                        part, 
+                        prompt_template.translation_prompt,
+                        context_prompt,
+                        chapter.id,
+                        temperature=translation_temperature
+                    )
+                    
+                    if translated_part == "CONTENT_BLOCKED_NEED_SPLIT":
+                        # Если даже мелкая часть заблокирована, пробуем ещё мельче
+                        LogService.log_warning(f"Мелкая часть {i+1} тоже заблокирована, разбиваем на фрагменты", 
+                                             novel_id=chapter.novel_id, chapter_id=chapter.id)
+                        
+                        # Разбиваем на ультра-мелкие фрагменты (по 50 слов)
+                        words = part.split()
+                        ultra_parts = []
+                        for j in range(0, len(words), 50):
+                            ultra_parts.append(' '.join(words[j:j+50]))
+                        
+                        ultra_translations = []
+                        for k, ultra_part in enumerate(ultra_parts):
+                            ultra_translation = self.translator.translate_text(
+                                ultra_part,
+                                prompt_template.translation_prompt,
+                                context_prompt,
+                                chapter.id,
+                                temperature=translation_temperature
+                            )
+                            if ultra_translation and ultra_translation != "CONTENT_BLOCKED_NEED_SPLIT":
+                                ultra_translations.append(ultra_translation)
+                            else:
+                                ultra_translations.append("[Фрагмент недоступен]")
+                            time.sleep(0.3)
+                        
+                        translated_part = " ".join(ultra_translations)
+                    
+                    if not translated_part:
+                        LogService.log_error(f"Не удалось перевести мелкую часть {i+1}", 
+                                           novel_id=chapter.novel_id, chapter_id=chapter.id)
+                        return False
+                    
+                    translated_parts.append(translated_part)
+                    time.sleep(0.5)
             
             # Объединяем части
             LogService.log_info(f"Объединяем переведенные части главы {chapter.chapter_number}", 
@@ -987,8 +1103,18 @@ class TranslatorService:
         
         return text.strip()
 
-    def split_long_text(self, text: str, max_words: int = 1200) -> List[str]:
-        """Разбивает длинный текст на части с сохранением целостности абзацев"""
+    def split_long_text(self, text: str, max_words: int = 1200, force_small: bool = False) -> List[str]:
+        """Разбивает длинный текст на части с сохранением целостности абзацев
+        
+        Args:
+            text: Текст для разбиения
+            max_words: Максимальное количество слов в части
+            force_small: Принудительно создавать маленькие части (для проблемного контента)
+        """
+        # Если принудительное мелкое разбиение
+        if force_small:
+            max_words = 300  # Очень маленькие части для проблемного контента
+        
         paragraphs = text.split('\n\n')
         parts = []
         current_part = []
@@ -997,13 +1123,51 @@ class TranslatorService:
         for paragraph in paragraphs:
             paragraph_words = len(paragraph.split())
             
-            if current_words + paragraph_words > max_words and current_part:
-                parts.append('\n\n'.join(current_part))
-                current_part = [paragraph]
-                current_words = paragraph_words
+            # Если абзац сам по себе слишком большой, разбиваем его
+            if paragraph_words > max_words:
+                # Сохраняем текущую часть, если она есть
+                if current_part:
+                    parts.append('\n\n'.join(current_part))
+                    current_part = []
+                    current_words = 0
+                
+                # Разбиваем большой абзац на предложения
+                if '。' in paragraph:  # Китайский
+                    sentences = paragraph.split('。')
+                    separator = '。'
+                elif '. ' in paragraph:  # Английский
+                    sentences = paragraph.split('. ')
+                    separator = '. '
+                else:
+                    # Разбиваем по словам
+                    words = paragraph.split()
+                    chunk_size = max_words // 2
+                    sentences = [' '.join(words[i:i+chunk_size]) for i in range(0, len(words), chunk_size)]
+                    separator = ' '
+                
+                temp_part = ""
+                for sentence in sentences:
+                    if len(temp_part.split()) + len(sentence.split()) > max_words:
+                        if temp_part:
+                            parts.append(temp_part)
+                        temp_part = sentence
+                    else:
+                        if temp_part:
+                            temp_part += separator + sentence
+                        else:
+                            temp_part = sentence
+                
+                if temp_part:
+                    parts.append(temp_part)
             else:
-                current_part.append(paragraph)
-                current_words += paragraph_words
+                # Обычная логика для небольших абзацев
+                if current_words + paragraph_words > max_words and current_part:
+                    parts.append('\n\n'.join(current_part))
+                    current_part = [paragraph]
+                    current_words = paragraph_words
+                else:
+                    current_part.append(paragraph)
+                    current_words += paragraph_words
         
         if current_part:
             parts.append('\n\n'.join(current_part))
