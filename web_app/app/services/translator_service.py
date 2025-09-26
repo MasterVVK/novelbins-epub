@@ -797,12 +797,24 @@ class TranslatorService:
                     sub_parts = []
                     
                     # Определяем разделители в зависимости от языка
-                    if '。' in part:  # Китайский текст
-                        sentences = part.split('。')
-                        separator = '。'
-                    elif '. ' in part:  # Английский/западный текст
-                        sentences = part.split('. ')
-                        separator = '. '
+                    import re
+                    if any('\u4e00' <= c <= '\u9fff' for c in part):  # Китайский текст
+                        # Разбиваем по китайским знакам препинания
+                        sentences_raw = re.split(r'([。！？；，])', part)  # Включаем запятую для более мелкого разбиения
+                        sentences = []
+                        for i in range(0, len(sentences_raw)-1, 2):
+                            if i+1 < len(sentences_raw):
+                                sentences.append(sentences_raw[i] + sentences_raw[i+1])
+                            else:
+                                if sentences_raw[i].strip():
+                                    sentences.append(sentences_raw[i])
+                        # Добавляем последний элемент если он не пустой
+                        if len(sentences_raw) % 2 == 1 and sentences_raw[-1].strip():
+                            sentences.append(sentences_raw[-1])
+                        separator = ''  # Знаки уже включены
+                    elif '. ' in part or '! ' in part or '? ' in part:  # Английский/западный текст
+                        sentences = re.split(r'(?<=[.!?])\s+', part)
+                        separator = ' '
                     else:  # Если нет явных разделителей, разбиваем по словам
                         words = part.split()
                         sentences = []
@@ -880,9 +892,9 @@ class TranslatorService:
                                   novel_id=chapter.novel_id, chapter_id=chapter.id)
                 print(f"   🔄 Повторная попытка с мелким разбиением...")
                 
-                # Разбиваем текст на очень маленькие части
-                text_parts = self.split_long_text(text_to_translate, force_small=True)
-                LogService.log_info(f"Текст переразбит на {len(text_parts)} мелких частей", 
+                # Разбиваем текст на очень маленькие части (используем ultra_small для максимального разбиения)
+                text_parts = self.split_long_text(text_to_translate, ultra_small=True)
+                LogService.log_info(f"Текст переразбит на {len(text_parts)} ультра-мелких частей (по 100 слов)", 
                                   novel_id=chapter.novel_id, chapter_id=chapter.id)
                 
                 translated_parts = []
@@ -904,11 +916,15 @@ class TranslatorService:
                         LogService.log_warning(f"Мелкая часть {i+1} тоже заблокирована, разбиваем на фрагменты", 
                                              novel_id=chapter.novel_id, chapter_id=chapter.id)
                         
-                        # Разбиваем на ультра-мелкие фрагменты (по 50 слов)
+                        # Разбиваем на супер-ультра-мелкие фрагменты (по 30 слов)
                         words = part.split()
                         ultra_parts = []
-                        for j in range(0, len(words), 50):
-                            ultra_parts.append(' '.join(words[j:j+50]))
+                        chunk_size = 30  # Еще меньше - по 30 слов
+                        for j in range(0, len(words), chunk_size):
+                            ultra_parts.append(' '.join(words[j:j+chunk_size]))
+                        
+                        LogService.log_info(f"Часть {i+1} разбита на {len(ultra_parts)} супер-мелких фрагментов по {chunk_size} слов",
+                                          novel_id=chapter.novel_id, chapter_id=chapter.id)
                         
                         ultra_translations = []
                         for k, ultra_part in enumerate(ultra_parts):
@@ -1103,17 +1119,21 @@ class TranslatorService:
         
         return text.strip()
 
-    def split_long_text(self, text: str, max_words: int = 1200, force_small: bool = False) -> List[str]:
+    def split_long_text(self, text: str, max_words: int = 1200, force_small: bool = False, ultra_small: bool = False) -> List[str]:
         """Разбивает длинный текст на части с сохранением целостности абзацев
         
         Args:
             text: Текст для разбиения
             max_words: Максимальное количество слов в части
             force_small: Принудительно создавать маленькие части (для проблемного контента)
+            ultra_small: Ультра-мелкое разбиение для самого проблемного контента
         """
+        # Если ультра-мелкое разбиение
+        if ultra_small:
+            max_words = 100  # Ультра-маленькие части (100 слов)
         # Если принудительное мелкое разбиение
-        if force_small:
-            max_words = 300  # Очень маленькие части для проблемного контента
+        elif force_small:
+            max_words = 200  # Очень маленькие части для проблемного контента
         
         paragraphs = text.split('\n\n')
         parts = []
@@ -1132,14 +1152,22 @@ class TranslatorService:
                     current_words = 0
                 
                 # Разбиваем большой абзац на предложения
-                if '。' in paragraph:  # Китайский
-                    sentences = paragraph.split('。')
-                    separator = '。'
+                import re
+                if any('\u4e00' <= c <= '\u9fff' for c in paragraph):  # Китайский текст
+                    # Разбиваем по китайским знакам препинания
+                    sentences_raw = re.split(r'([。！？；])', paragraph)
+                    sentences = []
+                    for i in range(0, len(sentences_raw)-1, 2):
+                        if i+1 < len(sentences_raw):
+                            sentences.append(sentences_raw[i] + sentences_raw[i+1])
+                        else:
+                            sentences.append(sentences_raw[i])
+                    separator = ''  # Для китайского не нужен разделитель, знаки уже включены
                 elif '. ' in paragraph:  # Английский
-                    sentences = paragraph.split('. ')
-                    separator = '. '
+                    sentences = re.split(r'(?<=[.!?])\s+', paragraph)
+                    separator = ' '
                 else:
-                    # Разбиваем по словам
+                    # Разбиваем по словам как последний вариант
                     words = paragraph.split()
                     chunk_size = max_words // 2
                     sentences = [' '.join(words[i:i+chunk_size]) for i in range(0, len(words), chunk_size)]
@@ -1171,6 +1199,73 @@ class TranslatorService:
         
         if current_part:
             parts.append('\n\n'.join(current_part))
+        
+        # Если после всего разбиения получилась только 1 часть, а нужно мелкое разбиение
+        # принудительно разбиваем на куски
+        if len(parts) == 1 and (force_small or ultra_small):
+            single_part = parts[0]
+            words = single_part.split()
+            
+            LogService.log_info(f"Принудительное разбиение: текст {len(words)} слов, макс {max_words} слов на часть")
+            
+            # Проверяем, китайский ли текст
+            is_chinese = any('\u4e00' <= char <= '\u9fff' for char in single_part)
+            
+            if is_chinese:
+                # Для китайского текста разбиваем по предложениям
+                import re
+                # Разбиваем по китайским знакам препинания
+                sentences = re.split(r'([。！？；])', single_part)
+                
+                # Объединяем предложения с их знаками препинания
+                full_sentences = []
+                for i in range(0, len(sentences)-1, 2):
+                    if i+1 < len(sentences):
+                        full_sentences.append(sentences[i] + sentences[i+1])
+                    else:
+                        full_sentences.append(sentences[i])
+                
+                # Группируем предложения в части
+                parts = []
+                current_part = []
+                current_length = 0
+                target_length = max_words * 2  # Примерно 2 символа на "слово"
+                
+                for sentence in full_sentences:
+                    if current_length + len(sentence) > target_length and current_part:
+                        # Сохраняем текущую часть
+                        parts.append(''.join(current_part))
+                        current_part = [sentence]
+                        current_length = len(sentence)
+                    else:
+                        current_part.append(sentence)
+                        current_length += len(sentence)
+                
+                # Добавляем последнюю часть
+                if current_part:
+                    parts.append(''.join(current_part))
+                
+                # Если все еще только 1 часть, принудительно разбиваем по предложениям
+                if len(parts) == 1 and len(full_sentences) > 2:
+                    parts = []
+                    sentences_per_part = max(1, len(full_sentences) // 3)  # Минимум 3 части
+                    for i in range(0, len(full_sentences), sentences_per_part):
+                        chunk = ''.join(full_sentences[i:i+sentences_per_part])
+                        if chunk:
+                            parts.append(chunk)
+                
+                LogService.log_info(f"Китайский текст разбит на {len(parts)} частей по предложениям")
+            else:
+                # Принудительно разбиваем даже если меньше max_words (но больше 50)
+                if len(words) > 50:  # Изменено условие
+                    parts = []
+                    actual_chunk_size = min(max_words, len(words) // 2)  # Делим минимум на 2 части
+                    for i in range(0, len(words), actual_chunk_size):
+                        chunk = ' '.join(words[i:i+actual_chunk_size])
+                        if chunk:  # Только если часть не пустая
+                            parts.append(chunk)
+                
+                LogService.log_info(f"Текст принудительно разбит на {len(parts)} частей")
         
         return parts
 
