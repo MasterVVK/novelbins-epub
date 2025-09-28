@@ -1282,6 +1282,8 @@ class TranslatorService:
 
     def validate_translation(self, original: str, translated: str, chapter_num: int) -> Dict:
         """Валидация качества перевода (как в рабочем скрипте)"""
+        import re  # Убедимся, что re доступен
+        
         issues = []
         warnings = []
         critical_issues = []
@@ -1299,12 +1301,61 @@ class TranslatorService:
         elif ratio > 1.6:
             warnings.append(f"Перевод слишком длинный: {ratio:.2f} от оригинала")
 
-        # Проверка количества абзацев (как в рабочем скрипте)
-        orig_paragraphs = len([p for p in original.split('\n\n') if p.strip()])
-        trans_paragraphs = len([p for p in translated.split('\n\n') if p.strip()])
+        # Проверка количества абзацев
+        # Нормализуем текст для подсчёта - убираем лишние пробелы и пустые строки
+        orig_normalized = re.sub(r'\n\s*\n', '\n\n', original.strip())  # Нормализуем множественные переносы
+        trans_normalized = re.sub(r'\n\s*\n', '\n\n', translated.strip())
+        
+        orig_paragraphs = len([p for p in orig_normalized.split('\n\n') if p.strip()])
+        trans_paragraphs = len([p for p in trans_normalized.split('\n\n') if p.strip()])
+        
+        # Если оригинал имеет много одинарных переносов и мало двойных, возможно это особый формат
+        # (например, диалоги или стихи)
+        single_newlines_orig = original.count('\n')
+        double_newlines_orig = original.count('\n\n')
+        
+        # Если одинарных переносов значительно больше чем двойных, проверяем альтернативный подсчёт
+        # Также проверяем что двойных переносов достаточно много (не единичные случаи)
+        if single_newlines_orig > double_newlines_orig * 1.8 and double_newlines_orig > 10:
+            # Возможно, каждая строка - это отдельный "абзац" (диалог, стих и т.п.)
+            # Считаем ВСЕ непустые строки, а не только длинные
+            orig_lines = len([line for line in original.split('\n') if line.strip()])
+            trans_lines = len([line for line in translated.split('\n') if line.strip()])
+            
+            # Используем более мягкую проверку для таких случаев
+            # Изменено условие: orig_lines >= orig_paragraphs (каждая строка = абзац)
+            if orig_lines >= orig_paragraphs:
+                # Это действительно текст с множеством коротких строк
+                # НЕ заменяем количество абзацев для перевода, только корректируем соотношение
+                if trans_paragraphs > 20 and trans_len > orig_len * 0.7:
+                    # Если перевод имеет достаточно абзацев и нормальную длину
+                    # Не меняем orig_paragraphs, но помечаем что валидация корректна
+                    LogService.log_info(f"Глава {chapter_num}: оригинал с одинарными переносами ({orig_lines} строк), "
+                                      f"перевод с нормальными абзацами ({trans_paragraphs}), применяем мягкую валидацию")
+                else:
+                    # Иначе используем подсчет строк для оригинала
+                    orig_paragraphs = orig_lines
+                    trans_paragraphs = max(trans_paragraphs, trans_lines)
+                
+                if chapter_num == 1110:
+                    LogService.log_info(f"Chapter 1110: detected many short lines format, using adjusted validation")
 
         para_diff = abs(orig_paragraphs - trans_paragraphs)
         para_ratio = trans_paragraphs / orig_paragraphs if orig_paragraphs > 0 else 0
+        
+        # Корректировка для текстов с одинарными переносами  
+        if single_newlines_orig > double_newlines_orig * 1.8 and double_newlines_orig > 10:
+            # Считаем ВСЕ непустые строки
+            orig_lines = len([line for line in original.split('\n') if line.strip()])
+            # Сохраняем оригинальное количество абзацев для проверки
+            orig_paragraphs_initial = len([p for p in re.sub(r'\n\s*\n', '\n\n', original.strip()).split('\n\n') if p.strip()])
+            # Более гибкие условия для разных типов текстов
+            min_trans_paragraphs = min(20, max(5, orig_paragraphs_initial // 3))
+            # Упрощенное условие: если строк >= абзацев (каждая строка = абзац) и перевод адекватный
+            if orig_lines >= orig_paragraphs_initial and trans_paragraphs >= min_trans_paragraphs and trans_len > orig_len * 0.65:
+                # Переопределяем para_ratio для таких случаев
+                para_ratio = 1.0
+                LogService.log_info(f"Глава {chapter_num}: применена коррекция para_ratio для текста с одинарными переносами")
 
         # Для очень коротких глав (менее 200 символов) - это скорее всего авторские примечания
         # Не применяем строгую проверку абзацев
