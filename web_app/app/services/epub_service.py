@@ -482,11 +482,11 @@ class EPUBService:
         """Простая конвертация markdown в HTML"""
         if not text:
             return ""
-        
+
         # Заменяем переносы строк на параграфы
         paragraphs = text.split('\n\n')
         html_paragraphs = []
-        
+
         for p in paragraphs:
             p = p.strip()
             if p:
@@ -494,5 +494,391 @@ class EPUBService:
                 p = p.replace('**', '<strong>').replace('**', '</strong>')
                 p = p.replace('*', '<em>').replace('*', '</em>')
                 html_paragraphs.append(f'<p>{p}</p>')
-        
-        return '\n'.join(html_paragraphs) 
+
+        return '\n'.join(html_paragraphs)
+
+    def create_bilingual_epub(self, novel_id: int, chapters: List[Dict], config: Optional[EPUBConfig] = None) -> str:
+        """
+        Создание двуязычного EPUB файла с чередованием русского перевода и китайского оригинала
+
+        Args:
+            novel_id: ID новеллы
+            chapters: Список глав с данными
+            config: Конфигурация EPUB
+
+        Returns:
+            Путь к созданному EPUB файлу
+        """
+        if not epub:
+            raise ImportError("Модуль ebooklib не установлен")
+
+        from app.models import Novel
+        from app import db
+        from app.utils.text_alignment import BilingualTextAligner
+
+        # Получаем информацию о новелле
+        novel = Novel.query.get(novel_id)
+        if not novel:
+            raise ValueError(f"Новелла с ID {novel_id} не найдена")
+
+        # Создаём книгу
+        book = epub.EpubBook()
+
+        # Метаданные
+        timestamp = datetime.now().strftime("%Y%m%d")
+        book.set_identifier(f'{novel.title.lower().replace(" ", "-")}-bilingual-{timestamp}')
+        book.set_title(f"{novel.title} (双语版 / Bilingual)")
+        book.set_language('ru')
+        book.add_author(novel.author or 'Неизвестный автор')
+
+        # Добавляем описание
+        book.add_metadata('DC', 'description',
+            f'Двуязычное издание романа "{novel.title}" с чередованием русского перевода и китайского оригинала.')
+
+        # CSS стили для двуязычного формата
+        style = self._get_bilingual_css_styles()
+
+        # Добавляем CSS
+        nav_css = epub.EpubItem(
+            uid="style_nav",
+            file_name="style/nav.css",
+            media_type="text/css",
+            content=style
+        )
+        book.add_item(nav_css)
+
+        # Создаём титульную страницу
+        title_page = self._create_bilingual_title_page(novel)
+        book.add_item(title_page)
+
+        # Создаём страницу с информацией о формате
+        info_page = self._create_bilingual_info_page()
+        book.add_item(info_page)
+
+        # Создаём оглавление
+        toc_page = self._create_bilingual_toc_page(chapters)
+        book.add_item(toc_page)
+
+        # Список для навигации
+        toc_list = []
+        spine_list = ['nav', title_page, info_page, toc_page]
+
+        # Добавляем главы
+        for chapter in chapters:
+            ch = self._create_bilingual_chapter_page(chapter, nav_css, novel_id)
+            book.add_item(ch)
+            spine_list.append(ch)
+            toc_list.append(ch)
+
+        # Настройка навигации
+        toc_sections = [
+            epub.Link('title.xhtml', 'Титульная страница', 'title'),
+            epub.Link('info.xhtml', 'О формате', 'info'),
+            epub.Link('toc.xhtml', 'Оглавление', 'toc'),
+            (epub.Section('Главы'), toc_list[:len(chapters)])
+        ]
+
+        book.toc = tuple(toc_sections)
+
+        # Добавляем NCX и Nav файлы
+        book.add_item(epub.EpubNcx())
+        book.add_item(epub.EpubNav())
+
+        # spine
+        book.spine = spine_list
+
+        # Определяем путь для сохранения
+        chapters_range = f"{chapters[0]['number']}-{chapters[-1]['number']}"
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        filename = f"{novel.title.replace(' ', '_')}_bilingual_{chapters_range}_{timestamp}.epub"
+        epub_path = self.epub_dir / filename
+
+        # Сохраняем EPUB
+        epub.write_epub(str(epub_path), book, {})
+
+        return str(epub_path)
+
+    def _get_bilingual_css_styles(self) -> str:
+        """CSS стили для двуязычного EPUB"""
+        return """
+        @namespace epub "http://www.idpf.org/2007/ops";
+
+        body {
+            font-family: "Noto Sans", "Source Han Sans", "Arial", sans-serif;
+            font-size: 1.1em;
+            line-height: 1.8;
+            margin: 2em;
+            text-align: left;
+        }
+
+        h1 {
+            font-size: 1.8em;
+            text-align: center;
+            margin-bottom: 2em;
+            color: #2c3e50;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 0.5em;
+        }
+
+        h2 {
+            font-size: 1.4em;
+            text-align: center;
+            margin: 1.5em 0;
+            color: #34495e;
+        }
+
+        .russian-sentence {
+            font-family: "Times New Roman", "Georgia", serif;
+            font-size: 1.1em;
+            line-height: 1.6;
+            margin: 0.8em 0;
+            text-indent: 1.5em;
+            color: #2c3e50;
+        }
+
+        .chinese-sentence {
+            font-family: "Noto Serif CJK SC", "Source Han Serif SC", "SimSun", serif;
+            font-size: 1.05em;
+            line-height: 1.8;
+            margin: 0.5em 0 1.2em 0;
+            text-indent: 2em;
+            color: #555;
+            background-color: #f8f9fa;
+            padding: 0.3em 0.5em;
+            border-left: 3px solid #e0e0e0;
+        }
+
+        .chapter-title {
+            font-size: 1.3em;
+            font-weight: bold;
+            text-align: center;
+            margin: 2em 0 1em 0;
+            color: #2c3e50;
+        }
+
+        .toc-item {
+            margin: 0.5em 0;
+            text-indent: 0;
+        }
+
+        .toc-chapter {
+            font-weight: bold;
+        }
+
+        .info-box {
+            background-color: #e8f5e8;
+            padding: 1em;
+            margin: 1em 0;
+            border-radius: 5px;
+            border-left: 4px solid #27ae60;
+        }
+
+        .parallel-row {
+            display: flex;
+            margin: 1em 0;
+        }
+
+        .russian-column {
+            flex: 1;
+            padding-right: 1em;
+            border-right: 1px solid #ddd;
+        }
+
+        .chinese-column {
+            flex: 1;
+            padding-left: 1em;
+            font-family: "Noto Serif CJK SC", "Source Han Serif SC", "SimSun", serif;
+        }
+        """
+
+    def _create_bilingual_title_page(self, novel) -> epub.EpubHtml:
+        """Создание титульной страницы для двуязычного EPUB"""
+        title_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>{novel.title}</title>
+            <link rel="stylesheet" type="text/css" href="style/nav.css"/>
+        </head>
+        <body>
+            <h1>{novel.title}</h1>
+            <h2 style="text-align: center; font-size: 1.1em; font-weight: normal; margin-top: -1em;">
+                双语版 / Bilingual Edition
+            </h2>
+            <p style="text-align: center; font-size: 1.2em; margin: 2em 0;">
+                Автор: {novel.author or 'Неизвестный автор'}
+            </p>
+            <p style="text-align: center; margin: 2em 0;">
+                Русский перевод + китайский оригинал<br>
+                Russian Translation + Chinese Original<br>
+                Создано: {datetime.now().strftime('%d.%m.%Y')}
+            </p>
+            <div style="text-align: center; margin: 4em 0;">
+                <p style="font-size: 0.9em; color: #7f8c8d;">
+                    Этот EPUB файл был автоматически сгенерирован<br>
+                    системой перевода и редактирования<br>
+                    для удобного изучения китайского языка
+                </p>
+            </div>
+        </body>
+        </html>
+        """
+
+        title_page = epub.EpubHtml(
+            title='Титульная страница',
+            file_name='title.xhtml',
+            content=title_content
+        )
+
+        return title_page
+
+    def _create_bilingual_info_page(self) -> epub.EpubHtml:
+        """Создание страницы с информацией о двуязычном формате"""
+        content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>О формате</title>
+            <link rel="stylesheet" type="text/css" href="style/nav.css"/>
+        </head>
+        <body>
+            <h1>О двуязычном формате</h1>
+            <div class="info-box">
+                <h3>Как читать эту книгу</h3>
+                <p>Эта книга представлена в двуязычном формате для изучения китайского языка:</p>
+                <ul>
+                    <li><strong>Русский перевод</strong> - отредактированный литературный перевод</li>
+                    <li><strong>中文原文</strong> - оригинальный китайский текст</li>
+                </ul>
+
+                <h3>Формат чередования</h3>
+                <p>Предложения чередуются: сначала русский перевод, затем китайский оригинал.</p>
+                <p>Это позволяет:</p>
+                <ul>
+                    <li>Читать и понимать сюжет на русском языке</li>
+                    <li>Сразу видеть оригинальный текст на китайском</li>
+                    <li>Пассивно запоминать иероглифы в контексте</li>
+                    <li>Постепенно привыкать к структуре китайских предложений</li>
+                </ul>
+
+                <h3>Рекомендации по чтению</h3>
+                <p>Для эффективного изучения языка рекомендуется:</p>
+                <ul>
+                    <li>Сначала прочитать русский перевод</li>
+                    <li>Затем посмотреть на китайский оригинал</li>
+                    <li>Попытаться найти знакомые иероглифы</li>
+                    <li>Не зацикливаться на непонятных словах - продолжайте читать</li>
+                </ul>
+
+                <p style="margin-top: 2em; font-style: italic; color: #666;">
+                    Приятного чтения и успехов в изучении китайского языка! 加油！
+                </p>
+            </div>
+        </body>
+        </html>
+        """
+
+        info_page = epub.EpubHtml(
+            title='О формате',
+            file_name='info.xhtml',
+            content=content
+        )
+
+        return info_page
+
+    def _create_bilingual_toc_page(self, chapters: List[Dict]) -> epub.EpubHtml:
+        """Создание оглавления для двуязычного EPUB"""
+        toc_items = []
+        for ch in chapters:
+            toc_items.append(
+                f'<div class="toc-item toc-chapter">'
+                f'<a href="chapter_{ch["number"]:03d}.xhtml">Глава {ch["number"]}: {ch["title"]}</a>'
+                f'</div>'
+            )
+
+        content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Оглавление</title>
+            <link rel="stylesheet" type="text/css" href="style/nav.css"/>
+        </head>
+        <body>
+            <h1>Оглавление / 目录</h1>
+            {''.join(toc_items)}
+        </body>
+        </html>
+        """
+
+        toc_page = epub.EpubHtml(
+            title='Оглавление',
+            file_name='toc.xhtml',
+            content=content
+        )
+
+        return toc_page
+
+    def _create_bilingual_chapter_page(self, chapter: Dict, nav_css: epub.EpubItem, novel_id: int) -> epub.EpubHtml:
+        """Создание страницы главы с двуязычным содержимым"""
+        from app.utils.text_alignment import BilingualTextAligner
+        from app.models import Chapter
+        from app import db
+
+        # Получаем полный объект главы из базы данных (по novel_id И chapter_number!)
+        db_chapter = Chapter.query.filter_by(
+            novel_id=novel_id,
+            chapter_number=chapter['number']
+        ).first()
+
+        logger.info(f"📖 Создание двуязычной главы {chapter['number']}: novel_id={novel_id}")
+
+        if not db_chapter:
+            logger.warning(f"⚠️  Глава {chapter['number']} не найдена в БД для novel_id={novel_id}")
+            content_html = f'<p class="russian-sentence">{chapter["content"]}</p>'
+        elif not db_chapter.original_text:
+            logger.warning(f"⚠️  Глава {chapter['number']}: нет оригинального текста (original_text пуст)")
+            logger.info(f"   Заголовок главы: {db_chapter.original_title}")
+            content_html = f'<p class="russian-sentence">{chapter["content"]}</p>'
+        else:
+            # Выравниваем русский перевод и китайский оригинал
+            russian_text = chapter['content']
+            chinese_text = db_chapter.original_text
+
+            logger.info(f"✅ Глава {chapter['number']}: найден оригинал ({len(chinese_text)} символов)")
+            logger.info(f"   Заголовок: {db_chapter.original_title}")
+            logger.info(f"   Перевод: {len(russian_text)} символов")
+
+            # Разбиваем на предложения и выравниваем
+            aligned_pairs = BilingualTextAligner.align_sentences(russian_text, chinese_text)
+            logger.info(f"   Выровнено {len(aligned_pairs)} пар предложений")
+
+            # Форматируем для EPUB (чередование)
+            content_html = BilingualTextAligner.format_for_epub(
+                aligned_pairs,
+                mode='sentence',
+                style='alternating'
+            )
+
+        chapter_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Глава {chapter['number']}: {chapter['title']}</title>
+            <link rel="stylesheet" type="text/css" href="style/nav.css"/>
+        </head>
+        <body>
+            <h2 class="chapter-title">Глава {chapter['number']}: {chapter['title']}</h2>
+            {content_html}
+        </body>
+        </html>
+        """
+
+        chapter_page = epub.EpubHtml(
+            title=f"Глава {chapter['number']}: {chapter['title']}",
+            file_name=f'chapter_{chapter["number"]:03d}.xhtml',
+            content=chapter_content
+        )
+        chapter_page.add_item(nav_css)
+
+        return chapter_page 

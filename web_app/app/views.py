@@ -952,28 +952,115 @@ def download_epub(novel_id):
     """Скачивание созданного EPUB файла"""
     from flask import send_file
     from pathlib import Path
-    
+
     # Ищем последнюю завершенную задачу генерации EPUB
     task = Task.query.filter_by(
         novel_id=novel_id,
         task_type='generate_epub',
         status='completed'
     ).order_by(Task.updated_at.desc()).first()
-    
+
     if not task or not task.result:
         flash('EPUB файл не найден. Сначала создайте EPUB.', 'error')
         return redirect(url_for('main.novel_detail', novel_id=novel_id))
-    
+
     epub_path = Path(task.result)  # task.result теперь содержит путь как строку
-    
+
     if not epub_path.exists():
         flash('EPUB файл не найден на диске.', 'error')
         return redirect(url_for('main.novel_detail', novel_id=novel_id))
-    
+
     # Получаем название новеллы для имени файла
     novel = Novel.query.get(novel_id)
     filename = f"{novel.title.replace(' ', '_')}.epub" if novel else epub_path.name
-    
+
+    return send_file(
+        epub_path,
+        as_attachment=True,
+        download_name=filename,
+        mimetype='application/epub+zip'
+    )
+
+
+@main_bp.route('/novels/<int:novel_id>/epub-bilingual', methods=['POST'])
+def generate_bilingual_epub(novel_id):
+    """Генерация двуязычного EPUB с чередованием русского перевода и китайского оригинала"""
+    from app.services.epub_service import EPUBService
+
+    novel = Novel.query.get_or_404(novel_id)
+
+    # Создаем задачу генерации двуязычного EPUB
+    task = Task(
+        novel_id=novel_id,
+        task_type='generate_bilingual_epub',
+        priority=2,
+        status='running'
+    )
+    db.session.add(task)
+    db.session.commit()
+
+    try:
+        # Выполняем синхронно
+        epub_service = EPUBService(current_app)
+
+        # Получаем главы для EPUB
+        chapters = epub_service.get_edited_chapters_from_db(novel_id)
+
+        if not chapters:
+            task.status = 'failed'
+            task.error_message = 'Нет переведенных глав для создания EPUB'
+            db.session.commit()
+            flash('Ошибка: нет переведенных глав для создания EPUB', 'error')
+            return redirect(url_for('main.novel_detail', novel_id=novel_id))
+
+        # Создаем двуязычный EPUB
+        epub_path = epub_service.create_bilingual_epub(novel_id, chapters)
+
+        # Обновляем статус задачи
+        task.status = 'completed'
+        task.result = epub_path  # Сохраняем путь как строку
+        db.session.commit()
+
+        logger.info(f"Двуязычный EPUB создан успешно: {epub_path}")
+        flash('Двуязычный EPUB файл успешно создан!', 'success')
+
+    except Exception as e:
+        logger.error(f"Ошибка при создании двуязычного EPUB: {e}")
+        task.status = 'failed'
+        task.error_message = str(e)
+        db.session.commit()
+        flash(f'Ошибка при создании двуязычного EPUB: {str(e)}', 'error')
+
+    return redirect(url_for('main.novel_detail', novel_id=novel_id))
+
+
+@main_bp.route('/novels/<int:novel_id>/epub-bilingual/download')
+def download_bilingual_epub(novel_id):
+    """Скачивание созданного двуязычного EPUB файла"""
+    from flask import send_file
+    from pathlib import Path
+
+    # Ищем последнюю завершенную задачу генерации двуязычного EPUB
+    task = Task.query.filter_by(
+        novel_id=novel_id,
+        task_type='generate_bilingual_epub',
+        status='completed'
+    ).order_by(Task.updated_at.desc()).first()
+
+    if not task or not task.result:
+        flash('Двуязычный EPUB файл не найден. Сначала создайте двуязычный EPUB.', 'error')
+        return redirect(url_for('main.novel_detail', novel_id=novel_id))
+
+    epub_path = Path(task.result)
+
+    if not epub_path.exists():
+        flash('Двуязычный EPUB файл не найден на диске.', 'error')
+        return redirect(url_for('main.novel_detail', novel_id=novel_id))
+
+    # Получаем название новеллы для имени файла
+    novel = Novel.query.get(novel_id)
+    filename = f"{novel.title.replace(' ', '_')}_bilingual.epub" if novel else epub_path.name
+
     return send_file(
         epub_path,
         as_attachment=True,

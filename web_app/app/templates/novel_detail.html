@@ -151,12 +151,23 @@
                     <div class="col-md-3 mb-2">
                         <form method="POST" action="{{ url_for('main.generate_epub', novel_id=novel.id) }}" style="display: inline;">
                             <button type="submit" class="btn btn-outline-info w-100">
-                                <i class="bi bi-file-earmark-text"></i> Создать EPUB
+                                <i class="bi bi-file-earmark-text"></i> EPUB
                             </button>
                         </form>
                     </div>
                 </div>
-                
+
+                <!-- Вторая строка: дополнительные опции EPUB -->
+                <div class="row mt-2">
+                    <div class="col-md-12 mb-2">
+                        <form method="POST" action="{{ url_for('main.generate_bilingual_epub', novel_id=novel.id) }}" style="display: inline;">
+                            <button type="submit" class="btn btn-outline-secondary w-100">
+                                <i class="bi bi-book"></i> Двуязычный EPUB (RU + 中文)
+                            </button>
+                        </form>
+                    </div>
+                </div>
+
                 <!-- EPUB статус -->
                 {% set epub_tasks = tasks|selectattr('task_type', 'equalto', 'generate_epub')|list %}
                 {% set epub_task = epub_tasks|sort(attribute='updated_at', reverse=true)|first if epub_tasks else none %}
@@ -177,6 +188,34 @@
                             </div>
                             {% if epub_task.status == 'completed' %}
                             <a href="{{ url_for('main.download_epub', novel_id=novel.id) }}" class="btn btn-success btn-sm">
+                                <i class="bi bi-download"></i> Скачать
+                            </a>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
+
+                <!-- Двуязычный EPUB статус -->
+                {% set bilingual_epub_tasks = tasks|selectattr('task_type', 'equalto', 'generate_bilingual_epub')|list %}
+                {% set bilingual_epub_task = bilingual_epub_tasks|sort(attribute='updated_at', reverse=true)|first if bilingual_epub_tasks else none %}
+                {% if bilingual_epub_task %}
+                <div class="mt-3">
+                    <div class="alert alert-{{ 'success' if bilingual_epub_task.status == 'completed' else 'warning' if bilingual_epub_task.status == 'running' else 'danger' }}">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <i class="bi bi-book"></i>
+                                <strong>Двуязычный EPUB:</strong>
+                                {% if bilingual_epub_task.status == 'completed' %}
+                                    Готов к скачиванию
+                                {% elif bilingual_epub_task.status == 'running' %}
+                                    Создается...
+                                {% else %}
+                                    Ошибка: {{ bilingual_epub_task.error_message or 'Неизвестная ошибка' }}
+                                {% endif %}
+                            </div>
+                            {% if bilingual_epub_task.status == 'completed' %}
+                            <a href="{{ url_for('main.download_bilingual_epub', novel_id=novel.id) }}" class="btn btn-success btn-sm">
                                 <i class="bi bi-download"></i> Скачать
                             </a>
                             {% endif %}
