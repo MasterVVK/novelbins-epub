@@ -13,7 +13,16 @@ from config import config
 db = SQLAlchemy()
 migrate = Migrate()
 socketio = SocketIO()
-celery = Celery(__name__)
+
+# Получаем конфигурацию для Celery из config
+_config_name = os.environ.get('FLASK_ENV', 'development')
+_app_config = config[_config_name]
+# Инициализируем Celery с правильным broker/backend сразу
+celery = Celery(
+    __name__,
+    broker=_app_config.CELERY_BROKER_URL,
+    backend=_app_config.CELERY_RESULT_BACKEND
+)
 
 
 def setup_logging(app):
@@ -71,8 +80,18 @@ def create_app(config_name=None):
     socketio.init_app(app, cors_allowed_origins="*")
     CORS(app)
 
-    # Настройка Celery
+    # Настройка Celery - ВАЖНО: нужно установить до регистрации задач
+    celery.conf.broker_url = app.config['CELERY_BROKER_URL']
+    celery.conf.result_backend = app.config['CELERY_RESULT_BACKEND']
+    # Также обновляем остальную конфигурацию
     celery.conf.update(app.config)
+    # Принудительно переподключаемся к новому broker
+    celery.set_current()
+    celery.set_default()
+
+    # ВАЖНО: Импортируем задачи чтобы Celery их зарегистрировал
+    with app.app_context():
+        from . import celery_tasks
 
     # Регистрация blueprints
     from .api import api_bp

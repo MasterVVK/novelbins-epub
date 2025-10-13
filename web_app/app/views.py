@@ -560,59 +560,59 @@ def novel_detail(novel_id):
 
 @main_bp.route('/novels/<int:novel_id>/parse', methods=['POST'])
 def start_parsing(novel_id):
-    """Запуск парсинга новеллы"""
+    """Запуск парсинга новеллы через Celery"""
     print(f"🚀 Запрос на парсинг новеллы {novel_id}")
-    
+
     novel = Novel.query.get_or_404(novel_id)
     print(f"📖 Найдена новелла: {novel.title}")
 
-    # Создаем задачу парсинга
-    task = Task(
-        novel_id=novel_id,
-        task_type='parse',
-        priority=1,
-        status='running',
-        progress=0
-    )
-    db.session.add(task)
-    db.session.commit()
-    print(f"✅ Задача создана: {task.id}")
+    # Проверяем, не запущен ли уже парсинг
+    if novel.parsing_task_id:
+        from celery.result import AsyncResult
+        from app import celery
+        task = AsyncResult(novel.parsing_task_id, app=celery)
+        if task.state in ['PENDING', 'STARTED', 'PROGRESS']:
+            flash('Парсинг уже выполняется для этой новеллы', 'warning')
+            return redirect(url_for('main.novel_detail', novel_id=novel_id))
 
-    # Запускаем парсинг в отдельном потоке
-    def parse_novel():
-        # Создаем контекст приложения для фонового потока
-        app = create_app()
-        with app.app_context():
-            try:
-                app.logger.info(f"🔄 Запуск парсинга для новеллы {novel_id}")
-                parser = WebParserService()
-                app.logger.info(f"🔧 Парсер создан, начинаем парсинг...")
-                success = parser.parse_novel(novel_id, task_id=task.id)
-                app.logger.info(f"✅ Парсинг завершен: {'успешно' if success else 'с ошибкой'}")
-                
-                # Обновляем статус задачи (на случай, если парсер не обновил)
-                if success:
-                    task.status = 'completed'
-                    task.progress = 100
-                else:
-                    task.status = 'failed'
-                
-                db.session.commit()
-                app.logger.info(f"📊 Статус задачи обновлен: {task.status}")
-                
-            except Exception as e:
-                app.logger.error(f"❌ Ошибка при парсинге: {e}")
-                task.status = 'failed'
-                task.error_message = str(e)
-                db.session.commit()
+    # Получаем параметры из конфига новеллы
+    start_chapter = None
+    max_chapters = None
 
-    # Запускаем парсинг в фоновом режиме
-    import threading
-    thread = threading.Thread(target=parse_novel)
-    thread.daemon = True
-    thread.start()
-    
-    flash('Парсинг запущен в фоновом режиме. Проверьте статус в разделе "Задачи".', 'info')
+    if novel.config:
+        start_chapter = novel.config.get('start_chapter')
+        # Проверяем опцию "все главы"
+        if novel.config.get('all_chapters'):
+            max_chapters = None  # None = все главы
+        else:
+            max_chapters = novel.config.get('max_chapters')
+
+    # Запускаем Celery задачу в очереди czbooks_queue
+    try:
+        from app.celery_tasks import parse_novel_chapters_task
+
+        task = parse_novel_chapters_task.apply_async(
+            kwargs={
+                'novel_id': novel_id,
+                'start_chapter': start_chapter,
+                'max_chapters': max_chapters,
+                'use_xvfb': True
+            },
+            queue='czbooks_queue'
+        )
+
+        # Сохраняем task_id
+        novel.parsing_task_id = task.id
+        novel.status = 'parsing'
+        db.session.commit()
+
+        print(f"✅ Celery задача создана: {task.id}")
+        flash('Парсинг запущен через Celery. Проверьте статус в разделе "Задачи".', 'info')
+
+    except Exception as e:
+        print(f"❌ Ошибка запуска Celery задачи: {e}")
+        flash(f'Ошибка запуска парсинга: {str(e)}. Убедитесь, что Celery worker запущен.', 'error')
+
     return redirect(url_for('main.novel_detail', novel_id=novel_id))
 
 
@@ -1678,4 +1678,10 @@ def emit_task_update(task_id, progress, status, message=None):
         'progress': progress,
         'status': status,
         'message': message
-    }) 
+    })
+
+
+@main_bp.route('/download-extension')
+def download_extension():
+    """Страница скачивания Browser Extension"""
+    return render_template('download_extension.html') 

@@ -5,6 +5,10 @@
 import sys
 import os
 
+# ВАЖНО: Устанавливаем переменные окружения ДО импорта app
+os.environ.setdefault('CELERY_BROKER_URL', 'redis://localhost:6379/1')
+os.environ.setdefault('CELERY_RESULT_BACKEND', 'redis://localhost:6379/1')
+
 # Добавляем текущую директорию в путь для импорта
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 

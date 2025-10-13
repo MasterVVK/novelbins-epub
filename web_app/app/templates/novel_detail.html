@@ -128,11 +128,19 @@
             <div class="card-body">
                 <div class="row">
                     <div class="col-md-3 mb-2">
+                        {% if novel.parsing_task_id %}
+                        <!-- Кнопка отмены парсинга -->
+                        <button type="button" onclick="cancelParsing({{ novel.id }})" class="btn btn-outline-danger w-100">
+                            <i class="bi bi-stop-circle"></i> Отменить парсинг
+                        </button>
+                        {% else %}
+                        <!-- Кнопка запуска парсинга -->
                         <form method="POST" action="{{ url_for('main.start_parsing', novel_id=novel.id) }}" style="display: inline;">
                             <button type="submit" class="btn btn-outline-primary w-100">
                                 <i class="bi bi-download"></i> Парсинг
                             </button>
                         </form>
+                        {% endif %}
                     </div>
                     <div class="col-md-3 mb-2">
                         <form method="POST" action="{{ url_for('main.start_translation', novel_id=novel.id) }}" style="display: inline;">
@@ -381,6 +389,16 @@
                     <i class="bi bi-box-arrow-up-right"></i> Открыть источник
                 </a>
                 {% endif %}
+
+                {% if novel.source_type == 'czbooks.net' %}
+                <button type="button" class="btn btn-outline-warning w-100 mb-2" onclick="openCookieExtractor()">
+                    <i class="bi bi-key"></i> Получить Cloudflare Cookies
+                </button>
+                <small class="text-muted d-block mb-2">
+                    <i class="bi bi-info-circle"></i> Используйте Browser Extension для обхода Cloudflare
+                </small>
+                {% endif %}
+
                 <a href="{{ url_for('main.novel_glossary', novel_id=novel.id) }}" class="btn btn-outline-info w-100 mb-2">
                     <i class="bi bi-translate"></i> Глоссарий
                 </a>
@@ -481,9 +499,47 @@ function changePerPage(perPage) {
     const urlParams = new URLSearchParams(window.location.search);
     urlParams.set('per_page', perPage);
     urlParams.set('page', '1'); // Всегда переходим на первую страницу при изменении количества
-    
+
     // Перенаправляем на новую страницу
     window.location.href = window.location.pathname + '?' + urlParams.toString();
+}
+
+function openCookieExtractor() {
+    alert('Инструкция по использованию Browser Extension:\n\n' +
+          '1. Убедитесь что Browser Extension установлен\n' +
+          '2. Кликните на иконку расширения в панели Chrome\n' +
+          '3. Нажмите кнопку "Автоматически получить Cookies"\n' +
+          '4. Подождите ~10 секунд\n' +
+          '5. Cookies будут автоматически отправлены в Web App\n\n' +
+          'Если расширение не установлен:\n' +
+          'Перейдите на страницу скачивания: {{ url_for("main.download_extension") }}');
+}
+
+// Отмена парсинга через API
+async function cancelParsing(novelId) {
+    if (!confirm('Вы уверены, что хотите отменить парсинг?')) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/novels/${novelId}/parse/cancel`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            alert('✅ Парсинг успешно отменён');
+            location.reload(); // Перезагружаем страницу
+        } else {
+            alert('❌ Ошибка: ' + (data.error || 'Неизвестная ошибка'));
+        }
+    } catch (error) {
+        alert('❌ Ошибка при отмене парсинга: ' + error.message);
+    }
 }
 </script>
 {% endblock %} 

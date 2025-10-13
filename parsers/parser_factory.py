@@ -10,6 +10,7 @@ import re
 from .base.base_parser import BaseParser
 from .sources.qidian_parser import QidianParser
 from .sources.epub_parser import EPUBParser
+from .sources.czbooks_parser import CZBooksParser
 
 
 class ParserFactory:
@@ -21,6 +22,7 @@ class ParserFactory:
     _parsers: Dict[str, Type[BaseParser]] = {
         'qidian': QidianParser,
         'epub': EPUBParser,
+        'czbooks': CZBooksParser,
     }
     
     # Паттерны URL для автоматического определения парсера
@@ -28,12 +30,13 @@ class ParserFactory:
         r'qidian\.com': 'qidian',
         r'm\.qidian\.com': 'qidian',
         r'book\.qidian\.com': 'qidian',
+        r'czbooks\.net': 'czbooks',
         r'\.epub(?:/.*)?$': 'epub',  # Файлы EPUB (включая пути с дополнительными слешами)
         r'epub_files': 'epub',  # Директория с EPUB файлами
     }
     
     @classmethod
-    def create_parser(cls, source: str, auth_cookies: str = None, socks_proxy: str = None, epub_path: str = None, max_chapters: int = None, start_chapter: int = None) -> BaseParser:
+    def create_parser(cls, source: str, auth_cookies: str = None, socks_proxy: str = None, epub_path: str = None, max_chapters: int = None, start_chapter: int = None, headless: bool = True) -> BaseParser:
         """
         Создать парсер по названию источника
         
@@ -65,15 +68,19 @@ class ParserFactory:
                 raise ValueError("Для EPUB парсера необходимо указать путь к файлу (epub_path)")
             return parser_class(epub_path=epub_path, max_chapters=max_chapters, start_chapter=start_chapter)
         
-        # Проверяем поддерживает ли парсер SOCKS прокси
+        # Проверяем поддерживает ли парсер SOCKS прокси и headless
         try:
-            return parser_class(auth_cookies=auth_cookies, socks_proxy=socks_proxy)
+            return parser_class(auth_cookies=auth_cookies, socks_proxy=socks_proxy, headless=headless)
         except TypeError:
-            # Fallback для парсеров без поддержки прокси
-            return parser_class(auth_cookies=auth_cookies)
+            # Fallback для парсеров без поддержки headless
+            try:
+                return parser_class(auth_cookies=auth_cookies, socks_proxy=socks_proxy)
+            except TypeError:
+                # Fallback для парсеров без поддержки прокси
+                return parser_class(auth_cookies=auth_cookies)
     
     @classmethod
-    def create_parser_from_url(cls, url: str, auth_cookies: str = None, socks_proxy: str = None) -> BaseParser:
+    def create_parser_from_url(cls, url: str, auth_cookies: str = None, socks_proxy: str = None, headless: bool = False) -> BaseParser:
         """
         Создать парсер на основе URL
         
@@ -89,11 +96,11 @@ class ParserFactory:
             ValueError: Если не удается определить тип парсера по URL
         """
         source = cls.detect_source_from_url(url)
-        
+
         if not source:
             raise ValueError(f"Не удается определить источник по URL: {url}")
-        
-        return cls.create_parser(source, auth_cookies=auth_cookies, socks_proxy=socks_proxy)
+
+        return cls.create_parser(source, auth_cookies=auth_cookies, socks_proxy=socks_proxy, headless=headless)
     
     @classmethod
     def detect_source_from_url(cls, url: str) -> Optional[str]:
@@ -188,9 +195,9 @@ def create_parser(source: str, auth_cookies: str = None, socks_proxy: str = None
     return ParserFactory.create_parser(source, auth_cookies=auth_cookies, socks_proxy=socks_proxy, epub_path=epub_path, max_chapters=max_chapters, start_chapter=start_chapter)
 
 
-def create_parser_from_url(url: str, auth_cookies: str = None, socks_proxy: str = None) -> BaseParser:
+def create_parser_from_url(url: str, auth_cookies: str = None, socks_proxy: str = None, headless: bool = False) -> BaseParser:
     """Создать парсер на основе URL"""
-    return ParserFactory.create_parser_from_url(url, auth_cookies=auth_cookies, socks_proxy=socks_proxy)
+    return ParserFactory.create_parser_from_url(url, auth_cookies=auth_cookies, socks_proxy=socks_proxy, headless=headless)
 
 
 def detect_source(url: str) -> Optional[str]:

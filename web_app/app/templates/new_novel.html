@@ -169,12 +169,87 @@
                     </div>
                     
                     <hr>
-                    <h6 class="mb-3">🔐 Авторизация (опционально)</h6>
-                    
-                    <div class="alert alert-info">
+                    <h6 class="mb-3">🔐 Авторизация / Cloudflare (опционально)</h6>
+
+                    <div class="alert alert-warning">
+                        <i class="bi bi-exclamation-triangle"></i>
+                        <strong>Для CZBooks и других защищенных сайтов:</strong>
+                        Cloudflare блокирует автоматический парсинг. Получите cookies вручную (10 секунд).
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="auth_cookies" class="form-label">
+                            Cookies для обхода Cloudflare
+                            <button type="button" class="btn btn-sm btn-outline-info" id="show-cookies-help">
+                                <i class="bi bi-question-circle"></i> Как получить?
+                            </button>
+                        </label>
+                        <textarea class="form-control font-monospace" id="auth_cookies" name="auth_cookies" rows="3"
+                                  placeholder="cf_clearance=xxx; __cf_bm=yyy; _cfuvid=zzz; ..."></textarea>
+                        <div class="form-text">
+                            Вставьте cookies из браузера для обхода защиты Cloudflare.
+                            <a href="#" id="open-czbooks-btn" style="display: none;">Открыть CZBooks</a>
+                        </div>
+                    </div>
+
+                    <!-- Инструкция по получению cookies -->
+                    <div id="cookies-help" class="card bg-light" style="display: none;">
+                        <div class="card-header">
+                            <h6 class="mb-0">📋 Как получить Cloudflare cookies за 10 секунд</h6>
+                        </div>
+                        <div class="card-body">
+                            <ol class="mb-0">
+                                <li class="mb-2">
+                                    <strong>Откройте сайт в обычном браузере</strong>
+                                    <br>
+                                    <a href="https://czbooks.net" target="_blank" class="btn btn-sm btn-primary mt-1">
+                                        <i class="bi bi-box-arrow-up-right"></i> Открыть CZBooks.net
+                                    </a>
+                                </li>
+                                <li class="mb-2">
+                                    <strong>Подождите ~5 секунд</strong> пока пройдет проверка Cloudflare
+                                    <br>
+                                    <small class="text-muted">Увидите "Just a moment..." затем страница загрузится</small>
+                                </li>
+                                <li class="mb-2">
+                                    <strong>Нажмите F12</strong> (или ПКМ → "Инспектировать")
+                                </li>
+                                <li class="mb-2">
+                                    <strong>Перейдите на вкладку "Application"</strong> (или "Приложение")
+                                    <br>
+                                    <small class="text-muted">Если не видите, нажмите >> в панели вкладок</small>
+                                </li>
+                                <li class="mb-2">
+                                    <strong>Слева выберите:</strong> Cookies → https://czbooks.net
+                                </li>
+                                <li class="mb-2">
+                                    <strong>Скопируйте cookies в формате:</strong>
+                                    <br>
+                                    <code class="d-block bg-white p-2 mt-1" style="font-size: 11px;">
+                                        cf_clearance=xxx; __cf_bm=yyy; _cfuvid=zzz
+                                    </code>
+                                    <small class="text-muted">Формат: name1=value1; name2=value2; ...</small>
+                                    <br>
+                                    <button type="button" class="btn btn-sm btn-outline-secondary mt-1" id="copy-format-btn">
+                                        <i class="bi bi-clipboard"></i> Копировать пример формата
+                                    </button>
+                                </li>
+                                <li>
+                                    <strong>Вставьте</strong> скопированные cookies в поле выше ☝️
+                                </li>
+                            </ol>
+                            <hr>
+                            <div class="alert alert-success alert-sm mb-0">
+                                <i class="bi bi-check-circle"></i>
+                                <strong>Готово!</strong> Cookies действительны ~24 часа.
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="alert alert-info mt-3">
                         <i class="bi bi-info-circle"></i>
-                        <strong>Для доступа к заблокированным главам:</strong> настройте авторизацию после создания новеллы.
-                        <br>VIP/платные главы требуют отдельных VIP cookies.
+                        <strong>Для других сайтов (Qidian, WebNovel):</strong> настройте авторизацию после создания новеллы.
+                        VIP/платные главы требуют отдельных VIP cookies.
                     </div>
                     
                     <hr>
@@ -469,6 +544,56 @@ document.addEventListener('DOMContentLoaded', function() {
             } finally {
                 previewEpubBtn.disabled = false;
                 previewEpubBtn.innerHTML = '<i class="bi bi-eye"></i> Предпросмотр';
+            }
+        });
+    }
+
+    // Показать/скрыть инструкцию по cookies
+    const showCookiesHelpBtn = document.getElementById('show-cookies-help');
+    const cookiesHelp = document.getElementById('cookies-help');
+
+    if (showCookiesHelpBtn && cookiesHelp) {
+        showCookiesHelpBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            if (cookiesHelp.style.display === 'none') {
+                cookiesHelp.style.display = 'block';
+                this.innerHTML = '<i class="bi bi-eye-slash"></i> Скрыть инструкцию';
+                this.classList.remove('btn-outline-info');
+                this.classList.add('btn-info');
+            } else {
+                cookiesHelp.style.display = 'none';
+                this.innerHTML = '<i class="bi bi-question-circle"></i> Как получить?';
+                this.classList.remove('btn-info');
+                this.classList.add('btn-outline-info');
+            }
+        });
+    }
+
+    // Копирование примера формата cookies
+    const copyFormatBtn = document.getElementById('copy-format-btn');
+    if (copyFormatBtn) {
+        copyFormatBtn.addEventListener('click', function() {
+            const format = 'name1=value1; name2=value2; name3=value3';
+            navigator.clipboard.writeText(format).then(() => {
+                const originalHTML = this.innerHTML;
+                this.innerHTML = '<i class="bi bi-check"></i> Скопировано!';
+                this.classList.remove('btn-outline-secondary');
+                this.classList.add('btn-success');
+                setTimeout(() => {
+                    this.innerHTML = originalHTML;
+                    this.classList.remove('btn-success');
+                    this.classList.add('btn-outline-secondary');
+                }, 2000);
+            });
+        });
+    }
+
+    // Автоматически показываем инструкцию если выбран czbooks
+    const sourceTypeSelect = document.getElementById('source_type');
+    if (sourceTypeSelect) {
+        sourceTypeSelect.addEventListener('change', function() {
+            if (this.value === 'czbooks' && cookiesHelp.style.display === 'none') {
+                showCookiesHelpBtn.click();
             }
         });
     }
