@@ -106,6 +106,11 @@
                             </a>
                         </li>
                         <li class="nav-item">
+                            <a class="nav-link {{ 'active' if request.endpoint == 'main.ai_models' }}" href="{{ url_for('main.ai_models') }}">
+                                <i class="bi bi-cpu"></i> AI Модели
+                            </a>
+                        </li>
+                        <li class="nav-item">
                             <a class="nav-link {{ 'active' if request.endpoint == 'main.tasks' }}" href="{{ url_for('main.tasks') }}">
                                 <i class="bi bi-list-task"></i> Задачи
                             </a>

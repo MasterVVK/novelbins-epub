@@ -1684,4 +1684,160 @@ def emit_task_update(task_id, progress, status, message=None):
 @main_bp.route('/download-extension')
 def download_extension():
     """Страница скачивания Browser Extension"""
-    return render_template('download_extension.html') 
+    return render_template('download_extension.html')
+
+
+# ==================== AI Models Management ====================
+
+@main_bp.route('/ai-models')
+def ai_models():
+    """Страница управления AI моделями"""
+    from app.services.ai_model_service import AIModelService
+
+    models = AIModelService.get_all_models(active_only=False)
+    return render_template('ai_models.html', models=models)
+
+
+@main_bp.route('/ai-models/new', methods=['GET', 'POST'])
+def new_ai_model():
+    """Создание новой AI модели"""
+    if request.method == 'POST':
+        from app.services.ai_model_service import AIModelService
+
+        try:
+            data = request.json
+            model = AIModelService.create_model(data)
+            return jsonify({'success': True, 'model_id': model.id})
+        except ValueError as e:
+            return jsonify({'success': False, 'message': str(e)}), 400
+        except Exception as e:
+            logger.error(f"Ошибка создания модели: {e}")
+            return jsonify({'success': False, 'message': 'Внутренняя ошибка сервера'}), 500
+
+    return render_template('new_ai_model.html')
+
+
+@main_bp.route('/ai-models/<int:model_id>/edit', methods=['GET', 'POST'])
+def edit_ai_model(model_id):
+    """Редактирование AI модели"""
+    from app.services.ai_model_service import AIModelService
+
+    model = AIModelService.get_model_by_id(model_id)
+    if not model:
+        flash('Модель не найдена', 'error')
+        return redirect(url_for('main.ai_models'))
+
+    if request.method == 'POST':
+        try:
+            data = request.json
+            updated_model = AIModelService.update_model(model_id, data)
+            return jsonify({'success': True, 'model_id': updated_model.id})
+        except ValueError as e:
+            return jsonify({'success': False, 'message': str(e)}), 400
+        except Exception as e:
+            logger.error(f"Ошибка обновления модели: {e}")
+            return jsonify({'success': False, 'message': 'Внутренняя ошибка сервера'}), 500
+
+    return render_template('edit_ai_model.html', model=model)
+
+
+@main_bp.route('/api/ai-models', methods=['POST'])
+def api_create_ai_model():
+    """API для создания AI модели"""
+    from app.services.ai_model_service import AIModelService
+
+    try:
+        data = request.json
+        model = AIModelService.create_model(data)
+        return jsonify({'success': True, 'model_id': model.id})
+    except ValueError as e:
+        return jsonify({'success': False, 'message': str(e)}), 400
+    except Exception as e:
+        logger.error(f"Ошибка создания модели: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@main_bp.route('/api/ai-models/<int:model_id>', methods=['DELETE'])
+def api_delete_ai_model(model_id):
+    """API для удаления AI модели"""
+    from app.services.ai_model_service import AIModelService
+
+    try:
+        success = AIModelService.delete_model(model_id)
+        if success:
+            return jsonify({'success': True})
+        else:
+            return jsonify({'success': False, 'message': 'Модель не найдена'}), 404
+    except ValueError as e:
+        return jsonify({'success': False, 'message': str(e)}), 400
+    except Exception as e:
+        logger.error(f"Ошибка удаления модели: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@main_bp.route('/api/ai-models/<int:model_id>', methods=['PUT'])
+def api_update_ai_model(model_id):
+    """API для обновления AI модели"""
+    from app.services.ai_model_service import AIModelService
+
+    try:
+        data = request.json
+        model = AIModelService.update_model(model_id, data)
+        return jsonify({'success': True, 'model_id': model.id})
+    except ValueError as e:
+        return jsonify({'success': False, 'message': str(e)}), 400
+    except Exception as e:
+        logger.error(f"Ошибка обновления модели: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@main_bp.route('/api/ai-models/<int:model_id>/test', methods=['POST'])
+def api_test_ai_model(model_id):
+    """API для тестирования AI модели"""
+    from app.services.ai_model_service import AIModelService
+    import asyncio
+
+    try:
+        # Запускаем асинхронную функцию в синхронном контексте
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        result = loop.run_until_complete(AIModelService.test_model_connection(model_id))
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"Ошибка тестирования модели: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@main_bp.route('/api/ai-models/<int:model_id>/set-default', methods=['POST'])
+def api_set_default_ai_model(model_id):
+    """API для установки модели по умолчанию"""
+    from app.services.ai_model_service import AIModelService
+
+    try:
+        model = AIModelService.set_default_model(model_id)
+        return jsonify({'success': True, 'model_id': model.id})
+    except ValueError as e:
+        return jsonify({'success': False, 'message': str(e)}), 400
+    except Exception as e:
+        logger.error(f"Ошибка установки модели по умолчанию: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@main_bp.route('/api/ollama/models', methods=['POST'])
+def api_fetch_ollama_models():
+    """API для получения списка моделей Ollama"""
+    from app.services.ai_model_service import AIModelService
+    import asyncio
+
+    try:
+        data = request.json
+        endpoint = data.get('endpoint', 'http://localhost:11434/api')
+
+        # Запускаем асинхронную функцию
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        models = loop.run_until_complete(AIModelService.fetch_ollama_models(endpoint))
+        return jsonify(models)
+    except Exception as e:
+        logger.error(f"Ошибка получения моделей Ollama: {e}")
+        return jsonify([]), 500 
