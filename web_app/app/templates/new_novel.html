@@ -131,10 +131,23 @@
                             <div class="mb-3">
                                 <label for="translation_model" class="form-label">Модель перевода</label>
                                 <select class="form-select" id="translation_model" name="translation_model">
-                                    <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
-                                    <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
-                                    <option value="gpt-4o">GPT-4o</option>
-                                    <option value="claude-3-5-sonnet">Claude 3.5 Sonnet</option>
+                                    {% if ai_models %}
+                                        {% for model in ai_models %}
+                                            <option value="{{ model.model_id }}"
+                                                    data-provider="{{ model.provider }}"
+                                                    data-name="{{ model.name }}"
+                                                    {{ 'selected' if model.is_default else '' }}>
+                                                {{ model.name }} ({{ model.provider|upper }})
+                                                {% if model.is_default %}[По умолчанию]{% endif %}
+                                            </option>
+                                        {% endfor %}
+                                    {% else %}
+                                        <!-- Fallback на старые опции если моделей нет в базе -->
+                                        <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+                                        <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
+                                        <option value="gpt-4o">GPT-4o</option>
+                                        <option value="claude-3-5-sonnet">Claude 3.5 Sonnet</option>
+                                    {% endif %}
                                 </select>
                             </div>
                         </div>
@@ -324,18 +337,21 @@ document.addEventListener('DOMContentLoaded', function() {
         
         sourceDescription.textContent = text;
         
-        // Показываем/скрываем секцию загрузки EPUB файла
+        // Показываем/скрываем секцию загрузки EPUB файла и управляем валидацией
         const epubSection = document.getElementById('epub-file-section');
         const sourceUrlInput = document.getElementById('source_url');
+        const epubFileInput = document.getElementById('epub_file');
         
         if (this.value === 'epub') {
             epubSection.style.display = 'block';
             sourceUrlInput.placeholder = 'Путь к EPUB файлу или оставьте пустым для загрузки';
             sourceUrlInput.required = false;
+            epubFileInput.disabled = false; // Включаем поле, чтобы оно стало обязательным
         } else {
             epubSection.style.display = 'none';
             sourceUrlInput.placeholder = 'URL источника';
             sourceUrlInput.required = true;
+            epubFileInput.disabled = true; // Отключаем поле, чтобы оно не мешало валидации
         }
     });
     
@@ -589,7 +605,6 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     // Автоматически показываем инструкцию если выбран czbooks
-    const sourceTypeSelect = document.getElementById('source_type');
     if (sourceTypeSelect) {
         sourceTypeSelect.addEventListener('change', function() {
             if (this.value === 'czbooks' && cookiesHelp.style.display === 'none') {

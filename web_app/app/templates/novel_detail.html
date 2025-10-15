@@ -108,8 +108,8 @@
                         </div>
                         <div class="col-md-6">
                             <small class="text-muted">
-                                <strong>Модель:</strong> {{ novel.config.translation_model if novel.config.translation_model else 'gemini-2.5-flash' }} | 
-                                <strong>Температура:</strong> {{ novel.config.temperature if novel.config.temperature else 0.1 }}
+                                <strong>Модель:</strong> {{ novel.config.get('translation_model', 'gemini-2.5-flash') }} |
+                                <strong>Температура:</strong> {{ novel.config.get('translation_temperature', 0.1) }}
                             </small>
                         </div>
                     </div>

@@ -52,11 +52,17 @@
                 <div class="d-flex justify-content-between align-items-center">
                     <small class="text-muted">Удалена: {{ novel.updated_at.strftime('%d.%m.%Y %H:%M') }}</small>
                     <div>
-                        <button type="button" class="btn btn-outline-success btn-sm" 
+                        <button type="button" class="btn btn-outline-success btn-sm me-2" 
                                 data-bs-toggle="modal" 
                                 data-bs-target="#restoreNovelModal{{ novel.id }}" 
                                 title="Восстановить">
                             <i class="bi bi-arrow-clockwise"></i> Восстановить
+                        </button>
+                        <button type="button" class="btn btn-danger btn-sm" 
+                                data-bs-toggle="modal" 
+                                data-bs-target="#deletePermanentModal{{ novel.id }}" 
+                                title="Удалить навсегда">
+                            <i class="bi bi-fire"></i> Удалить навсегда
                         </button>
                     </div>
                 </div>
@@ -97,6 +103,44 @@
                 <form method="POST" action="{{ url_for('main.restore_novel', novel_id=novel.id) }}" style="display: inline;">
                     <button type="submit" class="btn btn-success">
                         <i class="bi bi-arrow-clockwise"></i> Восстановить новеллу
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endfor %}
+
+<!-- Модальные окна подтверждения безвозвратного удаления -->
+{% for novel in novels %}
+<div class="modal fade" id="deletePermanentModal{{ novel.id }}" tabindex="-1" aria-labelledby="deletePermanentModalLabel{{ novel.id }}" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="deletePermanentModalLabel{{ novel.id }}">
+                    <i class="bi bi-exclamation-triangle-fill text-danger"></i> Безвозвратное удаление
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p>Вы уверены, что хотите <strong>безвозвратно</strong> удалить новеллу <strong>"{{ novel.title }}"</strong>?</p>
+                <div class="alert alert-danger">
+                    <i class="bi bi-fire"></i>
+                    <strong>ВНИМАНИЕ! ЭТО ДЕЙСТВИЕ НЕОБРАТИМО!</strong>
+                    <ul class="mb-0 mt-2">
+                        <li>Все главы, переводы и история будут удалены.</li>
+                        <li>Все задачи и записи глоссария будут стерты.</li>
+                        <li>Восстановить новеллу будет невозможно.</li>
+                    </ul>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                    <i class="bi bi-x-circle"></i> Отмена
+                </button>
+                <form method="POST" action="{{ url_for('main.delete_permanently', novel_id=novel.id) }}" style="display: inline;">
+                    <button type="submit" class="btn btn-danger">
+                        <i class="bi bi-fire"></i> Да, удалить навсегда
                     </button>
                 </form>
             </div>

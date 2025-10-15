@@ -200,7 +200,12 @@ def new_novel():
 
     # Получаем доступные источники для формы
     available_sources = ParserIntegrationService.get_available_sources_with_info()
-    return render_template('new_novel.html', available_sources=available_sources)
+
+    # Получаем доступные AI модели из базы данных
+    from app.services.ai_adapter_service import AIAdapterService
+    ai_models = AIAdapterService.get_available_models(active_only=True)
+
+    return render_template('new_novel.html', available_sources=available_sources, ai_models=ai_models)
 
 
 @main_bp.route('/api/preview-epub', methods=['POST'])
@@ -472,7 +477,12 @@ def edit_novel(novel_id):
     
     # Получаем доступные источники для формы
     available_sources = ParserIntegrationService.get_available_sources_with_info()
-    return render_template('edit_novel.html', novel=novel, prompt_templates=prompt_templates, available_sources=available_sources)
+
+    # Получаем доступные AI модели из базы данных
+    from app.services.ai_adapter_service import AIAdapterService
+    ai_models = AIAdapterService.get_available_models(active_only=True)
+
+    return render_template('edit_novel.html', novel=novel, prompt_templates=prompt_templates, available_sources=available_sources, ai_models=ai_models)
 
 
 @main_bp.route('/novels/<int:novel_id>/delete', methods=['POST'])
@@ -505,6 +515,22 @@ def restore_novel(novel_id):
     
     flash(f'Новелла "{novel_title}" успешно восстановлена', 'success')
     return redirect(url_for('main.novels'))
+
+
+@main_bp.route('/novels/<int:novel_id>/delete-permanently', methods=['POST'])
+def delete_permanently(novel_id):
+    """Безвозвратное удаление новеллы"""
+    novel = Novel.query.get_or_404(novel_id)
+    
+    # Получаем название для сообщения перед удалением
+    novel_title = novel.title
+    
+    # Безвозвратное удаление
+    db.session.delete(novel)
+    db.session.commit()
+    
+    flash(f'Новелла "{novel_title}" была безвозвратно удалена.', 'success')
+    return redirect(url_for('main.deleted_novels'))
 
 
 @main_bp.route('/novels/<int:novel_id>')
@@ -1840,4 +1866,33 @@ def api_fetch_ollama_models():
         return jsonify(models)
     except Exception as e:
         logger.error(f"Ошибка получения моделей Ollama: {e}")
-        return jsonify([]), 500 
+        return jsonify([]), 500
+
+
+@main_bp.route('/api/ollama/model-info', methods=['POST'])
+def api_get_ollama_model_info():
+    """API для получения детальной информации о модели Ollama"""
+    from app.services.ai_model_service import AIModelService
+    import asyncio
+
+    try:
+        data = request.json
+        endpoint = data.get('endpoint', 'http://localhost:11434/api')
+        model_name = data.get('model_name')
+
+        if not model_name:
+            return jsonify({'error': 'model_name is required'}), 400
+
+        # Запускаем асинхронную функцию
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        model_info = loop.run_until_complete(AIModelService.get_ollama_model_info(endpoint, model_name))
+
+        if model_info:
+            return jsonify(model_info)
+        else:
+            return jsonify({'error': 'Failed to get model info'}), 500
+
+    except Exception as e:
+        logger.error(f"Ошибка получения информации о модели Ollama: {e}")
+        return jsonify({'error': str(e)}), 500 
