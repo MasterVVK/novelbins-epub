@@ -95,9 +95,11 @@ def create_app(config_name=None):
 
     # Регистрация blueprints
     from .api import api_bp
+    from .api.chapters import chapters_bp
     from .views import main_bp
 
     app.register_blueprint(api_bp, url_prefix='/api')
+    app.register_blueprint(chapters_bp)
     app.register_blueprint(main_bp)
 
     # Регистрация фильтров для шаблонов

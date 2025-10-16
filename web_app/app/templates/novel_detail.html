@@ -279,10 +279,30 @@
                                     {% endif %}
                                 </td>
                                 <td>
-                                    <span class="{{ chapter.status|status_badge_class('chapter') }}">
-                                        <i class="{{ chapter.status|status_icon('chapter') }}"></i>
-                                        {{ chapter.status|status_text('chapter') }}
+                                    <span class="{{ chapter.status|status_badge_class('chapter') }}" id="status-badge-{{ chapter.id }}">
+                                        <i class="{{ chapter.status|status_icon('chapter') }}" id="status-icon-{{ chapter.id }}"></i>
+                                        <span id="status-text-{{ chapter.id }}">{{ chapter.status|status_text('chapter') }}</span>
                                     </span>
+                                    <div class="btn-group btn-group-sm ms-2" role="group">
+                                        <button type="button" class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false" title="Изменить статус">
+                                            <i class="bi bi-gear"></i>
+                                        </button>
+                                        <ul class="dropdown-menu">
+                                            <li><a class="dropdown-item" href="#" onclick="changeChapterStatus({{ chapter.id }}, 'parsed'); return false;">
+                                                <i class="bi bi-check-circle text-info"></i> Спарсено
+                                            </a></li>
+                                            <li><a class="dropdown-item" href="#" onclick="changeChapterStatus({{ chapter.id }}, 'translated'); return false;">
+                                                <i class="bi bi-translate text-success"></i> Переведено
+                                            </a></li>
+                                            <li><a class="dropdown-item" href="#" onclick="changeChapterStatus({{ chapter.id }}, 'edited'); return false;">
+                                                <i class="bi bi-pencil-square text-warning"></i> Отредактировано
+                                            </a></li>
+                                            <li><hr class="dropdown-divider"></li>
+                                            <li><a class="dropdown-item" href="#" onclick="changeChapterStatus({{ chapter.id }}, 'pending'); return false;">
+                                                <i class="bi bi-hourglass text-secondary"></i> В ожидании
+                                            </a></li>
+                                        </ul>
+                                    </div>
                                 </td>
                                 <td>
                                     <a href="{{ url_for('main.chapter_detail', chapter_id=chapter.id) }}" class="btn btn-sm btn-outline-primary">
@@ -293,8 +313,8 @@
                                         <i class="bi bi-pencil"></i>
                                     </a>
                                     {% endif %}
-                                    <button type="button" class="btn btn-sm btn-outline-danger" 
-                                            data-bs-toggle="modal" 
+                                    <button type="button" class="btn btn-sm btn-outline-danger"
+                                            data-bs-toggle="modal"
                                             data-bs-target="#deleteChapterModal{{ chapter.id }}">
                                         <i class="bi bi-trash"></i>
                                     </button>
@@ -540,6 +560,98 @@ async function cancelParsing(novelId) {
     } catch (error) {
         alert('❌ Ошибка при отмене парсинга: ' + error.message);
     }
+}
+
+// Изменение статуса главы
+async function changeChapterStatus(chapterId, newStatus) {
+    try {
+        const response = await fetch(`/api/chapters/${chapterId}/status`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ status: newStatus })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            // Обновляем UI
+            updateStatusBadge(chapterId, newStatus);
+
+            // Показываем уведомление
+            showNotification('Статус главы обновлен', 'success');
+
+            // Перезагружаем страницу через небольшую задержку для обновления счетчиков
+            setTimeout(() => location.reload(), 1000);
+        } else {
+            showNotification('Ошибка: ' + (data.error || 'Неизвестная ошибка'), 'error');
+        }
+    } catch (error) {
+        showNotification('Ошибка при изменении статуса: ' + error.message, 'error');
+    }
+}
+
+// Обновление значка статуса
+function updateStatusBadge(chapterId, newStatus) {
+    const statusMap = {
+        'pending': {
+            badge: 'badge bg-secondary',
+            icon: 'bi bi-hourglass',
+            text: 'В ожидании'
+        },
+        'parsed': {
+            badge: 'badge bg-info',
+            icon: 'bi bi-check-circle',
+            text: 'Спарсено'
+        },
+        'translated': {
+            badge: 'badge bg-success',
+            icon: 'bi bi-translate',
+            text: 'Переведено'
+        },
+        'edited': {
+            badge: 'badge bg-warning',
+            icon: 'bi bi-pencil-square',
+            text: 'Отредактировано'
+        },
+        'error': {
+            badge: 'badge bg-danger',
+            icon: 'bi bi-exclamation-triangle',
+            text: 'Ошибка'
+        }
+    };
+
+    const status = statusMap[newStatus];
+    if (status) {
+        const badgeEl = document.getElementById(`status-badge-${chapterId}`);
+        const iconEl = document.getElementById(`status-icon-${chapterId}`);
+        const textEl = document.getElementById(`status-text-${chapterId}`);
+
+        if (badgeEl) badgeEl.className = status.badge;
+        if (iconEl) iconEl.className = status.icon;
+        if (textEl) textEl.textContent = status.text;
+    }
+}
+
+// Показать уведомление
+function showNotification(message, type) {
+    const alertClass = type === 'success' ? 'alert-success' : 'alert-danger';
+    const alertHtml = `
+        <div class="alert ${alertClass} alert-dismissible fade show" role="alert" style="position: fixed; top: 20px; right: 20px; z-index: 9999;">
+            ${message}
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+    `;
+    document.body.insertAdjacentHTML('beforeend', alertHtml);
+
+    // Автоматически скрыть через 3 секунды
+    setTimeout(() => {
+        const alerts = document.querySelectorAll('.alert');
+        if (alerts.length > 0) {
+            alerts[alerts.length - 1].remove();
+        }
+    }, 3000);
 }
 </script>
 {% endblock %} 
