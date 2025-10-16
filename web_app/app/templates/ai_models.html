@@ -1,0 +1,309 @@
+{% extends "base.html" %}
+
+{% block title %}Управление AI моделями - Novel Translator{% endblock %}
+{% block page_title %}Управление AI моделями{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <div>
+                <p class="text-muted mb-0">Настройте модели для перевода и редактирования</p>
+            </div>
+            <div>
+                <button class="btn btn-success" onclick="window.location.href='{{ url_for('main.new_ai_model') }}'">
+                    <i class="bi bi-plus-circle"></i> Добавить модель
+                </button>
+                <button class="btn btn-info ms-2" onclick="testAllModels()">
+                    <i class="bi bi-arrow-clockwise"></i> Тестировать все
+                </button>
+            </div>
+        </div>
+
+        <!-- Группировка по провайдерам -->
+        {% set providers = models | groupby('provider') %}
+
+        {% for provider, provider_models in providers %}
+        <div class="card mb-4">
+            <div class="card-header bg-light">
+                <h5 class="mb-0">
+                    {% if provider == 'gemini' %}
+                        <i class="bi bi-google"></i> Google Gemini
+                    {% elif provider == 'openai' %}
+                        <i class="bi bi-cpu"></i> OpenAI
+                    {% elif provider == 'anthropic' %}
+                        <i class="bi bi-robot"></i> Anthropic
+                    {% elif provider == 'ollama' %}
+                        <i class="bi bi-pc-display"></i> Ollama (Локальные)
+                    {% else %}
+                        <i class="bi bi-cloud"></i> {{ provider | title }}
+                    {% endif %}
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th width="25%">Модель</th>
+                                <th width="15%">ID модели</th>
+                                <th width="20%">Характеристики</th>
+                                <th width="15%">Токены</th>
+                                <th width="10%">Статус</th>
+                                <th width="15%">Действия</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for model in provider_models %}
+                            <tr id="model-row-{{ model.id }}">
+                                <td>
+                                    <strong>{{ model.name }}</strong>
+                                    {% if model.is_default %}
+                                        <span class="badge bg-primary ms-1">По умолчанию</span>
+                                    {% endif %}
+                                    {% if model.description %}
+                                        <br><small class="text-muted">{{ model.description }}</small>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <code>{{ model.model_id }}</code>
+                                    {% if model.api_type %}
+                                        <br><small class="text-muted">{{ model.api_type }}</small>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <div class="d-flex gap-3">
+                                        <div title="Скорость">
+                                            <i class="bi bi-speedometer2"></i>
+                                            {{ '⚡' * model.speed_rating }}
+                                        </div>
+                                        <div title="Качество">
+                                            <i class="bi bi-star"></i>
+                                            {{ '⭐' * model.quality_rating }}
+                                        </div>
+                                        <div title="Стоимость">
+                                            <i class="bi bi-currency-dollar"></i>
+                                            {{ '💰' * (6 - model.cost_rating) }}
+                                        </div>
+                                    </div>
+                                    {% if model.recommended_for %}
+                                        <small class="text-success d-block mt-1">
+                                            <i class="bi bi-check-circle"></i>
+                                            {{ model.recommended_for | join(', ') }}
+                                        </small>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <small>
+                                        Вход: {{ (model.max_input_tokens / 1000) | int }}k<br>
+                                        Выход: {{ (model.max_output_tokens / 1000) | int }}k
+                                    </small>
+                                </td>
+                                <td>
+                                    <div class="d-flex flex-column align-items-start">
+                                        {% if model.is_active %}
+                                            <span class="badge bg-success mb-1">Активна</span>
+                                        {% else %}
+                                            <span class="badge bg-secondary mb-1">Неактивна</span>
+                                        {% endif %}
+
+                                        <span id="test-status-{{ model.id }}" class="badge
+                                            {% if model.test_status == 'success' %}bg-info
+                                            {% elif model.test_status == 'failed' %}bg-danger
+                                            {% else %}bg-warning{% endif %}">
+                                            {% if model.test_status == 'success' %}
+                                                <i class="bi bi-check-circle"></i> Работает
+                                            {% elif model.test_status == 'failed' %}
+                                                <i class="bi bi-x-circle"></i> Ошибка
+                                            {% else %}
+                                                <i class="bi bi-question-circle"></i> Не проверена
+                                            {% endif %}
+                                        </span>
+
+                                        {% if model.api_key_required %}
+                                            {% if model.api_keys %}
+                                                <small class="text-success mt-1">
+                                                    <i class="bi bi-key-fill"></i> {{ model.api_keys | length }} ключей
+                                                </small>
+                                            {% elif model.api_key %}
+                                                <small class="text-success mt-1">
+                                                    <i class="bi bi-key-fill"></i> API ключ
+                                                </small>
+                                            {% else %}
+                                                <small class="text-danger mt-1">
+                                                    <i class="bi bi-key"></i> Нет ключа
+                                                </small>
+                                            {% endif %}
+                                        {% endif %}
+                                    </div>
+                                </td>
+                                <td>
+                                    <div class="btn-group btn-group-sm" role="group">
+                                        <button class="btn btn-outline-primary" onclick="testModel({{ model.id }})"
+                                                title="Тестировать">
+                                            <i class="bi bi-play-circle"></i>
+                                        </button>
+                                        <button class="btn btn-outline-secondary"
+                                                onclick="window.location.href='{{ url_for('main.edit_ai_model', model_id=model.id) }}'"
+                                                title="Редактировать">
+                                            <i class="bi bi-pencil"></i>
+                                        </button>
+                                        {% if not model.is_default %}
+                                            <button class="btn btn-outline-success" onclick="setAsDefault({{ model.id }})"
+                                                    title="Сделать по умолчанию">
+                                                <i class="bi bi-star"></i>
+                                            </button>
+                                        {% endif %}
+                                        {% if not model.is_default %}
+                                            <button class="btn btn-outline-danger" onclick="deleteModel({{ model.id }})"
+                                                    title="Удалить">
+                                                <i class="bi bi-trash"></i>
+                                            </button>
+                                        {% endif %}
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+
+        {% if not models %}
+        <div class="alert alert-info">
+            <i class="bi bi-info-circle"></i>
+            Нет настроенных моделей. <a href="{{ url_for('main.new_ai_model') }}">Добавить первую модель</a>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Модальное окно результатов теста -->
+<div class="modal fade" id="testResultModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Результат тестирования</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="testResultBody">
+                <!-- Результаты теста будут здесь -->
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Закрыть</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+async function testModel(modelId) {
+    const statusBadge = document.getElementById(`test-status-${modelId}`);
+    statusBadge.innerHTML = '<i class="bi bi-hourglass-split"></i> Тестирование...';
+    statusBadge.className = 'badge bg-info';
+
+    try {
+        const response = await fetch(`/api/ai-models/${modelId}/test`, {
+            method: 'POST'
+        });
+        const result = await response.json();
+
+        if (result.success) {
+            statusBadge.innerHTML = '<i class="bi bi-check-circle"></i> Работает';
+            statusBadge.className = 'badge bg-success';
+
+            // Показываем результат
+            showTestResult(true, result.response, result.model_info);
+        } else {
+            statusBadge.innerHTML = '<i class="bi bi-x-circle"></i> Ошибка';
+            statusBadge.className = 'badge bg-danger';
+
+            // Показываем ошибку
+            showTestResult(false, result.error, result.available_models);
+        }
+    } catch (error) {
+        statusBadge.innerHTML = '<i class="bi bi-x-circle"></i> Ошибка';
+        statusBadge.className = 'badge bg-danger';
+        showTestResult(false, error.message);
+    }
+}
+
+function showTestResult(success, message, additionalInfo) {
+    const modal = new bootstrap.Modal(document.getElementById('testResultModal'));
+    const body = document.getElementById('testResultBody');
+
+    if (success) {
+        body.innerHTML = `
+            <div class="alert alert-success">
+                <i class="bi bi-check-circle"></i> Модель работает корректно
+            </div>
+            <p><strong>Тестовый ответ:</strong></p>
+            <pre class="bg-light p-2 rounded">${message}</pre>
+            ${additionalInfo ? `<p class="text-muted">Модель: ${additionalInfo.model}</p>` : ''}
+        `;
+    } else {
+        body.innerHTML = `
+            <div class="alert alert-danger">
+                <i class="bi bi-x-circle"></i> Ошибка подключения
+            </div>
+            <p><strong>Описание ошибки:</strong></p>
+            <pre class="bg-light p-2 rounded text-danger">${message}</pre>
+            ${additionalInfo ? `
+                <p><strong>Доступные модели Ollama:</strong></p>
+                <ul>${additionalInfo.map(m => `<li>${m}</li>`).join('')}</ul>
+            ` : ''}
+        `;
+    }
+
+    modal.show();
+}
+
+async function testAllModels() {
+    const models = document.querySelectorAll('[id^="model-row-"]');
+    for (const row of models) {
+        const modelId = row.id.replace('model-row-', '');
+        await testModel(modelId);
+        await new Promise(resolve => setTimeout(resolve, 1000)); // Пауза между тестами
+    }
+}
+
+async function setAsDefault(modelId) {
+    if (!confirm('Сделать эту модель моделью по умолчанию?')) return;
+
+    try {
+        const response = await fetch(`/api/ai-models/${modelId}/set-default`, {
+            method: 'POST'
+        });
+
+        if (response.ok) {
+            location.reload();
+        } else {
+            alert('Ошибка при установке модели по умолчанию');
+        }
+    } catch (error) {
+        alert('Ошибка: ' + error.message);
+    }
+}
+
+async function deleteModel(modelId) {
+    if (!confirm('Удалить эту модель? Это действие нельзя отменить.')) return;
+
+    try {
+        const response = await fetch(`/api/ai-models/${modelId}`, {
+            method: 'DELETE'
+        });
+
+        if (response.ok) {
+            location.reload();
+        } else {
+            const error = await response.json();
+            alert('Ошибка: ' + error.message);
+        }
+    } catch (error) {
+        alert('Ошибка: ' + error.message);
+    }
+}
+</script>
+{% endblock %}
