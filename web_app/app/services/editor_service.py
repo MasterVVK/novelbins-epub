@@ -110,14 +110,17 @@ class EditorService:
         prompt = prompt_template.format(text=text[:2000] + "...")
 
         try:
+            # Получаем внутренний переводчик (поддержка старой и новой системы)
+            inner_translator = self._get_inner_translator()
+
             # Устанавливаем тип промпта для анализа качества
-            if chapter_id:
-                self.translator.translator.current_chapter_id = chapter_id
-                self.translator.translator.current_prompt_type = 'editing_analysis'
-                self.translator.translator.request_start_time = time.time()
-            
+            if chapter_id and inner_translator:
+                inner_translator.current_chapter_id = chapter_id
+                inner_translator.current_prompt_type = 'editing_analysis'
+                inner_translator.request_start_time = time.time()
+
             # Используем translate_text для анализа качества
-            result = self.translator.translator.translate_text(text, prompt, "", chapter_id)
+            result = inner_translator.translate_text(text, prompt, "", chapter_id) if inner_translator else None
             if not result:
                 LogService.log_info(f"Анализ качества не вернул результат, используем стандартную стратегию", 
                                   chapter_id=chapter_id)
@@ -181,13 +184,16 @@ class EditorService:
         prompt = prompt_template.format(text=text)
 
         try:
+            # Получаем внутренний переводчик (поддержка старой и новой системы)
+            inner_translator = self._get_inner_translator()
+
             # Устанавливаем тип промпта для улучшения стиля
-            if chapter_id:
-                self.translator.translator.current_chapter_id = chapter_id
-                self.translator.translator.current_prompt_type = 'editing_style'
-                self.translator.translator.request_start_time = time.time()
-            
-            result = self.translator.translator.translate_text(text, prompt, "", chapter_id)
+            if chapter_id and inner_translator:
+                inner_translator.current_chapter_id = chapter_id
+                inner_translator.current_prompt_type = 'editing_style'
+                inner_translator.request_start_time = time.time()
+
+            result = inner_translator.translate_text(text, prompt, "", chapter_id) if inner_translator else None
             return result if result else text
         except Exception as e:
             LogService.log_error(f"Ошибка улучшения стиля: {e}")
@@ -201,13 +207,16 @@ class EditorService:
         prompt = prompt_template.format(text=text)
 
         try:
+            # Получаем внутренний переводчик (поддержка старой и новой системы)
+            inner_translator = self._get_inner_translator()
+
             # Устанавливаем тип промпта для полировки диалогов
-            if chapter_id:
-                self.translator.translator.current_chapter_id = chapter_id
-                self.translator.translator.current_prompt_type = 'editing_dialogue'
-                self.translator.translator.request_start_time = time.time()
-            
-            result = self.translator.translator.translate_text(text, prompt, "", chapter_id)
+            if chapter_id and inner_translator:
+                inner_translator.current_chapter_id = chapter_id
+                inner_translator.current_prompt_type = 'editing_dialogue'
+                inner_translator.request_start_time = time.time()
+
+            result = inner_translator.translate_text(text, prompt, "", chapter_id) if inner_translator else None
             return result if result else text
         except Exception as e:
             LogService.log_error(f"Ошибка полировки диалогов: {e}")
@@ -221,13 +230,16 @@ class EditorService:
         prompt = prompt_template.format(text=text)
 
         try:
+            # Получаем внутренний переводчик (поддержка старой и новой системы)
+            inner_translator = self._get_inner_translator()
+
             # Устанавливаем тип промпта для финальной полировки
-            if chapter_id:
-                self.translator.translator.current_chapter_id = chapter_id
-                self.translator.translator.current_prompt_type = 'editing_final'
-                self.translator.translator.request_start_time = time.time()
-            
-            result = self.translator.translator.translate_text(text, prompt, "", chapter_id)
+            if chapter_id and inner_translator:
+                inner_translator.current_chapter_id = chapter_id
+                inner_translator.current_prompt_type = 'editing_final'
+                inner_translator.request_start_time = time.time()
+
+            result = inner_translator.translate_text(text, prompt, "", chapter_id) if inner_translator else None
             return result if result else text
         except Exception as e:
             LogService.log_error(f"Ошибка финальной полировки: {e}")
@@ -252,7 +264,7 @@ class EditorService:
             
         return True
         
-    def save_edited_chapter(self, chapter: Chapter, edited_text: str, editing_time: float, 
+    def save_edited_chapter(self, chapter: Chapter, edited_text: str, editing_time: float,
                           quality_score: int, strategy: Dict):
         """Сохранение отредактированной главы"""
         try:
@@ -262,7 +274,10 @@ class EditorService:
                 chapter_id=chapter.id,
                 translation_type='initial'
             ).first()
-            
+
+            # Получаем имя модели (поддержка старой и новой системы)
+            model_name = self._get_model_name()
+
             # Создаем новый перевод с типом 'edited'
             translation = Translation(
                 chapter_id=chapter.id,
@@ -271,7 +286,7 @@ class EditorService:
                 summary=original_translation.summary if original_translation else None,
                 translation_type='edited',
                 api_used='gemini-editor',
-                model_used=self.translator.config.model_name,
+                model_used=model_name,
                 quality_score=min(quality_score + 2, 9),
                 translation_time=editing_time,
                 context_used={
@@ -305,11 +320,34 @@ class EditorService:
                                novel_id=chapter.novel_id, chapter_id=chapter.id)
             db.session.rollback()
     
+    def _get_inner_translator(self):
+        """Получение внутреннего переводчика (поддержка старой и новой системы)"""
+        # Новая система: UniversalLLMTranslator находится в self.translator.translator
+        if hasattr(self.translator, 'translator'):
+            return self.translator.translator
+        # Старая система: LLMTranslator может находиться прямо в self.translator
+        # Но EditorService получает TranslatorService, а не LLMTranslator напрямую
+        # Поэтому проверяем, есть ли у translator метод translate_text
+        elif hasattr(self.translator, 'translate_text'):
+            return self.translator
+        return None
+
+    def _get_model_name(self) -> str:
+        """Получение имени модели (поддержка старой и новой системы)"""
+        # Новая система: UniversalLLMTranslator имеет атрибут model
+        inner_translator = self._get_inner_translator()
+        if inner_translator and hasattr(inner_translator, 'model'):
+            return inner_translator.model.model_id
+        # Старая система: TranslatorService имеет config
+        if hasattr(self.translator, 'config') and hasattr(self.translator.config, 'model_name'):
+            return self.translator.config.model_name
+        return 'unknown'
+
     def _get_template_name_for_chapter(self, chapter_id: int = None) -> str:
         """Получение имени шаблона для главы"""
         if not chapter_id:
             return 'Сянься (Покрывая Небеса)'
-        
+
         try:
             from app.models import Chapter
             chapter = Chapter.query.get(chapter_id)

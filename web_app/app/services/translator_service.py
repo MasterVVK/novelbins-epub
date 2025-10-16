@@ -693,18 +693,43 @@ class TranslatorService:
 
     def __init__(self, config: Dict = None):
         logger.info("🔧 Инициализация TranslatorService")
-        
+
+        # Находим модель по model_id (строка из конфига новеллы)
+        model_id_str = config.get('model_name') if config else None
+
+        if model_id_str:
+            # Ищем модель по model_id строке
+            from app.models import AIModel
+            ai_model = AIModel.query.filter_by(model_id=model_id_str, is_active=True).first()
+
+            if not ai_model:
+                # Fallback: пробуем найти по умолчанию
+                logger.warning(f"Модель с model_id '{model_id_str}' не найдена, используем модель по умолчанию")
+                ai_model = AIModel.query.filter_by(is_default=True, is_active=True).first()
+
+            if ai_model:
+                logger.info(f"✅ Найдена модель: {ai_model.name} ({ai_model.provider})")
+
+                # Используем UniversalLLMTranslator для всех провайдеров
+                from app.services.universal_llm_translator import UniversalLLMTranslator
+                self.translator = UniversalLLMTranslator(ai_model)
+
+                # Настройка сохранения истории промптов
+                save_history = config.get('save_prompt_history', True) if config else True
+                self.translator.set_save_prompt_history(save_history)
+
+                logger.info(f"✅ TranslatorService инициализирован с {ai_model.provider} (модель: {ai_model.model_id})")
+                return
+
+        # Fallback на старую систему (для обратной совместимости)
+        logger.warning("Используем старую систему LLMTranslator (только Gemini)")
         self.config = TranslatorConfig(**config) if config else TranslatorConfig()
-        logger.info(f"✅ Конфигурация создана: модель={self.config.model_name}, прокси={self.config.proxy_url}, ключей={len(self.config.api_keys)}")
-        
-        logger.info("🔧 Создаем LLMTranslator")
         self.translator = LLMTranslator(self.config)
-        
-        # Настройка сохранения истории промптов из конфигурации
+
         save_history = config.get('save_prompt_history', True) if config else True
         self.translator.set_save_prompt_history(save_history)
-        
-        logger.info("✅ TranslatorService инициализирован успешно")
+
+        logger.info("✅ TranslatorService инициализирован (legacy mode)")
 
     def translate_chapter(self, chapter: Chapter) -> bool:
         """Перевод главы с использованием шаблона промпта и глоссария"""
