@@ -7,6 +7,7 @@ import logging
 from typing import Dict, List, Optional
 from app.models.ai_model import AIModel
 from app.services.ai_model_service import AIModelService
+from app.services.log_service import LogService
 
 logger = logging.getLogger(__name__)
 
@@ -266,9 +267,9 @@ class AIAdapterService:
                 logger.info(f"Максимальный контекст модели {self.model.model_id}: {model_max_context}")
 
                 # Логируем параметры запроса
-                logger.info(f"Начинаем запрос к ollama (модель: {self.model.model_id})")
+                LogService.log_info(f"Начинаем запрос к ollama (модель: {self.model.model_id})")
+                LogService.log_info(f"Temperature: {temperature}, Num predict: {min(max_tokens, self.model.max_output_tokens)}")
                 logger.debug(f"Ollama endpoint: {self.model.api_endpoint}")
-                logger.debug(f"Temperature: {temperature}, Num predict: {min(max_tokens, self.model.max_output_tokens)}")
                 logger.debug(f"Context size: {actual_context_size}")
 
                 # Объединяем system и user промпты в один

@@ -143,6 +143,10 @@
                                                 title="Тестировать">
                                             <i class="bi bi-play-circle"></i>
                                         </button>
+                                        <button class="btn btn-outline-info" onclick="duplicateModel({{ model.id }})"
+                                                title="Дублировать">
+                                            <i class="bi bi-copy"></i>
+                                        </button>
                                         <button class="btn btn-outline-secondary"
                                                 onclick="window.location.href='{{ url_for('main.edit_ai_model', model_id=model.id) }}'"
                                                 title="Редактировать">
@@ -296,6 +300,36 @@ async function deleteModel(modelId) {
         });
 
         if (response.ok) {
+            location.reload();
+        } else {
+            const error = await response.json();
+            alert('Ошибка: ' + error.message);
+        }
+    } catch (error) {
+        alert('Ошибка: ' + error.message);
+    }
+}
+
+async function duplicateModel(modelId) {
+    const newName = prompt('Введите название для новой модели:');
+    if (!newName) return;
+
+    const newModelId = prompt('Введите ID для новой модели (например, gemini-2.5-pro):');
+    if (!newModelId) return;
+
+    try {
+        const response = await fetch(`/api/ai-models/${modelId}/duplicate`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                name: newName,
+                model_id: newModelId
+            })
+        });
+
+        if (response.ok) {
+            const result = await response.json();
+            alert(`Модель успешно дублирована! ID: ${result.model_id}`);
             location.reload();
         } else {
             const error = await response.json();

@@ -1849,6 +1849,22 @@ def api_set_default_ai_model(model_id):
         return jsonify({'success': False, 'message': str(e)}), 500
 
 
+@main_bp.route('/api/ai-models/<int:model_id>/duplicate', methods=['POST'])
+def api_duplicate_ai_model(model_id):
+    """API для дублирования модели"""
+    from app.services.ai_model_service import AIModelService
+
+    try:
+        data = request.json
+        new_model = AIModelService.duplicate_model(model_id, data.get('name'), data.get('model_id'))
+        return jsonify({'success': True, 'model_id': new_model.id})
+    except ValueError as e:
+        return jsonify({'success': False, 'message': str(e)}), 400
+    except Exception as e:
+        logger.error(f"Ошибка дублирования модели: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
 @main_bp.route('/api/ollama/models', methods=['POST'])
 def api_fetch_ollama_models():
     """API для получения списка моделей Ollama"""

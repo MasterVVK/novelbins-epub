@@ -752,11 +752,18 @@ class TranslatorService:
                               novel_id=chapter.novel_id, chapter_id=chapter.id)
             
             # Создаем контекст перевода
-            LogService.log_info(f"Создаем контекст перевода для главы {chapter.chapter_number}", 
+            LogService.log_info(f"Создаем контекст перевода для главы {chapter.chapter_number}",
                               novel_id=chapter.novel_id, chapter_id=chapter.id)
             context = TranslationContext(chapter.novel_id)
             context_prompt = context.build_context_prompt()
-            LogService.log_info(f"Контекст перевода создан, длина: {len(context_prompt)} символов", 
+
+            # Добавляем оригинальное название главы в контекст для лучшего понимания LLM
+            if chapter.original_title:
+                context_prompt = f"НАЗВАНИЕ ГЛАВЫ: {chapter.original_title}\n\n{context_prompt}" if context_prompt else f"НАЗВАНИЕ ГЛАВЫ: {chapter.original_title}"
+                LogService.log_info(f"Добавлено название главы в контекст: {chapter.original_title}",
+                                  novel_id=chapter.novel_id, chapter_id=chapter.id)
+
+            LogService.log_info(f"Контекст перевода создан, длина: {len(context_prompt)} символов",
                               novel_id=chapter.novel_id, chapter_id=chapter.id)
             
             # Подготавливаем текст для перевода
@@ -1187,6 +1194,11 @@ class TranslatorService:
                             sentences.append(sentences_raw[i] + sentences_raw[i+1])
                         else:
                             sentences.append(sentences_raw[i])
+                    # Добавляем последний элемент, если количество элементов нечетное
+                    if len(sentences_raw) % 2 == 1:
+                        last_sentence = sentences_raw[-1].strip()
+                        if last_sentence:  # Только если не пустой
+                            sentences.append(last_sentence)
                     separator = ''  # Для китайского не нужен разделитель, знаки уже включены
                 elif '. ' in paragraph:  # Английский
                     sentences = re.split(r'(?<=[.!?])\s+', paragraph)
@@ -1200,16 +1212,21 @@ class TranslatorService:
                 
                 temp_part = ""
                 for sentence in sentences:
-                    if len(temp_part.split()) + len(sentence.split()) > max_words:
-                        if temp_part:
-                            parts.append(temp_part)
+                    # Проверяем, превышает ли добавление этого предложения лимит
+                    would_exceed = len(temp_part.split()) + len(sentence.split()) > max_words
+
+                    if would_exceed and temp_part:
+                        # Сохраняем накопленную часть
+                        parts.append(temp_part)
                         temp_part = sentence
                     else:
+                        # Добавляем предложение к текущей части
                         if temp_part:
                             temp_part += separator + sentence
                         else:
                             temp_part = sentence
-                
+
+                # Сохраняем последнюю часть
                 if temp_part:
                     parts.append(temp_part)
             else:
@@ -1241,7 +1258,7 @@ class TranslatorService:
                 import re
                 # Разбиваем по китайским знакам препинания
                 sentences = re.split(r'([。！？；])', single_part)
-                
+
                 # Объединяем предложения с их знаками препинания
                 full_sentences = []
                 for i in range(0, len(sentences)-1, 2):
@@ -1249,23 +1266,32 @@ class TranslatorService:
                         full_sentences.append(sentences[i] + sentences[i+1])
                     else:
                         full_sentences.append(sentences[i])
+                # Добавляем последний элемент, если количество элементов нечетное
+                if len(sentences) % 2 == 1:
+                    last_sentence = sentences[-1].strip()
+                    if last_sentence:  # Только если не пустой
+                        full_sentences.append(last_sentence)
                 
                 # Группируем предложения в части
                 parts = []
                 current_part = []
                 current_length = 0
                 target_length = max_words * 2  # Примерно 2 символа на "слово"
-                
+
                 for sentence in full_sentences:
-                    if current_length + len(sentence) > target_length and current_part:
+                    # Проверяем, превысит ли добавление предложения лимит
+                    would_exceed = current_length + len(sentence) > target_length
+
+                    if would_exceed and current_part:
                         # Сохраняем текущую часть
                         parts.append(''.join(current_part))
                         current_part = [sentence]
                         current_length = len(sentence)
                     else:
+                        # Добавляем предложение к текущей части
                         current_part.append(sentence)
                         current_length += len(sentence)
-                
+
                 # Добавляем последнюю часть
                 if current_part:
                     parts.append(''.join(current_part))
@@ -1295,15 +1321,57 @@ class TranslatorService:
         return parts
 
     def extract_title_and_content(self, translated_text: str) -> Tuple[str, str]:
-        """Извлечение заголовка и основного текста из перевода"""
+        """Извлечение заголовка и основного текста из перевода
+
+        Умное извлечение заголовка - определяет, является ли первая строка
+        действительно заголовком главы или это начало самого текста.
+        """
         lines = translated_text.strip().split('\n')
-        
-        if lines:
-            title = lines[0].strip()
+
+        if not lines:
+            return "", translated_text
+
+        first_line = lines[0].strip()
+
+        # Проверяем признаки того, что первая строка - это заголовок главы:
+        # 1. Содержит слова "Глава", "Chapter", "Часть"
+        # 2. Короткая (менее 100 символов)
+        # 3. Не заканчивается знаками препинания обычного текста
+        # 4. Содержит номер главы
+
+        title_keywords = ['глава', 'chapter', 'часть', 'раздел', 'том', 'пролог', 'эпилог']
+        is_title_keyword = any(keyword in first_line.lower() for keyword in title_keywords)
+
+        # Короткая строка + ключевое слово = вероятно заголовок
+        is_short = len(first_line) < 100
+
+        # Заканчивается точкой, запятой, многоточием = вероятно НЕ заголовок
+        ends_with_punctuation = first_line.endswith(('.', ',', '...', '。', '！', '？'))
+
+        # Содержит цифры (номер главы)
+        import re
+        has_number = bool(re.search(r'\d+', first_line))
+
+        # Решение: первая строка - это заголовок, если:
+        # - Короткая (<100 символов) И содержит ключевое слово ИЛИ номер
+        # - ИЛИ: содержит ключевое слово И не заканчивается обычными знаками препинания
+        is_likely_title = (
+            (is_short and (is_title_keyword or has_number)) or
+            (is_title_keyword and not ends_with_punctuation)
+        )
+
+        if is_likely_title:
+            # Первая строка - заголовок
+            title = first_line
             content = '\n'.join(lines[1:]).strip()
-            return title, content
-        
-        return "", translated_text
+            LogService.log_info(f"Обнаружен заголовок: '{title[:50]}...'")
+        else:
+            # Первая строка - это часть текста, заголовка нет
+            title = ""
+            content = translated_text.strip()
+            LogService.log_info(f"Заголовок не обнаружен, первая строка является частью текста: '{first_line[:50]}...'")
+
+        return title, content
 
     def validate_translation(self, original: str, translated: str, chapter_num: int) -> Dict:
         """Валидация качества перевода (как в рабочем скрипте)"""
