@@ -142,7 +142,7 @@
                 <div>
                     <button class="btn btn-outline-success btn-sm" onclick="toggleAutoRefresh()">
                         <i class="bi bi-play-circle" id="auto-refresh-icon"></i>
-                        <span id="auto-refresh-text">Автообновление</span>
+                        <span id="auto-refresh-text">Включить автообновление</span>
                     </button>
                     <button class="btn btn-outline-primary btn-sm" onclick="loadLogs()">
                         <i class="bi bi-arrow-clockwise"></i> Обновить
@@ -165,7 +165,7 @@
 {% block scripts %}
 <script>
 let autoRefreshInterval = null;
-let isAutoRefreshEnabled = false;
+let isAutoRefreshEnabled = false; // По умолчанию выключено
 
 // Инициализация при загрузке страницы
 document.addEventListener('DOMContentLoaded', function() {
@@ -173,6 +173,17 @@ document.addEventListener('DOMContentLoaded', function() {
     loadLogs();
     loadFilters();
     setupWebSocket();
+
+    // Показываем уведомление что автообновление выключено
+    const container = document.getElementById('logs-container');
+    const notice = document.createElement('div');
+    notice.id = 'pause-notice';
+    notice.className = 'alert alert-warning mb-3';
+    notice.innerHTML = `
+        <i class="bi bi-pause-circle-fill"></i>
+        <strong>Автообновление выключено</strong> - нажмите кнопку "Включить автообновление" для обновлений в реальном времени
+    `;
+    container.parentElement.insertBefore(notice, container);
 });
 
 // Загрузка статистики
@@ -324,12 +335,27 @@ function toggleAutoRefresh() {
         clearInterval(autoRefreshInterval);
         isAutoRefreshEnabled = false;
         document.getElementById('auto-refresh-icon').className = 'bi bi-play-circle';
-        document.getElementById('auto-refresh-text').textContent = 'Автообновление';
+        document.getElementById('auto-refresh-text').textContent = 'Включить автообновление';
+
+        // Показываем уведомление
+        const container = document.getElementById('logs-container');
+        const notice = document.createElement('div');
+        notice.id = 'pause-notice';
+        notice.className = 'alert alert-success mb-3';
+        notice.innerHTML = `
+            <i class="bi bi-check-circle-fill"></i>
+            <strong>Автообновление остановлено</strong> - можно спокойно копировать текст
+        `;
+        container.parentElement.insertBefore(notice, container);
     } else {
         autoRefreshInterval = setInterval(loadLogs, 5000); // Обновление каждые 5 секунд
         isAutoRefreshEnabled = true;
         document.getElementById('auto-refresh-icon').className = 'bi bi-pause-circle';
-        document.getElementById('auto-refresh-text').textContent = 'Остановить';
+        document.getElementById('auto-refresh-text').textContent = 'Остановить автообновление';
+
+        // Убираем уведомление
+        const notice = document.getElementById('pause-notice');
+        if (notice) notice.remove();
     }
 }
 
@@ -363,6 +389,11 @@ function clearOldLogs() {
 // Настройка WebSocket
 function setupWebSocket() {
     socket.on('log_entry', function(logData) {
+        // Если автообновление отключено, не добавляем новые логи
+        if (!isAutoRefreshEnabled) {
+            return;
+        }
+
         // Добавляем новый лог в начало списка
         const container = document.getElementById('logs-container');
         const logHtml = `
@@ -379,15 +410,15 @@ function setupWebSocket() {
                 </div>
             </div>
         `;
-        
+
         container.insertAdjacentHTML('afterbegin', logHtml);
-        
+
         // Удаляем старые логи, если их слишком много
         const logEntries = container.querySelectorAll('.log-entry');
         if (logEntries.length > 100) {
             logEntries[logEntries.length - 1].remove();
         }
-        
+
         // Обновляем счетчик
         const currentCount = parseInt(document.getElementById('logs-count').textContent);
         document.getElementById('logs-count').textContent = currentCount + 1;

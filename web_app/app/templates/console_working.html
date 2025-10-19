@@ -14,6 +14,10 @@
                     <i class="bi bi-speedometer2"></i> Статистика консоли
                 </h5>
                 <div class="btn-group" role="group">
+                    <button id="toggle-autoupdate" class="btn btn-outline-success btn-sm">
+                        <i class="bi bi-pause-circle" id="autoupdate-icon"></i>
+                        <span id="autoupdate-text">Остановить автообновление</span>
+                    </button>
                     <button id="clear-console" class="btn btn-outline-warning btn-sm">
                         <i class="bi bi-trash"></i> Очистить
                     </button>
@@ -78,6 +82,9 @@
 
 {% block scripts %}
 <script>
+let autoUpdateInterval = null;
+let isAutoUpdateEnabled = true; // По умолчанию включено
+
 // Загрузка статистики
 function loadStats() {
     fetch('/api/console/stats')
@@ -101,6 +108,10 @@ function loadLogs() {
         .then(data => {
             if (data.success && data.logs.length > 0) {
                 const output = document.getElementById('console-output');
+
+                // Сохраняем текущую позицию прокрутки
+                const wasAtBottom = output.scrollHeight - output.scrollTop <= output.clientHeight + 50;
+
                 output.innerHTML = data.logs.map(log => {
                     const timestamp = new Date(log.timestamp).toLocaleTimeString();
                     const levelClass = log.level.toLowerCase();
@@ -113,7 +124,11 @@ function loadLogs() {
                         </div>
                     `;
                 }).join('');
-                output.scrollTop = output.scrollHeight;
+
+                // Прокручиваем вниз только если автообновление включено И пользователь был внизу
+                if (isAutoUpdateEnabled && wasAtBottom) {
+                    output.scrollTop = output.scrollHeight;
+                }
             }
         })
         .catch(error => console.error('Ошибка загрузки логов:', error));
@@ -140,6 +155,43 @@ document.getElementById('clear-console').addEventListener('click', function() {
     }
 });
 
+// Переключение автообновления
+document.getElementById('toggle-autoupdate').addEventListener('click', function() {
+    if (isAutoUpdateEnabled) {
+        // Останавливаем автообновление
+        clearInterval(autoUpdateInterval);
+        autoUpdateInterval = null;
+        isAutoUpdateEnabled = false;
+
+        document.getElementById('autoupdate-icon').className = 'bi bi-play-circle';
+        document.getElementById('autoupdate-text').textContent = 'Включить автообновление';
+        this.className = 'btn btn-outline-danger btn-sm';
+
+        // Показываем уведомление
+        const output = document.getElementById('console-output');
+        const notice = document.createElement('div');
+        notice.id = 'pause-notice';
+        notice.style.cssText = 'background-color: #28a745; color: white; padding: 10px; margin-bottom: 10px; border-radius: 5px; text-align: center;';
+        notice.innerHTML = '<i class="bi bi-check-circle-fill"></i> <strong>Автообновление остановлено</strong> - можно спокойно копировать текст';
+        output.parentElement.insertBefore(notice, output);
+    } else {
+        // Включаем автообновление
+        autoUpdateInterval = setInterval(function() {
+            loadStats();
+            loadLogs();
+        }, 5000);
+        isAutoUpdateEnabled = true;
+
+        document.getElementById('autoupdate-icon').className = 'bi bi-pause-circle';
+        document.getElementById('autoupdate-text').textContent = 'Остановить автообновление';
+        this.className = 'btn btn-outline-success btn-sm';
+
+        // Убираем уведомление
+        const notice = document.getElementById('pause-notice');
+        if (notice) notice.remove();
+    }
+});
+
 // Обновление статистики
 document.getElementById('refresh-stats').addEventListener('click', function() {
     loadStats();
@@ -150,9 +202,9 @@ document.getElementById('refresh-stats').addEventListener('click', function() {
 document.addEventListener('DOMContentLoaded', function() {
     loadStats();
     loadLogs();
-    
-    // Обновление каждые 5 секунд
-    setInterval(function() {
+
+    // Обновление каждые 5 секунд (по умолчанию включено)
+    autoUpdateInterval = setInterval(function() {
         loadStats();
         loadLogs();
     }, 5000);
