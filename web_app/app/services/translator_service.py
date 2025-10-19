@@ -1044,9 +1044,39 @@ class TranslatorService:
                         validation = self.validate_translation(chapter.original_text, content, chapter.chapter_number)
                         
                         if validation['critical']:
-                            LogService.log_error(f"Критические проблемы остались после повторного перевода главы {chapter.chapter_number}: {validation['critical_issues']}", 
+                            LogService.log_error(f"Критические проблемы остались после повторного перевода главы {chapter.chapter_number}: {validation['critical_issues']}",
                                                novel_id=chapter.novel_id, chapter_id=chapter.id)
                             print(f"   ❌ Критические проблемы остались после повторной попытки: {validation['critical_issues']}")
+
+                            # Выводим текст для диагностики
+                            print("\n" + "="*80)
+                            print("🔍 ДИАГНОСТИКА ПРОБЛЕМЫ С ПЕРЕВОДОМ")
+                            print("="*80)
+
+                            print(f"\n📊 СТАТИСТИКА:")
+                            print(f"   Оригинал: {validation['stats']['original_words']} слов, {validation['stats']['orig_paragraphs']} абзацев")
+                            print(f"   Перевод:  {validation['stats']['translated_words']} слов, {validation['stats']['trans_paragraphs']} абзацев")
+                            print(f"   Проблема: {validation['critical_issues']}")
+
+                            print(f"\n📄 ОРИГИНАЛЬНЫЙ ТЕКСТ (полностью):")
+                            print("-"*80)
+                            print(chapter.original_text)
+                            print("-"*80)
+
+                            print(f"\n📄 ТЕКСТ ПЕРЕВОДА (полностью):")
+                            print("-"*80)
+                            print(content)
+                            print("-"*80)
+
+                            print("\n⏸️  ПАУЗА: Нажмите Enter чтобы продолжить...")
+                            input()
+
+                            # Также логируем в файл для истории
+                            LogService.log_error(f"📄 Оригинал ({len(chapter.original_text)} символов): {chapter.original_text[:500]}...",
+                                               novel_id=chapter.novel_id, chapter_id=chapter.id)
+                            LogService.log_error(f"📄 Перевод ({len(content)} символов): {content[:500]}...",
+                                               novel_id=chapter.novel_id, chapter_id=chapter.id)
+
                             return False
                         else:
                             LogService.log_info(f"Повторный перевод успешен, качество: {self.calculate_quality_score(validation)}", 
@@ -1480,6 +1510,8 @@ class TranslatorService:
             'length_ratio': ratio,
             'paragraph_diff': para_diff,
             'paragraph_ratio': para_ratio,
+            'orig_paragraphs': orig_paragraphs,
+            'trans_paragraphs': trans_paragraphs,
             'original_words': len(original.split()),
             'translated_words': len(translated.split()),
             'numbers_preserved': len(orig_numbers) == len(trans_numbers)

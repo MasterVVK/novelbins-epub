@@ -377,9 +377,33 @@ class AIAdapterService:
                     logger.error(f"Context size: {actual_context_size}, Max tokens: {max_tokens}")
                     logger.error(f"Response headers: {dict(response.headers)}")
 
+                    # Определяем тип ошибки для специальной обработки
+                    error_type = 'general'
+                    error_detail_lower = error_detail.lower()
+
+                    # Проверяем на разные типы лимитов
+                    if 'weekly usage limit' in error_detail_lower:
+                        error_type = 'weekly_limit'
+                        logger.error(f"🚫 Обнаружен НЕДЕЛЬНЫЙ лимит использования Ollama модели")
+                    elif 'daily usage limit' in error_detail_lower:
+                        error_type = 'daily_limit'
+                        logger.error(f"🚫 Обнаружен ДНЕВНОЙ лимит использования Ollama модели")
+                    elif 'hourly usage limit' in error_detail_lower or 'usage limit' in error_detail_lower:
+                        error_type = 'rate_limit'
+                        logger.error(f"⚠️ Обнаружена ошибка лимита использования Ollama модели")
+                    elif 'upstream error' in error_detail_lower or response.status_code == 502:
+                        error_type = 'upstream_error'
+                        logger.error(f"⚠️ Обнаружена ошибка upstream (временная проблема сервера)")
+                    elif 'unmarshal' in error_detail_lower or 'unexpected end of json' in error_detail_lower or response.status_code == 500:
+                        error_type = 'server_error'
+                        logger.error(f"⚠️ Обнаружена внутренняя ошибка сервера (невалидный JSON или прерванный ответ)")
+                    elif 'not found' in error_detail_lower:
+                        error_type = 'model_not_found'
+
                     return {
                         'success': False,
                         'error': f'Ошибка Ollama: {error_detail}',
+                        'error_type': error_type,
                         'status_code': response.status_code
                     }
 
