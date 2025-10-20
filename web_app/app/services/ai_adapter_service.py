@@ -391,9 +391,12 @@ class AIAdapterService:
                     elif 'hourly usage limit' in error_detail_lower or 'usage limit' in error_detail_lower:
                         error_type = 'rate_limit'
                         logger.error(f"⚠️ Обнаружена ошибка лимита использования Ollama модели")
+                    elif 'upstream timeout' in error_detail_lower or response.status_code == 504:
+                        error_type = 'upstream_timeout'
+                        logger.error(f"⚠️ Обнаружена ошибка upstream timeout (504) - сервер не ответил вовремя")
                     elif 'upstream error' in error_detail_lower or response.status_code == 502:
                         error_type = 'upstream_error'
-                        logger.error(f"⚠️ Обнаружена ошибка upstream (временная проблема сервера)")
+                        logger.error(f"⚠️ Обнаружена ошибка upstream (502) - временная проблема сервера")
                     elif 'unmarshal' in error_detail_lower or 'unexpected end of json' in error_detail_lower or response.status_code == 500:
                         error_type = 'server_error'
                         logger.error(f"⚠️ Обнаружена внутренняя ошибка сервера (невалидный JSON или прерванный ответ)")
