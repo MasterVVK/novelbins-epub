@@ -184,7 +184,7 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
                 self.translator.translator.current_prompt_type = 'editing_analysis_original'
                 self.translator.translator.request_start_time = time.time()
 
-            result = self.translator.translator.translate_text(translated, prompt, "", chapter_id)
+            result = self.translator.translator.translate_text(translated, prompt, "", chapter_id, temperature=self.translator.temperature)
 
             # Парсим ответ
             strategy = self._parse_analysis_result(result)
@@ -239,7 +239,7 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
                 self.translator.translator.current_prompt_type = 'editing_fix_original'
                 self.translator.translator.request_start_time = time.time()
 
-            result = self.translator.translator.translate_text(translated, prompt, "", chapter_id)
+            result = self.translator.translator.translate_text(translated, prompt, "", chapter_id, temperature=self.translator.temperature)
             return result if result else translated
         except Exception as e:
             LogService.log_error(f"Ошибка исправления с оригиналом: {e}", chapter_id=chapter_id)
@@ -281,7 +281,7 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
                 self.translator.translator.current_prompt_type = 'editing_style_original'
                 self.translator.translator.request_start_time = time.time()
 
-            result = self.translator.translator.translate_text(translated, prompt, "", chapter_id)
+            result = self.translator.translator.translate_text(translated, prompt, "", chapter_id, temperature=self.translator.temperature)
             return result if result else translated
         except Exception as e:
             LogService.log_error(f"Ошибка улучшения стиля с оригиналом: {e}", chapter_id=chapter_id)
@@ -323,7 +323,7 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
                 self.translator.translator.current_prompt_type = 'editing_dialogue_original'
                 self.translator.translator.request_start_time = time.time()
 
-            result = self.translator.translator.translate_text(translated, prompt, "", chapter_id)
+            result = self.translator.translator.translate_text(translated, prompt, "", chapter_id, temperature=self.translator.temperature)
             return result if result else translated
         except Exception as e:
             LogService.log_error(f"Ошибка полировки диалогов с оригиналом: {e}", chapter_id=chapter_id)
@@ -365,7 +365,7 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
                 self.translator.translator.current_prompt_type = 'editing_final_original'
                 self.translator.translator.request_start_time = time.time()
 
-            result = self.translator.translator.translate_text(translated, prompt, "", chapter_id)
+            result = self.translator.translator.translate_text(translated, prompt, "", chapter_id, temperature=self.translator.temperature)
             # Очищаем от метаданных Gemini
             if result:
                 result = self._clean_ai_response(result)

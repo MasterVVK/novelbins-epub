@@ -219,7 +219,7 @@ class GlossaryAwareEditorService:
                 self.translator.translator.current_prompt_type = 'editing_glossary_fix'
                 self.translator.translator.request_start_time = time.time()
             
-            result = self.translator.translator.translate_text(text, prompt, "", chapter_id)
+            result = self.translator.translator.translate_text(text, prompt, "", chapter_id, temperature=self.translator.temperature)
             return result if result else text
         except Exception as e:
             LogService.log_error(f"Ошибка исправления глоссария: {e}", chapter_id=chapter_id)
@@ -241,7 +241,7 @@ class GlossaryAwareEditorService:
                 self.translator.translator.current_prompt_type = 'editing_style_glossary'
                 self.translator.translator.request_start_time = time.time()
             
-            result = self.translator.translator.translate_text(text, prompt, "", chapter_id)
+            result = self.translator.translator.translate_text(text, prompt, "", chapter_id, temperature=self.translator.temperature)
             return result if result else text
         except Exception as e:
             LogService.log_error(f"Ошибка улучшения стиля: {e}", chapter_id=chapter_id)
@@ -266,7 +266,7 @@ class GlossaryAwareEditorService:
                 self.translator.translator.current_prompt_type = 'editing_dialogue_glossary'
                 self.translator.translator.request_start_time = time.time()
             
-            result = self.translator.translator.translate_text(text, prompt, "", chapter_id)
+            result = self.translator.translator.translate_text(text, prompt, "", chapter_id, temperature=self.translator.temperature)
             return result if result else text
         except Exception as e:
             LogService.log_error(f"Ошибка полировки диалогов: {e}", chapter_id=chapter_id)
@@ -291,7 +291,7 @@ class GlossaryAwareEditorService:
                 self.translator.translator.current_prompt_type = 'editing_final_glossary'
                 self.translator.translator.request_start_time = time.time()
             
-            result = self.translator.translator.translate_text(text, prompt, "", chapter_id)
+            result = self.translator.translator.translate_text(text, prompt, "", chapter_id, temperature=self.translator.temperature)
             return result if result else text
         except Exception as e:
             LogService.log_error(f"Ошибка финальной полировки: {e}", chapter_id=chapter_id)
@@ -365,7 +365,7 @@ class GlossaryAwareEditorService:
                 self.translator.translator.current_prompt_type = 'editing_analysis_glossary'
                 self.translator.translator.request_start_time = time.time()
             
-            result = self.translator.translator.translate_text(text, prompt, "", chapter_id)
+            result = self.translator.translator.translate_text(text, prompt, "", chapter_id, temperature=self.translator.temperature)
             if not result:
                 return {'quality_score': 5, 'needs_style': True, 'needs_dialogue': True, 
                        'needs_polish': True, 'needs_glossary_fix': True}

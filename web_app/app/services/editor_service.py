@@ -120,7 +120,7 @@ class EditorService:
                 inner_translator.request_start_time = time.time()
 
             # Используем translate_text для анализа качества
-            result = inner_translator.translate_text(text, prompt, "", chapter_id) if inner_translator else None
+            result = inner_translator.translate_text(text, prompt, "", chapter_id, temperature=self.translator.temperature) if inner_translator else None
             if not result:
                 LogService.log_info(f"Анализ качества не вернул результат, используем стандартную стратегию", 
                                   chapter_id=chapter_id)
@@ -193,7 +193,7 @@ class EditorService:
                 inner_translator.current_prompt_type = 'editing_style'
                 inner_translator.request_start_time = time.time()
 
-            result = inner_translator.translate_text(text, prompt, "", chapter_id) if inner_translator else None
+            result = inner_translator.translate_text(text, prompt, "", chapter_id, temperature=self.translator.temperature) if inner_translator else None
             return result if result else text
         except Exception as e:
             LogService.log_error(f"Ошибка улучшения стиля: {e}")
@@ -216,7 +216,7 @@ class EditorService:
                 inner_translator.current_prompt_type = 'editing_dialogue'
                 inner_translator.request_start_time = time.time()
 
-            result = inner_translator.translate_text(text, prompt, "", chapter_id) if inner_translator else None
+            result = inner_translator.translate_text(text, prompt, "", chapter_id, temperature=self.translator.temperature) if inner_translator else None
             return result if result else text
         except Exception as e:
             LogService.log_error(f"Ошибка полировки диалогов: {e}")
@@ -239,7 +239,7 @@ class EditorService:
                 inner_translator.current_prompt_type = 'editing_final'
                 inner_translator.request_start_time = time.time()
 
-            result = inner_translator.translate_text(text, prompt, "", chapter_id) if inner_translator else None
+            result = inner_translator.translate_text(text, prompt, "", chapter_id, temperature=self.translator.temperature) if inner_translator else None
             return result if result else text
         except Exception as e:
             LogService.log_error(f"Ошибка финальной полировки: {e}")

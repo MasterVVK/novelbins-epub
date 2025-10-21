@@ -210,7 +210,7 @@ class ParallelEditorService:
         )
         
         try:
-            result = self.translator.translator.translate_text(text, prompt, "", chapter_id)
+            result = self.translator.translator.translate_text(text, prompt, "", chapter_id, temperature=self.translator.temperature)
             return self._parse_analysis_result(result)
         except Exception as e:
             LogService.log_error(f"Ошибка анализа: {e}", chapter_id=chapter_id)
@@ -225,7 +225,7 @@ class ParallelEditorService:
         prompt = prompt_template.format(text=text, context=context_str)
         
         try:
-            result = self.translator.translator.translate_text(text, prompt, "", chapter_id)
+            result = self.translator.translator.translate_text(text, prompt, "", chapter_id, temperature=self.translator.temperature)
             return result if result else text
         except Exception as e:
             LogService.log_error(f"Ошибка улучшения стиля: {e}", chapter_id=chapter_id)
@@ -244,7 +244,7 @@ class ParallelEditorService:
         )
         
         try:
-            result = self.translator.translator.translate_text(text, prompt, "", chapter_id)
+            result = self.translator.translator.translate_text(text, prompt, "", chapter_id, temperature=self.translator.temperature)
             return result if result else text
         except Exception as e:
             LogService.log_error(f"Ошибка полировки диалогов: {e}", chapter_id=chapter_id)
@@ -267,7 +267,7 @@ class ParallelEditorService:
         )
         
         try:
-            result = self.translator.translator.translate_text(text, prompt, "", chapter_id)
+            result = self.translator.translator.translate_text(text, prompt, "", chapter_id, temperature=self.translator.temperature)
             return result if result else text
         except Exception as e:
             LogService.log_error(f"Ошибка финальной полировки: {e}", chapter_id=chapter_id)
