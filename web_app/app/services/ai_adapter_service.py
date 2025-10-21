@@ -73,6 +73,10 @@ class AIAdapterService:
         # Увеличенный таймаут для Gemini (большие тексты требуют времени)
         async with httpx.AsyncClient(timeout=300.0) as client:
             url = f"{self.model.api_endpoint}/models/{self.model.model_id}:generateContent"
+            
+            # Логируем параметры запроса
+            actual_max_tokens = min(max_tokens, self.model.max_output_tokens)
+            LogService.log_info(f"Gemini запрос: {self.model.model_id} | Temperature: {temperature} | Max tokens: {actual_max_tokens:,} / {self.model.max_output_tokens:,}")
 
             response = await client.post(
                 url,
@@ -86,7 +90,7 @@ class AIAdapterService:
                     }],
                     'generationConfig': {
                         'temperature': temperature,
-                        'maxOutputTokens': min(max_tokens, self.model.max_output_tokens),
+                        'maxOutputTokens': actual_max_tokens,
                         'topP': 0.95,
                         'topK': 40
                     },
@@ -137,6 +141,10 @@ class AIAdapterService:
         if not self.model.api_key:
             return {'success': False, 'error': 'API ключ не указан'}
 
+        # Логируем параметры запроса
+        actual_max_tokens = min(max_tokens, self.model.max_output_tokens)
+        LogService.log_info(f"OpenAI запрос: {self.model.model_id} | Temperature: {temperature} | Max tokens: {actual_max_tokens:,} / {self.model.max_output_tokens:,}")
+
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.post(
                 f"{self.model.api_endpoint}/chat/completions",
@@ -151,7 +159,7 @@ class AIAdapterService:
                         {'role': 'user', 'content': user_prompt}
                     ],
                     'temperature': temperature,
-                    'max_tokens': min(max_tokens, self.model.max_output_tokens)
+                    'max_tokens': actual_max_tokens
                 }
             )
 
@@ -180,6 +188,10 @@ class AIAdapterService:
         if not self.model.api_key:
             return {'success': False, 'error': 'API ключ не указан'}
 
+        # Логируем параметры запроса
+        actual_max_tokens = min(max_tokens, self.model.max_output_tokens)
+        LogService.log_info(f"Anthropic запрос: {self.model.model_id} | Temperature: {temperature} | Max tokens: {actual_max_tokens:,} / {self.model.max_output_tokens:,}")
+
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.post(
                 f"{self.model.api_endpoint}/messages",
@@ -195,7 +207,7 @@ class AIAdapterService:
                         {'role': 'user', 'content': user_prompt}
                     ],
                     'temperature': temperature,
-                    'max_tokens': min(max_tokens, self.model.max_output_tokens)
+                    'max_tokens': actual_max_tokens
                 }
             )
 
@@ -290,16 +302,16 @@ class AIAdapterService:
 
                 # Логируем новую динамическую логику расчета
                 logger.info(f"Ollama: ДИНАМИЧЕСКИЙ расчет контекста для {self.model.name}:")
-                logger.info(f"  📊 Параметры модели: speed={self.model.speed_rating}/5, max_context={model_max_context}")
+                logger.info(f"  📊 Параметры модели: speed={self.model.speed_rating}/5, max_context={model_max_context:,}")
                 logger.info(f"  📝 Промпт: ~{prompt_length} токенов (+{int(safety_buffer*100)}% буфер = {safe_prompt_size})")
-                logger.info(f"  🎯 Диапазон генерации: {min_generation}-{max_generation} токенов ({int(min_generation_ratio*100)}%-{int(max_generation_ratio*100)}% от контекста)")
-                logger.info(f"  💡 Оптимальная генерация: {final_generation_size} токенов")
-                logger.info(f"  🔧 Финальный контекст: {actual_context_size} токенов")
+                logger.info(f"  🎯 Диапазон генерации: {min_generation:,}-{max_generation:,} токенов ({int(min_generation_ratio*100)}%-{int(max_generation_ratio*100)}% от контекста)")
+                logger.info(f"  💡 Оптимальная генерация: {optimal_generation:,} токенов")
+                logger.info(f"  🔧 Финальный num_predict: {final_generation_size:,} / {self.model.max_output_tokens:,} (макс. модели)")
+                logger.info(f"  📏 Контекст: {actual_context_size:,} токенов")
                 logger.info(f"  ⚙️  Параметры из provider_config: {provider_config}")
 
                 # Логируем параметры запроса
-                LogService.log_info(f"Начинаем запрос к ollama (модель: {self.model.model_id})")
-                LogService.log_info(f"Temperature: {temperature}, Num predict: {final_generation_size}")
+                LogService.log_info(f"Ollama запрос: {self.model.model_id} | Temperature: {temperature} | Num predict: {final_generation_size:,} / {self.model.max_output_tokens:,}")
                 logger.debug(f"Ollama endpoint: {self.model.api_endpoint}")
                 logger.debug(f"Context size: {actual_context_size}")
 

@@ -9,7 +9,9 @@ This project, "Novelbins EPUB," is a comprehensive Python-based system designed 
 *   **Database (Standalone Scripts):** SQLite (managed directly via `sqlite3` module).
 *   **Asynchronous Tasks:** Celery with Redis as a broker.
 *   **Web Scraping:** Selenium and BeautifulSoup4.
-*   **AI/Translation:** Google Generative AI, OpenAI APIs, Anthropic Claude, and **Ollama with dynamic context calculation**.
+*   **AI/Translation:** Google Generative AI, OpenAI APIs, Anthropic Claude, and **Ollama with intelligent context management**.
+
+**Ollama Integration:** Advanced dynamic context calculation that automatically optimizes `num_predict` based on model specifications, prompt size, and performance characteristics. Each Ollama model can be configured through the web interface with custom parameters via `provider_config`.
 *   **EPUB Generation:** `ebooklib`.
 *   **Frontend:** Jinja2 templates, likely with custom CSS/JS.
 *   **Utilities:** `python-dotenv`, `httpx`, `httpx-socks`.

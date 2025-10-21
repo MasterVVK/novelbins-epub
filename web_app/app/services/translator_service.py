@@ -157,7 +157,8 @@ class LLMTranslator:
 
     def make_request(self, system_prompt: str, user_prompt: str, temperature: float = None) -> Optional[str]:
         """Базовый метод для запросов к API с умной ротацией ключей"""
-        LogService.log_info(f"Начинаем запрос к API Gemini (модель: {self.config.model_name})")
+        # Убираем логирование здесь чтобы избежать дублирования
+        # Логирование будет в специфичных адаптерах для каждого провайдера
         
         generation_config = {
             "temperature": temperature or self.config.temperature,

@@ -97,8 +97,9 @@ class UniversalLLMTranslator:
 
     async def make_request_async(self, system_prompt: str, user_prompt: str, temperature: float = None) -> Optional[str]:
         """Асинхронный запрос к AI модели с умной ротацией ключей"""
-        LogService.log_info(f"Начинаем запрос к {self.model.provider} (модель: {self.model.model_id})")
-
+        # Убираем общее логирование чтобы избежать дублирования
+        # Каждый адаптер будет логировать свой запрос индивидуально
+        
         temperature = temperature or self.model.default_temperature
         max_tokens = self.model.max_output_tokens
 
