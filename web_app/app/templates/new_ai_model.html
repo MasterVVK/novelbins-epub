@@ -1,0 +1,485 @@
+{% extends "base.html" %}
+
+{% block title %}Добавить AI модель - Novel Translator{% endblock %}
+{% block page_title %}Добавить AI модель{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="bi bi-plus-circle"></i> Новая модель
+                </h5>
+            </div>
+            <div class="card-body">
+                <form method="POST" id="modelForm">
+                    <!-- Шаг 1: Выбор провайдера -->
+                    <div class="mb-4">
+                        <label for="provider" class="form-label fw-bold">Провайдер API *</label>
+                        <select class="form-select" id="provider" name="provider" onchange="updateProviderFields()" required>
+                            <option value="">-- Выберите провайдер --</option>
+                            <option value="gemini">Google Gemini</option>
+                            <option value="openai">OpenAI</option>
+                            <option value="anthropic">Anthropic (Claude)</option>
+                            <option value="ollama">Ollama (Локальные модели)</option>
+                            <option value="custom">Другой провайдер</option>
+                        </select>
+                        <div class="form-text">Выберите API провайдера для модели</div>
+                    </div>
+
+                    <!-- Динамические поля в зависимости от провайдера -->
+                    <div id="provider-fields" style="display: none;">
+                        <!-- API Type для Gemini -->
+                        <div id="gemini-api-type" class="mb-3" style="display: none;">
+                            <label for="api_type" class="form-label">Тип API</label>
+                            <select class="form-select" id="api_type_gemini" name="api_type">
+                                <option value="google-ai">Google AI Studio</option>
+                                <option value="google-vertex">Google Vertex AI</option>
+                            </select>
+                            <div class="form-text">Google AI Studio - проще, Vertex AI - для производства</div>
+                        </div>
+
+                        <!-- Базовая информация -->
+                        <hr>
+                        <h6 class="mb-3">Основная информация</h6>
+
+                        <div class="mb-3">
+                            <label for="name" class="form-label">Название модели *</label>
+                            <input type="text" class="form-control" id="name" name="name" required
+                                   placeholder="Например: Gemini 2.5 Flash">
+                            <div class="form-text">Отображаемое имя в интерфейсе</div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="model_id" class="form-label">ID модели *</label>
+                            <div class="input-group">
+                                <input type="text" class="form-control" id="model_id" name="model_id" required
+                                       placeholder="Например: gemini-2.5-flash">
+                                <button type="button" class="btn btn-outline-secondary" id="fetchModelsBtn"
+                                        onclick="fetchAvailableModels()" style="display: none;">
+                                    <i class="bi bi-search"></i> Получить список
+                                </button>
+                            </div>
+                            <div class="form-text">Точный ID модели для API вызовов</div>
+                            <div id="available-models" class="mt-2"></div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="description" class="form-label">Описание</label>
+                            <textarea class="form-control" id="description" name="description" rows="2"
+                                      placeholder="Краткое описание модели и её особенностей"></textarea>
+                        </div>
+
+                        <!-- Настройки подключения -->
+                        <hr>
+                        <h6 class="mb-3">Настройки подключения</h6>
+
+                        <div class="mb-3">
+                            <label for="api_endpoint" class="form-label">API Endpoint</label>
+                            <input type="url" class="form-control" id="api_endpoint" name="api_endpoint"
+                                   placeholder="https://api.example.com/v1">
+                            <div class="form-text">URL для API запросов (будет заполнен автоматически для известных провайдеров)</div>
+                        </div>
+
+                        <div class="mb-3" id="api-key-section">
+                            <label for="api_key" class="form-label">API ключ</label>
+                            <div class="input-group">
+                                <input type="password" class="form-control" id="api_key" name="api_key"
+                                       placeholder="sk-...">
+                                <button type="button" class="btn btn-outline-secondary" onclick="toggleApiKey()">
+                                    <i class="bi bi-eye" id="api-key-toggle"></i>
+                                </button>
+                            </div>
+                            <div class="form-text">API ключ для авторизации (оставьте пустым для Ollama)</div>
+                        </div>
+
+                        <!-- Параметры модели -->
+                        <hr>
+                        <h6 class="mb-3">Параметры модели</h6>
+
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="max_input_tokens" class="form-label">Макс. входных токенов</label>
+                                    <input type="number" class="form-control" id="max_input_tokens" name="max_input_tokens"
+                                           value="30000" min="1000" max="2000000">
+                                    <div class="form-text">Максимальный размер входного текста</div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="max_output_tokens" class="form-label">Макс. выходных токенов</label>
+                                    <input type="number" class="form-control" id="max_output_tokens" name="max_output_tokens"
+                                           value="8000" min="100" max="256000">
+                                    <div class="form-text">Максимальный размер ответа</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="supports_system_prompt"
+                                               name="supports_system_prompt" checked>
+                                        <label class="form-check-label" for="supports_system_prompt">
+                                            Поддерживает системный промпт
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="default_temperature" class="form-label">Температура по умолчанию</label>
+                                    <input type="number" class="form-control" id="default_temperature" name="default_temperature"
+                                           value="0.3" min="0" max="2" step="0.1">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Характеристики -->
+                        <hr>
+                        <h6 class="mb-3">Характеристики производительности</h6>
+
+                        <div class="row">
+                            <div class="col-md-4">
+                                <label for="speed_rating" class="form-label">Скорость</label>
+                                <select class="form-select" id="speed_rating" name="speed_rating">
+                                    <option value="1">⚡ Очень медленная</option>
+                                    <option value="2">⚡⚡ Медленная</option>
+                                    <option value="3" selected>⚡⚡⚡ Средняя</option>
+                                    <option value="4">⚡⚡⚡⚡ Быстрая</option>
+                                    <option value="5">⚡⚡⚡⚡⚡ Очень быстрая</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4">
+                                <label for="quality_rating" class="form-label">Качество</label>
+                                <select class="form-select" id="quality_rating" name="quality_rating">
+                                    <option value="1">⭐ Низкое</option>
+                                    <option value="2">⭐⭐ Ниже среднего</option>
+                                    <option value="3" selected>⭐⭐⭐ Среднее</option>
+                                    <option value="4">⭐⭐⭐⭐ Высокое</option>
+                                    <option value="5">⭐⭐⭐⭐⭐ Превосходное</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4">
+                                <label for="cost_rating" class="form-label">Стоимость</label>
+                                <select class="form-select" id="cost_rating" name="cost_rating">
+                                    <option value="1">💰💰💰💰💰 Очень дорогая</option>
+                                    <option value="2">💰💰💰💰 Дорогая</option>
+                                    <option value="3" selected>💰💰💰 Средняя</option>
+                                    <option value="4">💰💰 Дешёвая</option>
+                                    <option value="5">💰 Очень дешёвая/Бесплатная</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <!-- Рекомендации -->
+                        <hr>
+                        <h6 class="mb-3">Рекомендации использования</h6>
+
+                        <div class="mb-3">
+                            <label class="form-label">Рекомендуется для:</label>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="recommended_for" value="draft" id="rec_draft">
+                                <label class="form-check-label" for="rec_draft">Черновой перевод</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="recommended_for" value="final_translation" id="rec_final">
+                                <label class="form-check-label" for="rec_final">Финальный перевод</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="recommended_for" value="dialogue" id="rec_dialogue">
+                                <label class="form-check-label" for="rec_dialogue">Диалоги</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="recommended_for" value="description" id="rec_description">
+                                <label class="form-check-label" for="rec_description">Описания</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="recommended_for" value="battle_scenes" id="rec_battle">
+                                <label class="form-check-label" for="rec_battle">Боевые сцены</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="recommended_for" value="emotional_scenes" id="rec_emotional">
+                                <label class="form-check-label" for="rec_emotional">Эмоциональные сцены</label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="d-flex justify-content-between mt-4">
+                        <a href="{{ url_for('main.ai_models') }}" class="btn btn-outline-secondary">
+                            <i class="bi bi-arrow-left"></i> Назад
+                        </a>
+                        <button type="submit" class="btn btn-primary" id="submitBtn" disabled>
+                            <i class="bi bi-check-circle"></i> Создать модель
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function updateProviderFields() {
+    const provider = document.getElementById('provider').value;
+    const providerFields = document.getElementById('provider-fields');
+    const submitBtn = document.getElementById('submitBtn');
+    const geminiApiType = document.getElementById('gemini-api-type');
+    const apiKeySection = document.getElementById('api-key-section');
+    const fetchModelsBtn = document.getElementById('fetchModelsBtn');
+    const apiEndpoint = document.getElementById('api_endpoint');
+
+    if (!provider) {
+        providerFields.style.display = 'none';
+        submitBtn.disabled = true;
+        return;
+    }
+
+    providerFields.style.display = 'block';
+    submitBtn.disabled = false;
+
+    // Скрываем все специфичные поля
+    geminiApiType.style.display = 'none';
+    fetchModelsBtn.style.display = 'none';
+
+    // Настраиваем поля в зависимости от провайдера
+    switch(provider) {
+        case 'gemini':
+            geminiApiType.style.display = 'block';
+            apiEndpoint.value = 'https://generativelanguage.googleapis.com/v1beta';
+            apiKeySection.style.display = 'block';
+            setModelPreset('gemini-2.5-flash', 'Gemini 2.5 Flash');
+            break;
+
+        case 'openai':
+            apiEndpoint.value = 'https://api.openai.com/v1';
+            apiKeySection.style.display = 'block';
+            setModelPreset('gpt-4o', 'GPT-4o');
+            break;
+
+        case 'anthropic':
+            apiEndpoint.value = 'https://api.anthropic.com/v1';
+            apiKeySection.style.display = 'block';
+            setModelPreset('claude-3-5-sonnet-20241022', 'Claude 3.5 Sonnet');
+            break;
+
+        case 'ollama':
+            apiEndpoint.value = 'http://localhost:11434/api';
+            apiKeySection.style.display = 'none';
+            fetchModelsBtn.style.display = 'block';
+            setModelPreset('qwen2.5:32b', 'Qwen 2.5 32B');
+            document.getElementById('cost_rating').value = '5'; // Бесплатная
+            break;
+
+        case 'custom':
+            apiEndpoint.value = '';
+            apiKeySection.style.display = 'block';
+            break;
+    }
+}
+
+function setModelPreset(modelId, modelName) {
+    document.getElementById('model_id').value = modelId;
+    document.getElementById('name').value = modelName;
+}
+
+function toggleApiKey() {
+    const input = document.getElementById('api_key');
+    const icon = document.getElementById('api-key-toggle');
+
+    if (input.type === 'password') {
+        input.type = 'text';
+        icon.className = 'bi bi-eye-slash';
+    } else {
+        input.type = 'password';
+        icon.className = 'bi bi-eye';
+    }
+}
+
+async function fetchAvailableModels() {
+    const endpoint = document.getElementById('api_endpoint').value;
+    const availableModelsDiv = document.getElementById('available-models');
+
+    if (!endpoint) {
+        alert('Укажите API Endpoint');
+        return;
+    }
+
+    availableModelsDiv.innerHTML = '<div class="alert alert-info">Загрузка списка моделей...</div>';
+
+    try {
+        const response = await fetch('/api/ollama/models', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({endpoint: endpoint})
+        });
+
+        const models = await response.json();
+
+        if (models.length > 0) {
+            let html = '<div class="alert alert-success">Доступные модели:</div><div class="list-group">';
+            for (const model of models) {
+                // Сохраняем информацию о лимитах токенов в data атрибутах
+                const maxInput = model.recommended_max_input || 8192;
+                const maxOutput = model.recommended_max_output || 2048;
+                html += `
+                    <a href="#" class="list-group-item list-group-item-action"
+                       onclick="selectOllamaModel('${model.name}', '${model.name}', ${maxInput}, ${maxOutput}); return false;">
+                        <strong>${model.name}</strong>
+                        ${model.size ? `<span class="badge bg-secondary ms-2">${(model.size / 1024 / 1024 / 1024).toFixed(1)}GB</span>` : ''}
+                        ${model.recommended_max_input ? `<span class="badge bg-info ms-1">${Math.round(model.recommended_max_input/1000)}k токенов</span>` : ''}
+                    </a>
+                `;
+            }
+            html += '</div>';
+            availableModelsDiv.innerHTML = html;
+        } else {
+            availableModelsDiv.innerHTML = '<div class="alert alert-warning">Модели не найдены. Проверьте, что Ollama запущен.</div>';
+        }
+    } catch (error) {
+        availableModelsDiv.innerHTML = `<div class="alert alert-danger">Ошибка: ${error.message}</div>`;
+    }
+}
+
+function selectModel(modelId, modelName) {
+    document.getElementById('model_id').value = modelId;
+    document.getElementById('name').value = modelName;
+    document.getElementById('available-models').innerHTML = '';
+}
+
+async function selectOllamaModel(modelId, modelName, maxInput, maxOutput) {
+    // Устанавливаем базовые значения
+    document.getElementById('model_id').value = modelId;
+    document.getElementById('name').value = modelName;
+    document.getElementById('available-models').innerHTML = '';
+
+    // Устанавливаем лимиты токенов
+    document.getElementById('max_input_tokens').value = maxInput;
+    document.getElementById('max_output_tokens').value = maxOutput;
+
+    // Показываем индикатор загрузки
+    const infoDiv = document.createElement('div');
+    infoDiv.className = 'alert alert-info mt-2';
+    infoDiv.innerHTML = '<i class="bi bi-info-circle"></i> Получение детальной информации о модели...';
+    document.getElementById('available-models').appendChild(infoDiv);
+
+    try {
+        // Получаем детальную информацию о модели
+        const response = await fetch('/api/ollama/model-info', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                endpoint: document.getElementById('api_endpoint').value,
+                model_name: modelId
+            })
+        });
+
+        if (response.ok) {
+            const modelInfo = await response.json();
+
+            // Обновляем лимиты токенов если получили более точную информацию
+            if (modelInfo.recommended_max_input) {
+                document.getElementById('max_input_tokens').value = modelInfo.recommended_max_input;
+            }
+            if (modelInfo.recommended_max_output) {
+                document.getElementById('max_output_tokens').value = modelInfo.recommended_max_output;
+            }
+
+            // Показываем информацию о модели
+            let infoHtml = '<div class="alert alert-success mt-2">';
+            infoHtml += '<h6><i class="bi bi-check-circle"></i> Информация о модели получена</h6>';
+            infoHtml += '<ul class="mb-0">';
+            if (modelInfo.family) {
+                infoHtml += `<li>Семейство: <strong>${modelInfo.family}</strong></li>`;
+            }
+            if (modelInfo.parameter_size) {
+                infoHtml += `<li>Размер: <strong>${modelInfo.parameter_size}</strong></li>`;
+            }
+            if (modelInfo.context_length) {
+                infoHtml += `<li>Контекст: <strong>${modelInfo.context_length} токенов</strong></li>`;
+            }
+            infoHtml += `<li>Рекомендуемые входные токены: <strong>${modelInfo.recommended_max_input}</strong></li>`;
+            infoHtml += `<li>Рекомендуемые выходные токены: <strong>${modelInfo.recommended_max_output}</strong></li>`;
+            infoHtml += '</ul></div>';
+
+            document.getElementById('available-models').innerHTML = infoHtml;
+
+            // Автоматически устанавливаем рейтинги на основе размера модели
+            if (modelInfo.parameter_size) {
+                const size = modelInfo.parameter_size.toLowerCase();
+                if (size.includes('1b') || size.includes('2b') || size.includes('3b')) {
+                    // Маленькие модели - быстрые, но низкое качество
+                    document.getElementById('speed_rating').value = '5';
+                    document.getElementById('quality_rating').value = '2';
+                } else if (size.includes('7b') || size.includes('8b') || size.includes('9b')) {
+                    // Средние модели
+                    document.getElementById('speed_rating').value = '4';
+                    document.getElementById('quality_rating').value = '3';
+                } else if (size.includes('14b') || size.includes('27b') || size.includes('32b')) {
+                    // Большие модели
+                    document.getElementById('speed_rating').value = '3';
+                    document.getElementById('quality_rating').value = '4';
+                } else if (size.includes('70b') || size.includes('120b')) {
+                    // Очень большие модели
+                    document.getElementById('speed_rating').value = '1';
+                    document.getElementById('quality_rating').value = '5';
+                }
+            }
+        } else {
+            // Если не удалось получить детальную информацию, используем базовые значения
+            console.warn('Не удалось получить детальную информацию о модели');
+            document.getElementById('available-models').innerHTML = '';
+        }
+    } catch (error) {
+        console.error('Ошибка при получении информации о модели:', error);
+        document.getElementById('available-models').innerHTML = '';
+    }
+}
+
+// Обработка отправки формы
+document.getElementById('modelForm').addEventListener('submit', async function(e) {
+    e.preventDefault();
+
+    const formData = new FormData(this);
+    const data = {};
+
+    // Собираем обычные поля
+    for (const [key, value] of formData.entries()) {
+        if (key !== 'recommended_for') {
+            data[key] = value;
+        }
+    }
+
+    // Собираем чекбоксы recommended_for
+    data.recommended_for = [];
+    const checkboxes = document.querySelectorAll('input[name="recommended_for"]:checked');
+    checkboxes.forEach(cb => data.recommended_for.push(cb.value));
+
+    // Преобразуем чекбокс supports_system_prompt
+    data.supports_system_prompt = document.getElementById('supports_system_prompt').checked;
+
+    // Устанавливаем api_key_required в зависимости от провайдера
+    data.api_key_required = data.provider !== 'ollama';
+
+    try {
+        const response = await fetch('/api/ai-models', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(data)
+        });
+
+        if (response.ok) {
+            window.location.href = '{{ url_for("main.ai_models") }}';
+        } else {
+            const error = await response.json();
+            alert('Ошибка: ' + error.message);
+        }
+    } catch (error) {
+        alert('Ошибка: ' + error.message);
+    }
+});
+</script>
+{% endblock %}

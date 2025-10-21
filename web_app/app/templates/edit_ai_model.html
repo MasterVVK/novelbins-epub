@@ -1,0 +1,330 @@
+{% extends "base.html" %}
+
+{% block title %}Редактирование модели - Novel Translator{% endblock %}
+{% block page_title %}Редактирование AI модели{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Редактирование: {{ model.name }}</h5>
+            </div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('main.api_update_ai_model', model_id=model.id) }}" id="editModelForm">
+                    <!-- Основная информация -->
+                    <div class="mb-4">
+                        <h6 class="text-muted">Основная информация</h6>
+                        <hr>
+
+                        <div class="mb-3">
+                            <label for="name" class="form-label">Название модели</label>
+                            <input type="text" class="form-control" id="name" name="name"
+                                   value="{{ model.name }}" required>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="description" class="form-label">Описание</label>
+                            <textarea class="form-control" id="description" name="description" rows="2">{{ model.description }}</textarea>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="model_id" class="form-label">ID модели (в API провайдера)</label>
+                            <input type="text" class="form-control" id="model_id" name="model_id"
+                                   value="{{ model.model_id }}" required>
+                            <div class="form-text">Например: gemini-2.5-flash, gpt-4o, claude-3-5-sonnet-20241022</div>
+                        </div>
+                    </div>
+
+                    <!-- Настройки API -->
+                    <div class="mb-4">
+                        <h6 class="text-muted">Настройки API</h6>
+                        <hr>
+
+                        <div class="mb-3">
+                            <label for="provider" class="form-label">Провайдер</label>
+                            <input type="text" class="form-control" id="provider" value="{{ model.provider }}" disabled>
+                            <div class="form-text">Провайдер нельзя изменить после создания модели</div>
+                        </div>
+
+                        {% if model.provider != 'ollama' %}
+                        {% if model.provider == 'gemini' %}
+                        <!-- Для Gemini - список ключей -->
+                        <div class="mb-3">
+                            <label for="api_keys" class="form-label">
+                                API ключи (по одному на строку)
+                                {% if model.api_keys %}
+                                    <span class="badge bg-info">{{ model.api_keys | length }} ключей</span>
+                                {% endif %}
+                            </label>
+                            <textarea class="form-control font-monospace" id="api_keys" name="api_keys"
+                                      rows="8" placeholder="AIzaSy...&#10;AIzaSy...&#10;AIzaSy...">{% if model.api_keys %}{{ model.api_keys | join('\n') }}{% endif %}</textarea>
+                            <div class="form-text">
+                                Gemini поддерживает ротацию ключей при достижении rate limits.
+                                Введите по одному ключу на строку для автоматической ротации.
+                            </div>
+                        </div>
+                        {% else %}
+                        <!-- Для других провайдеров - один ключ -->
+                        <div class="mb-3">
+                            <label for="api_key" class="form-label">API ключ</label>
+                            <input type="text" class="form-control font-monospace" id="api_key" name="api_key"
+                                   value="{{ model.api_key or '' }}"
+                                   placeholder="sk-...">
+                            <div class="form-text">API ключ для подключения к {{ model.provider | upper }}</div>
+                        </div>
+                        {% endif %}
+                        {% endif %}
+
+                        <div class="mb-3">
+                            <label for="api_endpoint" class="form-label">API Endpoint</label>
+                            <input type="url" class="form-control" id="api_endpoint" name="api_endpoint"
+                                   value="{{ model.api_endpoint }}" required>
+                        </div>
+                    </div>
+
+                    <!-- Параметры генерации -->
+                    <div class="mb-4">
+                        <h6 class="text-muted">Параметры генерации</h6>
+                        <hr>
+
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="max_input_tokens" class="form-label">Макс. входных токенов</label>
+                                    <input type="number" class="form-control" id="max_input_tokens" name="max_input_tokens"
+                                           value="{{ model.max_input_tokens }}" required>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="max_output_tokens" class="form-label">Макс. выходных токенов</label>
+                                    <input type="number" class="form-control" id="max_output_tokens" name="max_output_tokens"
+                                           value="{{ model.max_output_tokens }}" required>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="default_temperature" class="form-label">
+                                Температура по умолчанию: <span id="temperatureValue">{{ model.default_temperature }}</span>
+                            </label>
+                            <input type="range" class="form-range" id="default_temperature" name="default_temperature"
+                                   min="0" max="2" step="0.1" value="{{ model.default_temperature }}"
+                                   oninput="document.getElementById('temperatureValue').textContent = this.value">
+                            <div class="form-text">0 = детерминированный, 2 = максимально креативный</div>
+                        </div>
+
+                        <div class="form-check mb-3">
+                            <input class="form-check-input" type="checkbox" id="supports_system_prompt"
+                                   name="supports_system_prompt" {% if model.supports_system_prompt %}checked{% endif %}>
+                            <label class="form-check-label" for="supports_system_prompt">
+                                Поддерживает системные промпты
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Рейтинги и рекомендации -->
+                    <div class="mb-4">
+                        <h6 class="text-muted">Характеристики</h6>
+                        <hr>
+
+                        <div class="row">
+                            <div class="col-md-4">
+                                <div class="mb-3">
+                                    <label for="speed_rating" class="form-label">
+                                        Скорость: <span id="speedValue">{{ model.speed_rating }}</span>⚡
+                                    </label>
+                                    <input type="range" class="form-range" id="speed_rating" name="speed_rating"
+                                           min="1" max="5" step="1" value="{{ model.speed_rating }}"
+                                           oninput="document.getElementById('speedValue').textContent = this.value">
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="mb-3">
+                                    <label for="quality_rating" class="form-label">
+                                        Качество: <span id="qualityValue">{{ model.quality_rating }}</span>⭐
+                                    </label>
+                                    <input type="range" class="form-range" id="quality_rating" name="quality_rating"
+                                           min="1" max="5" step="1" value="{{ model.quality_rating }}"
+                                           oninput="document.getElementById('qualityValue').textContent = this.value">
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="mb-3">
+                                    <label for="cost_rating" class="form-label">
+                                        Стоимость: <span id="costValue">{{ model.cost_rating }}</span>💰
+                                    </label>
+                                    <input type="range" class="form-range" id="cost_rating" name="cost_rating"
+                                           min="1" max="5" step="1" value="{{ model.cost_rating }}"
+                                           oninput="document.getElementById('costValue').textContent = this.value">
+                                    <div class="form-text">1 = дорого, 5 = дешево</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="recommended_for" class="form-label">Рекомендуется для</label>
+                            <input type="text" class="form-control" id="recommended_for" name="recommended_for"
+                                   value="{{ model.recommended_for | join(', ') if model.recommended_for else '' }}"
+                                   placeholder="draft, final_translation, poetry, dialogue (через запятую)">
+                        </div>
+                    </div>
+
+                    <!-- Статус -->
+                    <div class="mb-4">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="is_active" name="is_active"
+                                   {% if model.is_active %}checked{% endif %}>
+                            <label class="form-check-label" for="is_active">
+                                Модель активна
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Кнопки -->
+                    <div class="d-flex justify-content-between">
+                        <a href="{{ url_for('main.ai_models') }}" class="btn btn-secondary">
+                            <i class="bi bi-arrow-left"></i> Отмена
+                        </a>
+                        <div>
+                            <button type="button" class="btn btn-info me-2" onclick="testModel()">
+                                <i class="bi bi-play-circle"></i> Тестировать
+                            </button>
+                            <button type="submit" class="btn btn-primary">
+                                <i class="bi bi-check-circle"></i> Сохранить изменения
+                            </button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Информация о последнем тесте -->
+        {% if model.last_tested_at %}
+        <div class="card mt-3">
+            <div class="card-body">
+                <h6 class="card-title">Последнее тестирование</h6>
+                <p class="mb-0">
+                    <small class="text-muted">
+                        {{ model.last_tested_at.strftime('%d.%m.%Y %H:%M') }} -
+                        {% if model.test_status == 'success' %}
+                            <span class="text-success">Успешно</span>
+                        {% elif model.test_status == 'failed' %}
+                            <span class="text-danger">Ошибка</span>
+                        {% else %}
+                            <span class="text-warning">Не тестировалась</span>
+                        {% endif %}
+                    </small>
+                </p>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Модальное окно результатов теста -->
+<div class="modal fade" id="testResultModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Результат тестирования</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="testResultBody">
+                <!-- Результаты теста будут здесь -->
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Закрыть</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.getElementById('editModelForm').addEventListener('submit', async function(e) {
+    e.preventDefault();
+
+    const formData = new FormData(this);
+    const data = {};
+
+    // Собираем данные формы
+    for (let [key, value] of formData.entries()) {
+        if (key === 'recommended_for') {
+            data[key] = value.split(',').map(s => s.trim()).filter(s => s);
+        } else if (key === 'api_keys') {
+            // Разбиваем список ключей по строкам
+            data[key] = value.split('\n').map(s => s.trim()).filter(s => s);
+        } else if (key === 'is_active' || key === 'supports_system_prompt') {
+            data[key] = true;
+        } else if (value !== '') {
+            data[key] = value;
+        }
+    }
+
+    // Добавляем false для неотмеченных чекбоксов
+    if (!formData.has('is_active')) data.is_active = false;
+    if (!formData.has('supports_system_prompt')) data.supports_system_prompt = false;
+
+    try {
+        const response = await fetch(this.action, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(data)
+        });
+
+        if (response.ok) {
+            window.location.href = '{{ url_for("main.ai_models") }}';
+        } else {
+            const error = await response.json();
+            alert('Ошибка: ' + (error.message || 'Неизвестная ошибка'));
+        }
+    } catch (error) {
+        alert('Ошибка сохранения: ' + error.message);
+    }
+});
+
+async function testModel() {
+    const testButton = event.target.closest('button');
+    testButton.disabled = true;
+    testButton.innerHTML = '<i class="bi bi-hourglass-split"></i> Тестирование...';
+
+    try {
+        const response = await fetch(`/api/ai-models/{{ model.id }}/test`, {
+            method: 'POST'
+        });
+        const result = await response.json();
+
+        const modal = new bootstrap.Modal(document.getElementById('testResultModal'));
+        const body = document.getElementById('testResultBody');
+
+        if (result.success) {
+            body.innerHTML = `
+                <div class="alert alert-success">
+                    <i class="bi bi-check-circle"></i> Модель работает корректно
+                </div>
+                <p><strong>Тестовый ответ:</strong></p>
+                <pre class="bg-light p-2 rounded">${result.response}</pre>
+            `;
+        } else {
+            body.innerHTML = `
+                <div class="alert alert-danger">
+                    <i class="bi bi-x-circle"></i> Ошибка подключения
+                </div>
+                <p><strong>Описание ошибки:</strong></p>
+                <pre class="bg-light p-2 rounded text-danger">${result.error}</pre>
+            `;
+        }
+
+        modal.show();
+    } catch (error) {
+        alert('Ошибка тестирования: ' + error.message);
+    } finally {
+        testButton.disabled = false;
+        testButton.innerHTML = '<i class="bi bi-play-circle"></i> Тестировать';
+    }
+}
+</script>
+{% endblock %}

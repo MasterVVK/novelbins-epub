@@ -4,7 +4,7 @@ from app import db, socketio
 from sqlalchemy.orm.attributes import flag_modified
 from app.services.translator_service import TranslatorService
 from app.services.parser_service import WebParserService
-from app.services.editor_service import EditorService
+from app.services.original_aware_editor_service import OriginalAwareEditorService
 from app.services.log_service import LogService
 from app.services.parser_integration import ParserIntegrationService
 import threading
@@ -823,8 +823,8 @@ def start_editing(novel_id):
                     return
                 
                 from app.services.translator_service import TranslatorService
-                from app.services.editor_service import EditorService
-                
+                from app.services.original_aware_editor_service import OriginalAwareEditorService
+
                 # Получаем свежий объект новеллы в контексте текущей сессии
                 fresh_novel = Novel.query.get(novel_id)
                 if not fresh_novel:
@@ -837,7 +837,7 @@ def start_editing(novel_id):
                     config['model_name'] = fresh_novel.config.get('translation_model')
                     config['temperature'] = fresh_novel.config.get('editing_temperature', fresh_novel.config.get('translation_temperature'))
                 translator_service = TranslatorService(config=config)
-                editor_service = EditorService(translator_service)
+                editor_service = OriginalAwareEditorService(translator_service)
                 
                 total_chapters = len(chapter_ids)
                 success_count = 0

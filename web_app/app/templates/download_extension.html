@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Скачать Browser Extension</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        .card {
+            border-radius: 15px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+        }
+        .card-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 15px 15px 0 0 !important;
+            padding: 30px;
+        }
+        .btn-download {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            padding: 15px 40px;
+            font-size: 18px;
+            font-weight: bold;
+            border-radius: 10px;
+            color: white;
+            transition: transform 0.2s;
+        }
+        .btn-download:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.5);
+            color: white;
+        }
+        .step {
+            background: #f8f9fa;
+            border-left: 4px solid #667eea;
+            padding: 15px;
+            margin-bottom: 15px;
+            border-radius: 5px;
+        }
+        .step-number {
+            display: inline-block;
+            width: 30px;
+            height: 30px;
+            background: #667eea;
+            color: white;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 30px;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        .icon-lg {
+            font-size: 80px;
+            color: white;
+        }
+        code {
+            background: #f8f9fa;
+            padding: 2px 8px;
+            border-radius: 4px;
+            color: #667eea;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="card">
+            <div class="card-header text-center">
+                <i class="bi bi-puzzle-fill icon-lg"></i>
+                <h1 class="mt-3 mb-2">Novelbins Cookie Extractor</h1>
+                <p class="mb-0">Browser Extension для автоматического извлечения Cloudflare cookies</p>
+            </div>
+            <div class="card-body p-4">
+                <!-- Download Section -->
+                <div class="text-center mb-5">
+                    <h4 class="mb-3">
+                        <i class="bi bi-download text-primary"></i>
+                        Скачать расширение
+                    </h4>
+                    <a href="{{ url_for('static', filename='browser_extension.tar.gz') }}"
+                       class="btn btn-download btn-lg" download>
+                        <i class="bi bi-download"></i> Скачать browser_extension.tar.gz
+                    </a>
+                    <p class="text-muted mt-2">
+                        <small><i class="bi bi-file-earmark-zip"></i> Размер: 17 KB</small>
+                    </p>
+                </div>
+
+                <!-- Installation Steps -->
+                <h4 class="mb-4">
+                    <i class="bi bi-list-ol text-primary"></i>
+                    Инструкция по установке
+                </h4>
+
+                <div class="step">
+                    <span class="step-number">1</span>
+                    <strong>Распакуйте архив</strong>
+                    <div class="mt-2">
+                        <strong>Windows:</strong> Правый клик → 7-Zip → Extract Here<br>
+                        <strong>Linux/Mac:</strong> <code>tar -xzf browser_extension.tar.gz</code>
+                    </div>
+                </div>
+
+                <div class="step">
+                    <span class="step-number">2</span>
+                    <strong>Откройте Chrome Extensions</strong>
+                    <div class="mt-2">
+                        Введите в адресной строке: <code>chrome://extensions/</code>
+                    </div>
+                </div>
+
+                <div class="step">
+                    <span class="step-number">3</span>
+                    <strong>Включите Developer mode</strong>
+                    <div class="mt-2">
+                        Переключатель в правом верхнем углу → <strong>ON</strong>
+                    </div>
+                </div>
+
+                <div class="step">
+                    <span class="step-number">4</span>
+                    <strong>Загрузите расширение</strong>
+                    <div class="mt-2">
+                        Нажмите <strong>"Load unpacked"</strong> → Выберите папку <code>browser_extension/</code>
+                    </div>
+                </div>
+
+                <div class="step mb-4">
+                    <span class="step-number">5</span>
+                    <strong>Готово!</strong>
+                    <div class="mt-2">
+                        Расширение установлено и готово к использованию ✅
+                    </div>
+                </div>
+
+                <!-- Usage -->
+                <div class="alert alert-info">
+                    <h5 class="alert-heading">
+                        <i class="bi bi-info-circle"></i> Как использовать
+                    </h5>
+                    <ol class="mb-0">
+                        <li>Откройте <strong>czbooks.net</strong></li>
+                        <li>Дождитесь Cloudflare challenge (~5 сек)</li>
+                        <li>Кликните на расширение</li>
+                        <li>Нажмите <strong>"Извлечь Cookies"</strong></li>
+                        <li>Нажмите <strong>"Отправить в Web App"</strong></li>
+                    </ol>
+                </div>
+
+                <!-- Features -->
+                <div class="row mt-4">
+                    <div class="col-md-6">
+                        <h6><i class="bi bi-check-circle text-success"></i> Преимущества</h6>
+                        <ul class="small">
+                            <li>Автоматическое извлечение cookies</li>
+                            <li>Отправка в Web App одной кнопкой</li>
+                            <li>5 секунд вместо 10</li>
+                            <li>2 клика вместо 7 шагов</li>
+                        </ul>
+                    </div>
+                    <div class="col-md-6">
+                        <h6><i class="bi bi-shield-check text-primary"></i> Безопасность</h6>
+                        <ul class="small">
+                            <li>Работает только локально</li>
+                            <li>Исходный код открыт</li>
+                            <li>Не отправляет данные наружу</li>
+                            <li>Cookies только в ваш Web App</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Links -->
+                <div class="mt-4 pt-4 border-top">
+                    <h6 class="mb-3">
+                        <i class="bi bi-link-45deg text-primary"></i>
+                        Полезные ссылки
+                    </h6>
+                    <div class="d-grid gap-2">
+                        <a href="{{ url_for('main.dashboard') }}" class="btn btn-outline-primary btn-sm">
+                            <i class="bi bi-house"></i> Вернуться на главную
+                        </a>
+                        <a href="/novel/11" class="btn btn-outline-success btn-sm">
+                            <i class="bi bi-book"></i> Перейти к новелле (ID: 11)
+                        </a>
+                    </div>
+                </div>
+            </div>
+            <div class="card-footer text-muted text-center">
+                <small>
+                    <i class="bi bi-calendar"></i> Создано: 2025-10-13 |
+                    <i class="bi bi-globe"></i> Web App: {{ request.host }} |
+                    <i class="bi bi-github"></i> Open Source
+                </small>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
