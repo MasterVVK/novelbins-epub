@@ -220,7 +220,7 @@ class AIAdapterService:
 
     async def _call_ollama(self, system_prompt: str, user_prompt: str,
                            temperature: float, max_tokens: int) -> Dict:
-        """Вызов Ollama API с динамическим расчетом размера контекста"""
+        """Вызов Ollama API с динамическим расчетом размера контекста на основе параметров модели"""
         # Увеличенный таймаут для Ollama (большие модели требуют времени на загрузку)
         try:
             async with httpx.AsyncClient(timeout=600.0) as client:
@@ -246,29 +246,60 @@ class AIAdapterService:
                 # Оценка длины промпта (примерно 1 токен = 4 символа)
                 prompt_length = len(full_prompt) // 4
 
-                # Рассчитываем необходимый размер контекста
-                # Добавляем буфер 20% для безопасности
-                safety_buffer = 1.2
-                required_context = int((prompt_length + max_tokens) * safety_buffer)
-
-                # Получаем максимальный размер контекста модели из конфигурации
-                # Если max_input_tokens задан, используем его как максимум контекста
+                # 🔧 ДИНАМИЧЕСКИЙ РАСЧЕТ ПАРАМЕТРОВ НА ОСНОВЕ МОДЕЛИ
+                # Получаем параметры из конфигурации модели или используем умные дефолты
+                
+                # 1. Максимальный контекст модели
                 model_max_context = self.model.max_input_tokens
+                
+                # 2. Получаем настройки из provider_config (если есть)
+                provider_config = self.model.provider_config or {}
+                
+                # Динамические параметры с умными дефолтами на основе характеристик модели
+                safety_buffer = provider_config.get('safety_buffer', 0.2)  # 20% буфер по умолчанию
+                min_generation_ratio = provider_config.get('min_generation_ratio', 0.1)  # Мин 10% от контекста
+                max_generation_ratio = provider_config.get('max_generation_ratio', 0.5)  # Макс 50% от контекста
+                min_context_size = provider_config.get('min_context_size', 2048)  # Минимальный размер контекста
+                
+                # Корректировка параметров на основе рейтингов модели
+                if self.model.speed_rating >= 4:  # Быстрые модели
+                    max_generation_ratio = min(max_generation_ratio, 0.6)  # Можем позволить больше генерации
+                elif self.model.speed_rating <= 2:  # Медленные модели
+                    max_generation_ratio = min(max_generation_ratio, 0.3)  # Ограничиваем для скорости
+                
+                # 3. Рассчитываем безопасный размер промпта с динамическим буфером
+                safe_prompt_size = int(prompt_length * (1 + safety_buffer))
+                
+                # 4. Рассчитываем разумный размер генерации
+                available_space = model_max_context - safe_prompt_size
+                
+                # 5. Динамические мин/макс на основе процента от контекста
+                min_generation = int(model_max_context * min_generation_ratio)
+                max_generation = int(model_max_context * max_generation_ratio)
+                
+                # 6. Оптимальный размер генерации с учетом ограничений
+                optimal_generation = max(min_generation, min(available_space, max_generation))
+                
+                # 7. Учитываем максимальный выход модели из настроек
+                final_generation_size = min(optimal_generation, self.model.max_output_tokens)
+                
+                # 8. Финальный размер контекста
+                final_context_size = safe_prompt_size + final_generation_size
+                actual_context_size = min(final_context_size, model_max_context)
+                actual_context_size = max(actual_context_size, min_context_size)
 
-                # Используем меньшее из двух значений
-                actual_context_size = min(required_context, model_max_context)
-
-                # Минимальный размер контекста
-                MIN_CONTEXT_SIZE = 2048
-                actual_context_size = max(actual_context_size, MIN_CONTEXT_SIZE)
-
-                logger.info(f"Ollama: динамический размер контекста: {actual_context_size} "
-                           f"(промпт: ~{prompt_length} токенов + генерация: {max_tokens} + буфер 20%)")
-                logger.info(f"Максимальный контекст модели {self.model.model_id}: {model_max_context}")
+                # Логируем новую динамическую логику расчета
+                logger.info(f"Ollama: ДИНАМИЧЕСКИЙ расчет контекста для {self.model.name}:")
+                logger.info(f"  📊 Параметры модели: speed={self.model.speed_rating}/5, max_context={model_max_context}")
+                logger.info(f"  📝 Промпт: ~{prompt_length} токенов (+{int(safety_buffer*100)}% буфер = {safe_prompt_size})")
+                logger.info(f"  🎯 Диапазон генерации: {min_generation}-{max_generation} токенов ({int(min_generation_ratio*100)}%-{int(max_generation_ratio*100)}% от контекста)")
+                logger.info(f"  💡 Оптимальная генерация: {final_generation_size} токенов")
+                logger.info(f"  🔧 Финальный контекст: {actual_context_size} токенов")
+                logger.info(f"  ⚙️  Параметры из provider_config: {provider_config}")
 
                 # Логируем параметры запроса
                 LogService.log_info(f"Начинаем запрос к ollama (модель: {self.model.model_id})")
-                LogService.log_info(f"Temperature: {temperature}, Num predict: {min(max_tokens, self.model.max_output_tokens)}")
+                LogService.log_info(f"Temperature: {temperature}, Num predict: {final_generation_size}")
                 logger.debug(f"Ollama endpoint: {self.model.api_endpoint}")
                 logger.debug(f"Context size: {actual_context_size}")
 
@@ -285,7 +316,7 @@ class AIAdapterService:
                         'stream': False,
                         'options': {
                             'temperature': temperature,
-                            'num_predict': min(max_tokens, self.model.max_output_tokens),
+                            'num_predict': final_generation_size,
                             'num_ctx': actual_context_size,  # Динамический размер контекста
                             'num_keep': actual_context_size  # Сколько токенов сохранять
                         }

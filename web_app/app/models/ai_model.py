@@ -208,6 +208,75 @@ DEFAULT_MODELS = [
         'provider_config': {'api_version': '2023-06-01', 'anthropic_version': '2023-06-01'}
     },
     {
+        'name': 'Llama 3.1 8B (Ollama)',
+        'model_id': 'llama3.1:8b',
+        'provider': 'ollama',
+        'api_type': 'ollama',
+        'description': 'Быстрая и эффективная модель для общих задач',
+        'api_endpoint': 'http://localhost:11434/api',
+        'api_key_required': False,
+        'max_input_tokens': 8192,
+        'max_output_tokens': 4096,
+        'speed_rating': 4,
+        'quality_rating': 3,
+        'cost_rating': 5,
+        'recommended_for': ['fast_translation', 'dialogue', 'simple_text'],
+        'provider_config': {
+            'keep_alive': '5m',
+            # Параметры для быстрой модели - позволяем больше генерации
+            'safety_buffer': 0.15,          # 15% буфера (меньше для быстрой модели)
+            'min_generation_ratio': 0.2,    # 20% минимум для генерации
+            'max_generation_ratio': 0.6,    # 60% максимум для генерации
+            'min_context_size': 2048        # Меньший минимальный контекст
+        }
+    },
+    {
+        'name': 'Mistral 7B (Ollama)',
+        'model_id': 'mistral:7b',
+        'provider': 'ollama',
+        'api_type': 'ollama',
+        'description': 'Сбалансированная модель с хорошим качеством',
+        'api_endpoint': 'http://localhost:11434/api',
+        'api_key_required': False,
+        'max_input_tokens': 32768,
+        'max_output_tokens': 16384,
+        'speed_rating': 3,
+        'quality_rating': 4,
+        'cost_rating': 5,
+        'recommended_for': ['balanced_translation', 'descriptive_text', 'character_dialogue'],
+        'provider_config': {
+            'keep_alive': '10m',
+            # Параметры для сбалансированной модели
+            'safety_buffer': 0.25,          # 25% буфера
+            'min_generation_ratio': 0.12,   # 12% минимум
+            'max_generation_ratio': 0.45,   # 45% максимум
+            'min_context_size': 4096
+        }
+    },
+    {
+        'name': 'Yi 34B (Ollama)',
+        'model_id': 'yi:34b',
+        'provider': 'ollama',
+        'api_type': 'ollama',
+        'description': 'Мощная модель с большим контекстом для сложных переводов',
+        'api_endpoint': 'http://localhost:11434/api',
+        'api_key_required': False,
+        'max_input_tokens': 200000,
+        'max_output_tokens': 32768,
+        'speed_rating': 2,
+        'quality_rating': 5,
+        'cost_rating': 5,
+        'recommended_for': ['complex_narrative', 'literary_translation', 'long_context'],
+        'provider_config': {
+            'keep_alive': '15m',
+            # Параметры для мощной модели - консервативные для стабильности
+            'safety_buffer': 0.3,           # 30% буфера (больше для сложных задач)
+            'min_generation_ratio': 0.1,    # 10% минимум
+            'max_generation_ratio': 0.35,   # 35% максимум (консервативно)
+            'min_context_size': 8192        # Большой минимальный контекст
+        }
+    },
+    {
         'name': 'Qwen 2.5 32B (Ollama)',
         'model_id': 'qwen2.5:32b',
         'provider': 'ollama',
@@ -221,6 +290,13 @@ DEFAULT_MODELS = [
         'quality_rating': 4,
         'cost_rating': 5,  # Бесплатная локальная
         'recommended_for': ['chinese_content', 'privacy_sensitive', 'offline_work'],
-        'provider_config': {'keep_alive': '5m', 'num_predict': 8192}
+        'provider_config': {
+            'keep_alive': '5m',
+            # 🔧 НОВЫЕ ПАРАМЕТРЫ ДЛЯ ДИНАМИЧЕСКОГО РАСЧЕТА num_predict
+            'safety_buffer': 0.2,           # 20% буфер для промпта
+            'min_generation_ratio': 0.15,   # Минимум 15% от контекста для генерации
+            'max_generation_ratio': 0.4,    # Максимум 40% от контекста для генерации  
+            'min_context_size': 4096        # Минимальный размер контекста для стабильности
+        }
     }
 ]
