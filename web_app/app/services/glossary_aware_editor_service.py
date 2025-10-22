@@ -416,14 +416,25 @@ class GlossaryAwareEditorService:
                 translation_type='initial'
             ).first()
             
+            # Определяем провайдера на основе TranslatorService
+            api_provider = 'gemini-editor-glossary'  # default
+            if hasattr(self.translator, 'config') and hasattr(self.translator.config, 'model_name'):
+                # Предполагаем Ollama для новой системы
+                api_provider = f"ollama-editor-{self.translator.config.model_name}"
+            elif hasattr(self.translator, 'translator') and hasattr(self.translator.translator, 'config'):
+                # Legacy Gemini режим
+                api_provider = 'gemini-editor-glossary'
+            
+            model_name = getattr(self.translator.config, 'model_name', 'gemini-2.5-flash') if hasattr(self.translator, 'config') else 'gemini-2.5-flash'
+            
             translation = Translation(
                 chapter_id=chapter.id,
                 translated_title=original_translation.translated_title if original_translation else f"Глава {chapter.chapter_number}",
                 translated_text=edited_text,
                 summary=original_translation.summary if original_translation else None,
                 translation_type='edited',
-                api_used='gemini-editor-glossary',
-                model_used=self.translator.config.model_name,
+                api_used=api_provider,
+                model_used=model_name,
                 quality_score=min(quality_score + 3, 9),  # +3 за использование глоссария
                 translation_time=editing_time,
                 context_used={
@@ -455,7 +466,7 @@ class GlossaryAwareEditorService:
             
         except Exception as e:
             db.session.rollback()
-            LogService.log_error(f"Ошибка сохранения: {e}", chapter_id=chapter.id)
+            LogService.log_error(f"❌ Ошибка сохранения: {e}", chapter_id=chapter.id)
             raise
             
     def _get_template_name_for_chapter(self, chapter_id: int) -> str:

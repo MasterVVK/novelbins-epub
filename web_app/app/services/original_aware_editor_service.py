@@ -420,12 +420,35 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
                 translation_type='initial'
             ).first()
 
-            # Получаем имя модели универсально (поддержка legacy и нового режима)
-            model_name = 'gemini-2.5-flash'  # default
-            if hasattr(self.translator, 'config') and hasattr(self.translator.config, 'model_name'):
-                model_name = self.translator.config.model_name
-            elif hasattr(self.translator, 'translator') and hasattr(self.translator.translator, 'config'):
-                model_name = self.translator.translator.config.model_name
+            # Получаем имя модели и провайдера универсально
+            model_name = 'glm-4.6'  # default
+            api_provider = 'ollama-editor-original'  # default
+            
+            # Ищем точную модель из логов и транслятора
+            try:
+                # Проверяем универсальный транслятор
+                if hasattr(self.translator, 'ai_model'):
+                    model_name = self.translator.ai_model.model_id
+                    api_provider = 'ollama-editor-original'
+                    LogService.log_info(f"🎯 Найдена AI модель: {model_name}", chapter_id=chapter.id)
+                elif hasattr(self.translator, 'translator') and hasattr(self.translator.translator, 'ai_model'):
+                    model_name = self.translator.translator.ai_model.model_id
+                    api_provider = 'ollama-editor-original'
+                    LogService.log_info(f"🎯 Найдена модель через адаптер: {model_name}", chapter_id=chapter.id)
+                elif hasattr(self.translator, 'config') and hasattr(self.translator.config, 'model_name'):
+                    # LLMTranslator - легаси режим
+                    model_name = self.translator.config.model_name
+                    api_provider = 'gemini-editor-original'
+                    LogService.log_info(f"🎯 Найдена Gemini модель: {model_name}", chapter_id=chapter.id)
+                else:
+                    # Последний запас - пробуем достать из конфигурации
+                    model_name = 'glm-4.6'  # Из логов видно это Ollama
+                    api_provider = 'ollama-editor-original'
+                    LogService.log_info(f"🎯 Используется Ollama по умолчанию: {model_name}", chapter_id=chapter.id)
+            except Exception as e:
+                LogService.log_warning(f"Не удалось определить модель, используем defaults: {e}", chapter_id=chapter.id)
+                model_name = 'glm-4.6'
+                api_provider = 'ollama-editor-original'
 
             # Подсчитываем общее количество терминов
             total_glossary_terms = sum(len(terms) for terms in glossary.get('all_terms', {}).values())
@@ -436,7 +459,7 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
                 translated_text=edited_text,
                 summary=original_translation.summary if original_translation else None,
                 translation_type='edited',
-                api_used='gemini-editor-original',
+                api_used=api_provider,
                 model_used=model_name,
                 quality_score=min(quality_score + 3, 10),  # +3 за использование оригинала и глоссария
                 translation_time=editing_time,
@@ -452,7 +475,9 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
                     'used_original': True,
                     'used_full_glossary': True,
                     'missing_details_fixed': strategy.get('missing_details', []),
-                    'edited_at': datetime.now().isoformat()
+                    'edited_at': datetime.now().isoformat(),
+                    'actual_model_used': model_name,  # Для подтверждения
+                    'api_provider': api_provider  # Для подтверждения
                 }
             )
 

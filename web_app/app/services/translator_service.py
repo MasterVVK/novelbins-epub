@@ -1126,17 +1126,41 @@ class TranslatorService:
             # Сохраняем перевод
             LogService.log_info(f"Сохраняем перевод главы {chapter.chapter_number} в базу данных", 
                               novel_id=chapter.novel_id, chapter_id=chapter.id)
+            
+            # Рассчитываем ориентировочное время перевода на основе длины текста
+            # Предполагаем скорость ~1000 символов в минуту
+            estimated_translation_time = max(30, min(300, len(content) / 1000 * 60))  # 30-300 секунд
+            
+            # Определяем модель, используемую для перевода
+            model_used = None
+            if hasattr(self.translator, 'ai_model') and hasattr(self.translator.ai_model, 'model_id'):
+                # UniversalLLMTranslator с заполненными данными
+                model_used = self.translator.ai_model.model_id
+            elif hasattr(self.translator, 'config') and hasattr(self.translator.config, 'model_name'):
+                # LLMTranslator - легаси режим
+                model_used = self.translator.config.model_name
+            elif hasattr(self.translator, 'translator') and hasattr(self.translator.translator.config, 'model_name'):
+                # Это может быть через адаптер
+                model_used = self.translator.translator.config.model_name
+            else:
+                # Запасной вариант
+                model_used = 'gemini-2.5-flash-estimated'
+            
+            LogService.log_info(f"Используется модель: {model_used}", novel_id=chapter.novel_id, chapter_id=chapter.id)
+            
             translation = Translation(
                 chapter_id=chapter.id,
                 translated_title=title,
                 translated_text=content,
                 summary=summary,
                 quality_score=self.calculate_quality_score(validation),
-                translation_time=time.time(),
+                translation_time=estimated_translation_time,
+                model_used=model_used,
                 metadata={
                     'template_used': prompt_template.name,
                     'validation': validation,
-                    'parts_count': len(text_parts)
+                    'parts_count': len(text_parts),
+                    'translation_method': 'estimated_timing'
                 }
             )
             

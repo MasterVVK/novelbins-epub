@@ -299,7 +299,7 @@ class AIAdapterService:
                 final_context_size = safe_prompt_size + final_generation_size
                 actual_context_size = min(final_context_size, model_max_context)
                 actual_context_size = max(actual_context_size, min_context_size)
-
+                actual_context_size = safe_prompt_size  # Правильно: только промпт + буфер (без генерации)!
                 # Логируем новую динамическую логику расчета
                 logger.info(f"Ollama: ДИНАМИЧЕСКИЙ расчет контекста для {self.model.name}:")
                 logger.info(f"  📊 Параметры модели: speed={self.model.speed_rating}/5, max_context={model_max_context:,}")

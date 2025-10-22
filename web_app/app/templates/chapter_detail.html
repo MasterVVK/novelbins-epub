@@ -34,10 +34,13 @@
                         <hr>
                         <small class="text-muted">
                             <strong>Тип:</strong> {{ chapter.current_translation.translation_type or 'initial' }}<br>
-                            <strong>API:</strong> {{ chapter.current_translation.api_used or 'gemini' }}<br>
+                            <strong>Модель:</strong> {{ chapter.current_translation.model_used or 'gemini-2.5-flash' }}<br>
                             <strong>Длина:</strong> {{ chapter.current_translation.translated_text|length }} символов<br>
                             {% if chapter.current_translation.translation_time %}
-                                <strong>Время:</strong> {{ chapter.current_translation.translation_time }}с
+                                <strong>Время:</strong> ~{{ (chapter.current_translation.translation_time|round)|int }}с (оцен.)<br>
+                            {% endif %}
+                            {% if chapter.current_translation.quality_score %}
+                                <strong>Качество:</strong> {{ chapter.current_translation.quality_score }}/10<br>
                             {% endif %}
                         </small>
                     {% else %}
@@ -53,13 +56,13 @@
                         <hr>
                         <small class="text-muted">
                             <strong>Тип:</strong> {{ chapter.edited_translation.translation_type or 'edited' }}<br>
-                            <strong>API:</strong> {{ chapter.edited_translation.api_used or 'gemini-editor' }}<br>
+                            <strong>Модель:</strong> {{ chapter.edited_translation.model_used or 'gemini-2.5-flash' }}<br>
                             <strong>Длина:</strong> {{ chapter.edited_translation.translated_text|length }} символов<br>
                             {% if chapter.edited_translation.quality_score %}
                                 <strong>Качество:</strong> {{ chapter.edited_translation.quality_score }}/10<br>
                             {% endif %}
                             {% if chapter.edited_translation.translation_time %}
-                                <strong>Время:</strong> {{ chapter.edited_translation.translation_time }}с
+                                <strong>Время:</strong> ~{{ (chapter.edited_translation.translation_time|round)|int }}с (отредакт.)<br>
                             {% endif %}
                         </small>
                     {% else %}
