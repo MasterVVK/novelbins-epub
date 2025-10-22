@@ -227,12 +227,14 @@ class UniversalLLMTranslator:
 
                         return None
 
-                    # Специальная обработка для Ollama server error (500), upstream error (502) и upstream timeout (504) с короткими повторами
-                    if self.model.provider == 'ollama' and error_type in ['upstream_error', 'upstream_timeout', 'server_error']:
+                    # Специальная обработка для Ollama server error (500), upstream error (502), upstream timeout (504) и timeout с короткими повторами
+                    if self.model.provider == 'ollama' and error_type in ['upstream_error', 'upstream_timeout', 'server_error', 'timeout']:
                         if error_type == 'server_error':
                             error_name = 'внутренняя ошибка сервера (500)'
                         elif error_type == 'upstream_timeout':
                             error_name = 'upstream timeout (504)'
+                        elif error_type == 'timeout':
+                            error_name = 'таймаут клиента (>20 минут)'
                         else:
                             error_name = 'upstream error (502)'
 
@@ -272,7 +274,7 @@ class UniversalLLMTranslator:
                                 LogService.log_warning(f"   Текст ошибки: {retry_error}")
 
                                 # Если это всё ещё server/upstream error/timeout, продолжаем повторы
-                                if retry_error_type in ['upstream_error', 'upstream_timeout', 'server_error']:
+                                if retry_error_type in ['upstream_error', 'upstream_timeout', 'server_error', 'timeout']:
                                     LogService.log_warning(f"   → Продолжаем повторы ({retry_error_type})")
                                     continue
                                 else:

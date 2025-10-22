@@ -96,6 +96,10 @@ sudo systemctl start redis-server
   - Английский: 4.0 символа/токен
 - **num_ctx**: `prompt_length × 1.2` (промпт + 20% буфер, минимум 2048)
 - **num_predict**: `num_ctx × 2` (но не больше max_output_tokens модели)
+- **Таймаут**: 1200 секунд (20 минут) для обработки больших моделей
+- **Повторы при ошибках** (`universal_llm_translator.py:230-294`):
+  - timeout, upstream_timeout, upstream_error, server_error: 2 попытки (30 сек, 5 мин)
+  - rate_limit: 4 попытки (5 мин, 10 мин, 20 мин, 30 мин)
 - Формула оптимизирована для переводов китайский→русский
 
 ### Background Task Queue
