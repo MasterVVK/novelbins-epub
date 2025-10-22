@@ -35,6 +35,51 @@ class AIAdapterService:
 
         logger.info(f"Инициализирован адаптер для модели: {self.model.name} ({self.model.provider})")
 
+    def _estimate_tokens(self, text: str) -> int:
+        """
+        Улучшенная оценка количества токенов на основе анализа языка текста
+
+        Args:
+            text: Текст для оценки
+
+        Returns:
+            Примерное количество токенов
+        """
+        if not text:
+            return 0
+
+        total_chars = len(text)
+
+        # Подсчитываем символы разных типов
+        cyrillic_count = sum(1 for c in text if '\u0400' <= c <= '\u04FF')  # Кириллица
+        cjk_count = sum(1 for c in text if '\u4E00' <= c <= '\u9FFF')       # Китайские иероглифы
+
+        # Определяем доли разных типов символов
+        cyrillic_ratio = cyrillic_count / total_chars if total_chars > 0 else 0
+        cjk_ratio = cjk_count / total_chars if total_chars > 0 else 0
+
+        # Выбираем коэффициент на основе преобладающего языка
+        if cjk_ratio > 0.3:  # Много китайских символов
+            # Китайские иероглифы: ~1.5-2 символа на токен
+            chars_per_token = 1.5
+            language = "китайский"
+        elif cyrillic_ratio > 0.3:  # Много кириллицы
+            # Кириллица: ~2.5-3 символа на токен
+            chars_per_token = 2.5
+            language = "русский"
+        else:  # Латиница или смешанный текст
+            # Латиница: ~4 символа на токен
+            chars_per_token = 4.0
+            language = "английский/латиница"
+
+        estimated_tokens = int(total_chars / chars_per_token)
+
+        # Логируем для отладки (только в debug режиме)
+        logger.debug(f"Оценка токенов: {total_chars:,} символов, язык: {language}, "
+                    f"~{estimated_tokens:,} токенов ({chars_per_token} симв/токен)")
+
+        return estimated_tokens
+
     async def generate_content(self, system_prompt: str, user_prompt: str,
                               temperature: float = None, max_tokens: int = None) -> Dict:
         """
@@ -255,71 +300,48 @@ class AIAdapterService:
                 # Объединяем промпты для расчета размера
                 full_prompt = f"{system_prompt}\n{user_prompt}"
 
-                # Оценка длины промпта (примерно 1 токен = 4 символа)
-                prompt_length = len(full_prompt) // 4
+                # Улучшенная оценка длины промпта на основе языка
+                prompt_length = self._estimate_tokens(full_prompt)
 
-                # 🔧 ДИНАМИЧЕСКИЙ РАСЧЕТ ПАРАМЕТРОВ НА ОСНОВЕ МОДЕЛИ
-                # Получаем параметры из конфигурации модели или используем умные дефолты
-                
-                # 1. Максимальный контекст модели
+                # 🔧 УПРОЩЕННЫЙ РАСЧЕТ: num_ctx = размер промпта + 20%
+                # num_ctx задает размер контекстного окна для промпта
+                num_ctx = int(prompt_length * 1.2)  # Промпт + 20% буфер
+
+                # num_predict задает максимальный размер генерации
+                # Используем значение из настроек модели
+                num_predict = min(max_tokens, self.model.max_output_tokens)
+
+                # Получаем максимальный контекст модели для проверки
                 model_max_context = self.model.max_input_tokens
-                
-                # 2. Получаем настройки из provider_config (если есть)
-                provider_config = self.model.provider_config or {}
-                
-                # Динамические параметры с умными дефолтами на основе характеристик модели
-                safety_buffer = provider_config.get('safety_buffer', 0.2)  # 20% буфер по умолчанию
-                min_generation_ratio = provider_config.get('min_generation_ratio', 0.1)  # Мин 10% от контекста
-                max_generation_ratio = provider_config.get('max_generation_ratio', 0.5)  # Макс 50% от контекста
-                min_context_size = provider_config.get('min_context_size', 2048)  # Минимальный размер контекста
-                
-                # Корректировка параметров на основе рейтингов модели
-                if self.model.speed_rating >= 4:  # Быстрые модели
-                    max_generation_ratio = min(max_generation_ratio, 0.6)  # Можем позволить больше генерации
-                elif self.model.speed_rating <= 2:  # Медленные модели
-                    max_generation_ratio = min(max_generation_ratio, 0.3)  # Ограничиваем для скорости
-                
-                # 3. Рассчитываем безопасный размер промпта с динамическим буфером
-                safe_prompt_size = int(prompt_length * (1 + safety_buffer))
-                
-                # 4. Рассчитываем разумный размер генерации
-                available_space = model_max_context - safe_prompt_size
-                
-                # 5. Динамические мин/макс на основе процента от контекста
-                min_generation = int(model_max_context * min_generation_ratio)
-                max_generation = int(model_max_context * max_generation_ratio)
-                
-                # 6. Оптимальный размер генерации с учетом ограничений
-                optimal_generation = max(min_generation, min(available_space, max_generation))
-                
-                # 7. Учитываем максимальный выход модели из настроек
-                final_generation_size = min(optimal_generation, self.model.max_output_tokens)
-                
-                # 8. Финальный размер контекста
-                final_context_size = safe_prompt_size + final_generation_size
-                actual_context_size = min(final_context_size, model_max_context)
-                actual_context_size = max(actual_context_size, min_context_size)
-                actual_context_size = safe_prompt_size  # Правильно: только промпт + буфер (без генерации)!
-                # Логируем новую динамическую логику расчета
-                logger.info(f"Ollama: ДИНАМИЧЕСКИЙ расчет контекста для {self.model.name}:")
-                logger.info(f"  📊 Параметры модели: speed={self.model.speed_rating}/5, max_context={model_max_context:,}")
-                logger.info(f"  📝 Промпт: ~{prompt_length} токенов (+{int(safety_buffer*100)}% буфер = {safe_prompt_size})")
-                logger.info(f"  🎯 Диапазон генерации: {min_generation:,}-{max_generation:,} токенов ({int(min_generation_ratio*100)}%-{int(max_generation_ratio*100)}% от контекста)")
-                logger.info(f"  💡 Оптимальная генерация: {optimal_generation:,} токенов")
-                logger.info(f"  🔧 Финальный num_predict: {final_generation_size:,} / {self.model.max_output_tokens:,} (макс. модели)")
-                logger.info(f"  📏 Контекст: {actual_context_size:,} токенов")
-                logger.info(f"  ⚙️  Параметры из provider_config: {provider_config}")
+
+                # Проверяем, что не превышаем лимиты модели
+                if num_ctx > model_max_context:
+                    logger.warning(f"⚠️ num_ctx ({num_ctx:,}) превышает max_input_tokens ({model_max_context:,}), обрезаем")
+                    num_ctx = model_max_context
+
+                # Минимальный размер контекста для стабильности
+                min_context_size = 2048
+                if num_ctx < min_context_size:
+                    logger.info(f"num_ctx ({num_ctx:,}) меньше минимального ({min_context_size:,}), устанавливаем минимум")
+                    num_ctx = min_context_size
+
+                # Логируем упрощенную логику расчета
+                logger.info(f"Ollama: Расчет контекста для {self.model.name}:")
+                logger.info(f"  📝 Размер промпта: ~{prompt_length:,} токенов")
+                logger.info(f"  📏 num_ctx (промпт + 20%): {num_ctx:,} токенов")
+                logger.info(f"  🔧 num_predict: {num_predict:,} токенов (макс. вывод)")
+                logger.info(f"  📊 Лимиты модели: max_input={model_max_context:,}, max_output={self.model.max_output_tokens:,}")
 
                 # Логируем параметры запроса
-                LogService.log_info(f"Ollama запрос: {self.model.model_id} | Temperature: {temperature} | Num predict: {final_generation_size:,} / {self.model.max_output_tokens:,}")
+                LogService.log_info(f"Ollama запрос: {self.model.model_id} | Temperature: {temperature} | Num predict: {num_predict:,} / {self.model.max_output_tokens:,}")
                 logger.debug(f"Ollama endpoint: {self.model.api_endpoint}")
-                logger.debug(f"Context size: {actual_context_size}")
+                logger.debug(f"Context size: {num_ctx}")
 
                 # Объединяем system и user промпты в один
                 # Ollama лучше работает с единым промптом
                 full_prompt = f"{system_prompt}\n\n{user_prompt}"
 
-                # Делаем запрос к модели с оптимизированным контекстом
+                # Делаем запрос к модели с упрощенными параметрами контекста
                 response = await client.post(
                     f"{self.model.api_endpoint}/generate",
                     json={
@@ -328,9 +350,9 @@ class AIAdapterService:
                         'stream': False,
                         'options': {
                             'temperature': temperature,
-                            'num_predict': final_generation_size,
-                            'num_ctx': actual_context_size,  # Динамический размер контекста
-                            'num_keep': actual_context_size  # Сколько токенов сохранять
+                            'num_predict': num_predict,      # Максимальный размер генерации
+                            'num_ctx': num_ctx,              # Размер контекста = промпт + 20%
+                            'num_keep': num_ctx              # Сколько токенов сохранять
                         }
                     }
                 )
@@ -417,7 +439,7 @@ class AIAdapterService:
 
                     logger.error(f"Ollama request failed: {error_detail}")
                     logger.error(f"Model: {self.model.model_id}, Endpoint: {self.model.api_endpoint}")
-                    logger.error(f"Context size: {actual_context_size}, Max tokens: {max_tokens}")
+                    logger.error(f"Context size: {num_ctx}, Max tokens: {max_tokens}")
                     logger.error(f"Response headers: {dict(response.headers)}")
 
                     # Определяем тип ошибки для специальной обработки
@@ -456,7 +478,7 @@ class AIAdapterService:
         except httpx.TimeoutException as e:
             error_msg = f'Таймаут при обращении к Ollama (>600s). Модель: {self.model.model_id}'
             logger.error(error_msg)
-            logger.error(f"Размер контекста был: {actual_context_size if 'actual_context_size' in locals() else 'unknown'}")
+            logger.error(f"Размер контекста был: {num_ctx if 'num_ctx' in locals() else 'unknown'}")
             return {
                 'success': False,
                 'error': error_msg,

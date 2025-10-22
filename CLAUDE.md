@@ -4,105 +4,135 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a Chinese web novel translation system that processes "Shrouding the Heavens" (遮天) from novelbins.com through a multi-stage pipeline: parsing, AI translation, literary editing, and EPUB generation.
+Web-приложение на Flask для автоматического перевода китайских веб-новелл (преимущественно жанр сянся/фэнтези) с использованием AI моделей. Система включает парсинг глав с различных источников, перевод с китайского на русский, многоэтапную редактуру и генерацию EPUB файлов.
 
 ## Common Development Commands
 
-### Running the Pipeline
+### Web Application
 ```bash
-# Stage 1: Parse chapters from novelbins.com
-python 1_parser_selenium.py
+# Запуск веб-приложения (основной способ)
+python run_web.py                    # из корня проекта
+# или
+cd web_app && python run.py         # из директории web_app
 
-# Stage 2: Translate chapters using Gemini AI
-python 2_translator_improved.py
+# Приложение запускается на http://0.0.0.0:5001
 
-# Stage 3: Edit and improve translations
-python 3_editor.py
+# Инициализация базы данных (при первом запуске)
+flask --app run_web init-db
 
-# Stage 4: Generate EPUB
-python 4_epub_generator.py
+# Миграции базы данных
+cd web_app
+flask db migrate -m "описание изменений"
+flask db upgrade
 ```
 
-### Code Quality
+### Celery Background Tasks
 ```bash
-# Run tests
-pytest
+# Запуск Celery worker (требуется Redis и Xvfb для парсинга czbooks)
+cd web_app
+./start_celery_worker.sh
 
-# Lint code
-flake8
+# Проверка статуса Redis
+redis-cli ping
 
-# Format code
-black .
-```
-
-### Database Management
-```bash
-# Initialize database (if using Flask app)
-flask init-db
-
-# View database
-sqlite3 translations.db
-```
-
-### Web Interface
-```bash
-# Start Flask web app (port 5001)
-python run_web.py
-
-# Alternative web interface (port 8080)
-./start_web.sh
+# Запуск Redis (если не запущен)
+sudo systemctl start redis-server
 ```
 
 ## Architecture Overview
 
-### Processing Pipeline
-1. **Parser** (`1_parser_selenium.py`): Selenium-based scraper for novelbins.com
-   - Uses headless Chrome for JavaScript rendering
-   - Extracts chapter content, titles, and metadata
-   - Stores raw data in SQLite database
+### Модульная Архитектура Flask
 
-2. **Translator** (`2_translator_improved.py`): Gemini AI translation
-   - Specialized prompts for xianxia genre
-   - Context-aware translation with glossary
-   - Batch processing with rate limiting
-   - Uses multiple API keys for load balancing
+Приложение использует фабрику приложений (`create_app()`) с разделением на blueprints:
 
-3. **Editor** (`3_editor.py`): Post-translation refinement
-   - Multi-stage editing (analysis → style → dialogue)
-   - Quality scoring system
-   - Preserves original meaning while improving readability
+- **API Endpoints** (`web_app/app/api/`): REST API для управления
+  - `novels.py`: CRUD операции с новеллами
+  - `chapters.py`: Управление главами, запуск переводов
+  - `glossary.py`: Работа с терминологическим глоссарием
+  - `tasks.py`: Мониторинг Celery задач
 
-4. **EPUB Generator** (`4_epub_generator.py`): Final output creation
-   - Generates publication-ready EPUB files
-   - Customizable metadata and formatting
+- **Models** (`web_app/app/models/`): SQLAlchemy модели
+  - `novel.py`: Модель новеллы с метаданными
+  - `chapter.py`: Главы с оригиналом и переводом
+  - `ai_model.py`: Конфигурация AI моделей с поддержкой нескольких провайдеров
+  - `glossary.py`: Терминологический глоссарий для консистентности
+  - `prompt_template.py`: Шаблоны промптов для переводов
 
-### Data Storage
-- **SQLite Database** (`translations.db`):
-  - `chapters`: Original and translated content
-  - `glossary`: Term consistency tracking
-  - `edited_chapters`: Post-editing improvements
-  - `translation_context`: Narrative continuity
-  
-- **File Storage** (`edited_translations/`):
-  - Each chapter has `.txt` (content) and `.json` (metadata)
-  - ~1,800+ processed chapters
+- **Services** (`web_app/app/services/`): Бизнес-логика
+  - `universal_llm_translator.py`: Универсальный переводчик с поддержкой Gemini, OpenAI, Claude, Ollama
+  - `translator_service.py`: Сервис перевода с использованием промпт-шаблонов
+  - `editor_service.py`: Многоэтапная редактура (analysis → style → dialogue → polish)
+  - `glossary_service.py`: Управление глоссарием и извлечение терминов
+  - `parser_service.py`: Интеграция парсеров для различных источников
+  - `ai_adapter_service.py`: Адаптер для унифицированной работы с AI провайдерами
 
-### Key Technologies
-- **Web Scraping**: Selenium + BeautifulSoup4
-- **AI Translation**: Google Gemini AI (gemini-2.5-flash-preview-05-20)
-- **Task Queue**: Celery + Redis
-- **Web Framework**: Flask + SocketIO
-- **EPUB Generation**: ebooklib
+### Parser System
 
-### Environment Configuration
-Key settings in `.env`:
-- Multiple `GEMINI_API_KEY_*` for API rotation
-- `PROXY_URL` for SOCKS5 proxy support
-- Translation parameters (temperature, batch size, token limits)
-- Flask/Redis/Celery configuration
+Система парсеров с фабричным паттерном (`parsers/parser_factory.py`):
 
-### Important Considerations
-- The system uses proxy for accessing novelbins.com
-- Translation quality improves from ~6 to ~8+ after editing
-- Each API key has rate limits; system rotates through multiple keys
-- Database contains extensive translation context and glossary data
+- **Base Parser** (`parsers/base/base_parser.py`): Абстрактный класс с общим интерфейсом
+- **Source Parsers** (`parsers/sources/`):
+  - `czbooks_parser.py`: Парсер для czbooks.net (требует Selenium + Xvfb)
+  - `qidian_parser.py`: Парсер для qidian.com
+  - `epub_parser.py`: Импорт из EPUB файлов
+
+Парсеры поддерживают:
+- Автоопределение источника по URL
+- SOCKS5 прокси для обхода блокировок
+- Cookie-based аутентификацию
+- Headless/non-headless режимы (czbooks требует non-headless)
+
+### AI Translation Pipeline
+
+1. **Context Building**: Сбор контекста из предыдущих глав + применение глоссария
+2. **LLM Translation**: Перевод через универсальный адаптер с ротацией API ключей
+3. **Multi-Stage Editing**: Последовательная редактура для улучшения качества
+4. **Quality Scoring**: Автоматическая оценка качества перевода
+
+**Важно**: Система поддерживает динамический расчет контекста для Ollama моделей - автоматически оптимизирует `num_predict` на основе спецификаций модели и размера промпта.
+
+### Background Task Queue
+
+Celery с Redis для фоновой обработки (`web_app/app/celery_tasks.py`):
+- Парсинг глав новелл с отслеживанием прогресса
+- Параллельный перевод нескольких глав
+- Поддержка отмены задач через сигналы
+- Использует отдельную Redis БД (DB 1) для изоляции
+
+### Configuration System
+
+Конфигурация через классы (`web_app/config/__init__.py`):
+- `DevelopmentConfig`: DEBUG режим, подробное логирование
+- `ProductionConfig`: Оптимизирован для production
+- `TestingConfig`: In-memory база для тестов
+
+Переменные окружения из `.env`:
+- `GEMINI_API_KEYS`: Список Gemini API ключей через запятую
+- `CELERY_BROKER_URL`: Redis URL для Celery (по умолчанию DB 1)
+- `DATABASE_URL`: SQLite путь к основной базе
+- `PROXY_URL`: SOCKS5 прокси для парсинга
+
+### Key Integration Points
+
+**UniversalLLMTranslator с ротацией ключей**:
+- Автоматическое переключение между Gemini API ключами при rate limiting
+- Отслеживание failed ключей и попытки восстановления
+- Поддержка сохранения истории промптов для отладки
+
+**Parser Factory автоопределение**:
+- Регистрация парсеров с URL паттернами
+- `create_parser_from_url()` автоматически выбирает правильный парсер
+- Легкое добавление новых парсеров через `register_parser()`
+
+**Celery Integration**:
+- Flask app context для всех задач
+- Soft/hard time limits для предотвращения зависаний
+- Обработка SIGTERM для корректной отмены задач
+- Real-time обновления через SocketIO
+
+### Logging System
+
+Централизованное логирование через `LogService`:
+- Rotational file logs (`logs/app.log`)
+- Console output для разработки
+- Контекстное логирование (novel_id, chapter_id во всех операциях)
