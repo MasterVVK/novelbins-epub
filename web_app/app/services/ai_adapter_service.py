@@ -307,10 +307,6 @@ class AIAdapterService:
                 # num_ctx задает размер контекстного окна для промпта
                 num_ctx = int(prompt_length * 1.2)  # Промпт + 20% буфер
 
-                # num_predict задает максимальный размер генерации
-                # Используем значение из настроек модели
-                num_predict = min(max_tokens, self.model.max_output_tokens)
-
                 # Получаем максимальный контекст модели для проверки
                 model_max_context = self.model.max_input_tokens
 
@@ -325,6 +321,10 @@ class AIAdapterService:
                     logger.info(f"num_ctx ({num_ctx:,}) меньше минимального ({min_context_size:,}), устанавливаем минимум")
                     num_ctx = min_context_size
 
+                # num_predict = num_ctx × 2 (но не больше максимума модели)
+                # Логика: для перевода выход обычно больше входа
+                num_predict = min(num_ctx * 2, self.model.max_output_tokens)
+
                 # Логируем упрощенную логику расчета
                 logger.info(f"Ollama: Расчет контекста для {self.model.name}:")
                 logger.info(f"  📝 Размер промпта: ~{prompt_length:,} токенов")
@@ -333,7 +333,7 @@ class AIAdapterService:
                 logger.info(f"  📊 Лимиты модели: max_input={model_max_context:,}, max_output={self.model.max_output_tokens:,}")
 
                 # Логируем параметры запроса
-                LogService.log_info(f"Ollama запрос: {self.model.model_id} | Temperature: {temperature} | Num predict: {num_predict:,} / {self.model.max_output_tokens:,}")
+                LogService.log_info(f"Ollama запрос: {self.model.model_id} | Temperature: {temperature} | Num ctx: {num_ctx:,} | Num predict: {num_predict:,} / {self.model.max_output_tokens:,}")
                 logger.debug(f"Ollama endpoint: {self.model.api_endpoint}")
                 logger.debug(f"Context size: {num_ctx}")
 
