@@ -272,11 +272,13 @@ def edit_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
     Args:
         novel_id: ID новеллы
         chapter_ids: Список ID глав для редактуры
-        parallel_threads: Не используется, оставлен для совместимости
+        parallel_threads: Количество параллельных потоков (из конфига новеллы)
     """
     from app.services.translator_service import TranslatorService
     from app.services.original_aware_editor_service import OriginalAwareEditorService
     from app.services.log_service import LogService
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from threading import Lock
 
     # Флаг для отслеживания отмены
     global _cancel_requested
@@ -284,6 +286,9 @@ def edit_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
 
     # Устанавливаем обработчик сигнала SIGTERM для отмены
     old_handler = signal.signal(signal.SIGTERM, signal_handler)
+
+    # Блокировка для безопасного доступа к счетчикам из разных потоков
+    counter_lock = Lock()
 
     try:
         # Получаем новеллу
@@ -318,56 +323,123 @@ def edit_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
 
         total_chapters = len(chapters)
         success_count = 0
+        processed_count = 0
 
         self.update_state(state='PROGRESS', meta={'status': 'Начинаем редактуру', 'progress': 0})
-        LogService.log_info(f"📝 Начинаем редактуру {total_chapters} глав(ы)", novel_id=novel_id)
+        LogService.log_info(f"📝 Начинаем редактуру {total_chapters} глав(ы) в {parallel_threads} потоков", novel_id=novel_id)
 
-        # Обрабатываем главы последовательно (без батчей)
-        for i, chapter in enumerate(chapters, 1):
-            # Перезагружаем новеллу для проверки отмены
-            db.session.refresh(novel)
+        # Функция для редактирования одной главы в отдельном потоке
+        def edit_single_chapter(chapter_id):
+            nonlocal success_count, processed_count
 
-            # Проверяем отмену задачи (глобальный флаг ИЛИ статус в БД)
-            if _cancel_requested or novel.status == 'editing_cancelled':
-                if novel.status != 'editing_cancelled':
-                    novel.status = 'editing_cancelled'
-                    novel.editing_task_id = None
-                    db.session.commit()
-                LogService.log_warning(f"🛑 Редактура отменена пользователем. Отредактировано {success_count}/{total_chapters} глав(ы)", novel_id=novel_id)
-                return {
-                    'status': 'cancelled',
-                    'message': 'Редактура отменена пользователем',
-                    'edited_chapters': success_count,
-                    'total_chapters': total_chapters
-                }
+            # Каждый поток создает свою Flask app context и сессию БД
+            from app import create_app
+            app = create_app()
 
-            # Обновляем прогресс
-            progress = int((i / total_chapters) * 100)
-            self.update_state(
-                state='PROGRESS',
-                meta={
-                    'status': f'Редактура главы {i}/{total_chapters}',
-                    'progress': progress,
-                    'edited_chapters': success_count
-                }
-            )
+            with app.app_context():
+                # Загружаем главу и новеллу в контексте текущего потока
+                from app.models import Chapter, Novel
+                chapter = Chapter.query.get(chapter_id)
+                if not chapter:
+                    return False
 
-            # Редактируем главу
-            try:
-                LogService.log_info(f"🔄 Редактирую главу {chapter.chapter_number}", novel_id=novel_id)
-                result = editor_service.edit_chapter(chapter)
-                if result:
-                    success_count += 1
-                    novel.edited_chapters = success_count
-                    db.session.commit()
-                    LogService.log_info(f"✅ Отредактирована глава {chapter.chapter_number} ({success_count}/{total_chapters})", novel_id=novel_id)
-                else:
-                    LogService.log_warning(f"⚠️ Глава {chapter.chapter_number} не была отредактирована", novel_id=novel_id)
-            except Exception as e:
-                error_msg = f"❌ Ошибка редактуры главы {chapter.chapter_number}: {e}"
-                print(error_msg)
-                LogService.log_error(error_msg, novel_id=novel_id)
-                continue
+                # ЗАЩИТА ОТ ДУБЛИРОВАНИЯ: Проверяем, не редактируется ли уже глава
+                if chapter.status == 'edited':
+                    LogService.log_info(f"⏭️ Глава {chapter.chapter_number} уже отредактирована, пропускаем", novel_id=novel_id)
+                    with counter_lock:
+                        processed_count += 1
+                    return False
+
+                novel_check = Novel.query.get(novel_id)
+
+                # Проверяем отмену перед началом
+                if _cancel_requested or (novel_check and novel_check.status == 'editing_cancelled'):
+                    return None
+
+                try:
+                    LogService.log_info(f"🔄 Редактирую главу {chapter.chapter_number}", novel_id=novel_id)
+
+                    # Создаем отдельный editor_service для этого потока
+                    thread_translator = TranslatorService(config=config)
+                    thread_editor = OriginalAwareEditorService(thread_translator)
+
+                    result = thread_editor.edit_chapter(chapter)
+
+                    if result:
+                        with counter_lock:
+                            success_count += 1
+                            processed_count += 1
+
+                            # Обновляем счетчик в новелле
+                            novel_update = Novel.query.get(novel_id)
+                            if novel_update:
+                                novel_update.edited_chapters = success_count
+                                db.session.commit()
+
+                        LogService.log_info(f"✅ Отредактирована глава {chapter.chapter_number} ({success_count}/{total_chapters})", novel_id=novel_id)
+                        return True
+                    else:
+                        with counter_lock:
+                            processed_count += 1
+                        LogService.log_warning(f"⚠️ Глава {chapter.chapter_number} не была отредактирована", novel_id=novel_id)
+                        return False
+
+                except Exception as e:
+                    with counter_lock:
+                        processed_count += 1
+                    error_msg = f"❌ Ошибка редактуры главы {chapter.chapter_number}: {e}"
+                    LogService.log_error(error_msg, novel_id=novel_id)
+                    return False
+
+        # Многопоточная обработка глав
+        with ThreadPoolExecutor(max_workers=parallel_threads) as executor:
+            # Запускаем редактирование всех глав (передаем ID, а не объекты)
+            future_to_chapter_id = {
+                executor.submit(edit_single_chapter, chapter.id): chapter.id
+                for chapter in chapters
+            }
+
+            # Обрабатываем результаты по мере завершения
+            for future in as_completed(future_to_chapter_id):
+                chapter_id = future_to_chapter_id[future]
+
+                # Проверяем отмену
+                db.session.refresh(novel)
+                if _cancel_requested or novel.status == 'editing_cancelled':
+                    if novel.status != 'editing_cancelled':
+                        novel.status = 'editing_cancelled'
+                        novel.editing_task_id = None
+                        db.session.commit()
+
+                    # Отменяем все оставшиеся задачи
+                    for f in future_to_chapter_id:
+                        f.cancel()
+
+                    LogService.log_warning(f"🛑 Редактура отменена пользователем. Отредактировано {success_count}/{total_chapters} глав(ы)", novel_id=novel_id)
+                    return {
+                        'status': 'cancelled',
+                        'message': 'Редактура отменена пользователем',
+                        'edited_chapters': success_count,
+                        'total_chapters': total_chapters
+                    }
+
+                # Получаем результат
+                try:
+                    result = future.result()
+
+                    # Обновляем прогресс
+                    with counter_lock:
+                        progress = int((processed_count / total_chapters) * 100)
+                        self.update_state(
+                            state='PROGRESS',
+                            meta={
+                                'status': f'Редактура: {processed_count}/{total_chapters} глав',
+                                'progress': progress,
+                                'edited_chapters': success_count
+                            }
+                        )
+                except Exception as e:
+                    LogService.log_error(f"Ошибка получения результата для главы ID={chapter_id}: {e}", novel_id=novel_id)
 
         # Обновляем статус новеллы
         novel.status = 'edited'
