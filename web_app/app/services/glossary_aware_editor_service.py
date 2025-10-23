@@ -35,7 +35,7 @@ class GlossaryAwareEditorService:
         
         # Загружаем глоссарий для новеллы
         glossary = self._load_prioritized_glossary(chapter.novel_id)
-        LogService.log_info(f"Загружен глоссарий: {len(glossary['all_terms'])} терминов", 
+        LogService.log_info(f"[Novel:{chapter.novel_id}, Ch:{chapter.chapter_number}] Загружен глоссарий: {len(glossary['all_terms'])} терминов",
                           novel_id=chapter.novel_id, chapter_id=chapter.id)
         
         # Получаем переведенный текст

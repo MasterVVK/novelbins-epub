@@ -326,7 +326,7 @@ def edit_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
         processed_count = 0
 
         self.update_state(state='PROGRESS', meta={'status': 'Начинаем редактуру', 'progress': 0})
-        LogService.log_info(f"📝 Начинаем редактуру {total_chapters} глав(ы) в {parallel_threads} потоков", novel_id=novel_id)
+        LogService.log_info(f"📝 [Novel:{novel_id}] Начинаем редактуру {total_chapters} глав(ы) в {parallel_threads} потоков", novel_id=novel_id)
 
         # Функция для редактирования одной главы в отдельном потоке
         def edit_single_chapter(chapter_id):
@@ -345,7 +345,7 @@ def edit_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
 
                 # ЗАЩИТА ОТ ДУБЛИРОВАНИЯ: Проверяем, не редактируется ли уже глава
                 if chapter.status == 'edited':
-                    LogService.log_info(f"⏭️ Глава {chapter.chapter_number} уже отредактирована, пропускаем", novel_id=novel_id)
+                    LogService.log_info(f"⏭️ [Novel:{novel_id}, Ch:{chapter.chapter_number}] Уже отредактирована, пропускаем", novel_id=novel_id)
                     with counter_lock:
                         processed_count += 1
                     return False
@@ -357,7 +357,7 @@ def edit_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
                     return None
 
                 try:
-                    LogService.log_info(f"🔄 Редактирую главу {chapter.chapter_number}", novel_id=novel_id)
+                    LogService.log_info(f"🔄 [Novel:{novel_id}, Ch:{chapter.chapter_number}] Редактирую главу", novel_id=novel_id)
 
                     # Создаем отдельный editor_service для этого потока
                     thread_translator = TranslatorService(config=config)
@@ -376,18 +376,18 @@ def edit_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
                                 novel_update.edited_chapters = success_count
                                 db.session.commit()
 
-                        LogService.log_info(f"✅ Отредактирована глава {chapter.chapter_number} ({success_count}/{total_chapters})", novel_id=novel_id)
+                        LogService.log_info(f"✅ [Novel:{novel_id}, Ch:{chapter.chapter_number}] Отредактирована ({success_count}/{total_chapters})", novel_id=novel_id)
                         return True
                     else:
                         with counter_lock:
                             processed_count += 1
-                        LogService.log_warning(f"⚠️ Глава {chapter.chapter_number} не была отредактирована", novel_id=novel_id)
+                        LogService.log_warning(f"⚠️ [Novel:{novel_id}, Ch:{chapter.chapter_number}] Не была отредактирована", novel_id=novel_id)
                         return False
 
                 except Exception as e:
                     with counter_lock:
                         processed_count += 1
-                    error_msg = f"❌ Ошибка редактуры главы {chapter.chapter_number}: {e}"
+                    error_msg = f"❌ [Novel:{novel_id}, Ch:{chapter.chapter_number}] Ошибка редактуры: {e}"
                     LogService.log_error(error_msg, novel_id=novel_id)
                     return False
 
@@ -415,7 +415,7 @@ def edit_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
                     for f in future_to_chapter_id:
                         f.cancel()
 
-                    LogService.log_warning(f"🛑 Редактура отменена пользователем. Отредактировано {success_count}/{total_chapters} глав(ы)", novel_id=novel_id)
+                    LogService.log_warning(f"🛑 [Novel:{novel_id}] Редактура отменена пользователем. Отредактировано {success_count}/{total_chapters} глав(ы)", novel_id=novel_id)
                     return {
                         'status': 'cancelled',
                         'message': 'Редактура отменена пользователем',
@@ -446,7 +446,7 @@ def edit_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
         novel.editing_task_id = None
         db.session.commit()
 
-        completion_msg = f'🎉 Редактура завершена: {success_count}/{total_chapters} глав(ы) отредактировано'
+        completion_msg = f'🎉 [Novel:{novel_id}] Редактура завершена: {success_count}/{total_chapters} глав(ы) отредактировано'
         LogService.log_info(completion_msg, novel_id=novel_id)
 
         return {
@@ -463,7 +463,7 @@ def edit_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
             novel.status = 'editing_cancelled'
             novel.editing_task_id = None
             db.session.commit()
-        LogService.log_warning(f"🛑 Редактура прервана по сигналу SIGTERM", novel_id=novel_id)
+        LogService.log_warning(f"🛑 [Novel:{novel_id}] Редактура прервана по сигналу SIGTERM", novel_id=novel_id)
         return {
             'status': 'cancelled',
             'message': 'Редактура отменена пользователем',
@@ -477,7 +477,7 @@ def edit_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
             novel.status = 'editing_timeout'
             novel.editing_task_id = None
             db.session.commit()
-        LogService.log_error(f"⏱️ Превышено время выполнения задачи редактуры (48 часов)", novel_id=novel_id)
+        LogService.log_error(f"⏱️ [Novel:{novel_id}] Превышено время выполнения задачи редактуры (48 часов)", novel_id=novel_id)
         raise
 
     except Exception as e:
@@ -486,7 +486,7 @@ def edit_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
             novel.status = 'editing_error'
             novel.editing_task_id = None
             db.session.commit()
-        LogService.log_error(f"❌ Критическая ошибка редактуры: {str(e)}", novel_id=novel_id)
+        LogService.log_error(f"❌ [Novel:{novel_id}] Критическая ошибка редактуры: {str(e)}", novel_id=novel_id)
         raise
 
     finally:

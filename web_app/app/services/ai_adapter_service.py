@@ -15,12 +15,13 @@ logger = logging.getLogger(__name__)
 class AIAdapterService:
     """Универсальный адаптер для работы с разными AI провайдерами"""
 
-    def __init__(self, model_id: int = None, model_name: str = None):
+    def __init__(self, model_id: int = None, model_name: str = None, chapter_id: int = None):
         """
         Инициализация адаптера
         Args:
             model_id: ID модели из базы данных
             model_name: Имя модели (альтернатива ID)
+            chapter_id: ID главы для логирования (опционально)
         """
         if model_id:
             self.model = AIModelService.get_model_by_id(model_id)
@@ -32,6 +33,8 @@ class AIAdapterService:
 
         if not self.model:
             raise ValueError("AI модель не найдена")
+
+        self.chapter_id = chapter_id
 
         logger.info(f"Инициализирован адаптер для модели: {self.model.name} ({self.model.provider})")
 
@@ -333,7 +336,14 @@ class AIAdapterService:
                 logger.info(f"  📊 Лимиты модели: max_input={model_max_context:,}, max_output={self.model.max_output_tokens:,}")
 
                 # Логируем параметры запроса
-                LogService.log_info(f"Ollama запрос: {self.model.model_id} | Temperature: {temperature} | Num ctx: {num_ctx:,} | Num predict: {num_predict:,} / {self.model.max_output_tokens:,}")
+                log_prefix = ""
+                if self.chapter_id:
+                    from app.models import Chapter
+                    chapter = Chapter.query.get(self.chapter_id)
+                    if chapter:
+                        log_prefix = f"[Novel:{chapter.novel_id}, Ch:{chapter.chapter_number}] "
+
+                LogService.log_info(f"{log_prefix}Ollama запрос: {self.model.model_id} | Temperature: {temperature} | Num ctx: {num_ctx:,} | Num predict: {num_predict:,} / {self.model.max_output_tokens:,}")
                 logger.debug(f"Ollama endpoint: {self.model.api_endpoint}")
                 logger.debug(f"Context size: {num_ctx}")
 

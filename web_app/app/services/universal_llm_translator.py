@@ -138,6 +138,7 @@ class UniversalLLMTranslator:
                     # Создаём адаптер напрямую, обходя __init__
                     adapter = AIAdapterService.__new__(AIAdapterService)
                     adapter.model = temp_model
+                    adapter.chapter_id = self.current_chapter_id
 
                     result = await adapter.generate_content(system_prompt, user_prompt, temperature, max_tokens)
 
@@ -193,7 +194,7 @@ class UniversalLLMTranslator:
         else:
             # Для других провайдеров или Gemini с одним ключом - обычный запрос
             try:
-                adapter = AIAdapterService(model_id=self.model.id)
+                adapter = AIAdapterService(model_id=self.model.id, chapter_id=self.current_chapter_id)
                 result = await adapter.generate_content(system_prompt, user_prompt, temperature, max_tokens)
 
                 if result['success']:

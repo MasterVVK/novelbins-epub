@@ -38,7 +38,7 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
         Редактирование главы с полным использованием оригинала и глоссария
         """
         print(f"✏️ Начинаем продвинутую редактуру главы {chapter.chapter_number} с оригиналом и глоссарием")
-        LogService.log_info(f"Начинаем редактуру с оригиналом для главы {chapter.chapter_number}",
+        LogService.log_info(f"[Novel:{chapter.novel_id}, Ch:{chapter.chapter_number}] Начинаем редактуру с оригиналом",
                           novel_id=chapter.novel_id, chapter_id=chapter.id)
 
         # Получаем ВСЕ необходимые данные
@@ -66,7 +66,7 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
         glossary = self._load_prioritized_glossary(chapter.novel_id)
         # Подсчитываем общее количество терминов из всех категорий
         total_terms = sum(len(terms) for terms in glossary.get('all_terms', {}).values())
-        LogService.log_info(f"Загружен глоссарий: {total_terms} терминов",
+        LogService.log_info(f"[Novel:{chapter.novel_id}, Ch:{chapter.chapter_number}] Загружен глоссарий: {total_terms} терминов",
                           novel_id=chapter.novel_id, chapter_id=chapter.id)
 
         # Статистика для логирования
@@ -128,12 +128,12 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
 
             print(f"✅ Глава {chapter.chapter_number} отредактирована за {editing_time:.1f} сек")
             print(f"📈 Качество повышено с {quality_score} до {min(quality_score + 3, 10)}/10")
-            LogService.log_info(f"Глава {chapter.chapter_number} отредактирована с оригиналом за {editing_time:.1f} сек",
+            LogService.log_info(f"[Novel:{chapter.novel_id}, Ch:{chapter.chapter_number}] Отредактирована с оригиналом за {editing_time:.1f} сек",
                               novel_id=chapter.novel_id, chapter_id=chapter.id)
             return True
 
         except Exception as e:
-            LogService.log_error(f"Ошибка редактуры с оригиналом главы {chapter.chapter_number}: {e}",
+            LogService.log_error(f"[Novel:{chapter.novel_id}, Ch:{chapter.chapter_number}] Ошибка редактуры с оригиналом: {e}",
                                novel_id=chapter.novel_id, chapter_id=chapter.id)
             print(f"❌ Ошибка при редактировании: {e}")
             return False
