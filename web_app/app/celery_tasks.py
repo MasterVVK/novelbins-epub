@@ -324,11 +324,15 @@ def edit_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
 
         # Обрабатываем главы последовательно (без батчей)
         for i, chapter in enumerate(chapters, 1):
-            # Проверяем отмену задачи
-            if _cancel_requested:
-                novel.status = 'editing_cancelled'
-                novel.editing_task_id = None
-                db.session.commit()
+            # Перезагружаем новеллу для проверки отмены
+            db.session.refresh(novel)
+
+            # Проверяем отмену задачи (глобальный флаг ИЛИ статус в БД)
+            if _cancel_requested or novel.status == 'editing_cancelled':
+                if novel.status != 'editing_cancelled':
+                    novel.status = 'editing_cancelled'
+                    novel.editing_task_id = None
+                    db.session.commit()
                 LogService.log_warning(f"🛑 Редактура отменена пользователем. Отредактировано {success_count}/{total_chapters} глав(ы)", novel_id=novel_id)
                 return {
                     'status': 'cancelled',
