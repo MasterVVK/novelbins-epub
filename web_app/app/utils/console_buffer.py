@@ -1,17 +1,25 @@
 """
-Модуль для работы с консольным буфером
+Модуль для работы с консольным буфером (Redis-backed)
 """
 from datetime import datetime
 from typing import List, Dict, Any
+import json
+import redis
+import os
 
-# Буфер для хранения консольных сообщений
-console_buffer: List[Dict[str, Any]] = []
+# Подключение к Redis
+redis_client = redis.Redis(
+    host='localhost',
+    port=6379,
+    db=1,  # Используем ту же БД что и Celery
+    decode_responses=True
+)
+
 MAX_BUFFER_SIZE = 1000
+BUFFER_KEY = 'console:messages'
 
 def add_console_message(message: str, level: str = 'INFO', source: str = 'console') -> Dict[str, Any]:
-    """Добавляет сообщение в консольный буфер"""
-    global console_buffer
-    
+    """Добавляет сообщение в консольный буфер (Redis)"""
     timestamp = datetime.now().isoformat()
     console_message = {
         'timestamp': timestamp,
@@ -19,23 +27,33 @@ def add_console_message(message: str, level: str = 'INFO', source: str = 'consol
         'message': message,
         'source': source
     }
-    
-    console_buffer.append(console_message)
-    
-    # Ограничиваем размер буфера
-    if len(console_buffer) > MAX_BUFFER_SIZE:
-        console_buffer.pop(0)
-    
+
+    try:
+        # Добавляем в Redis list
+        redis_client.rpush(BUFFER_KEY, json.dumps(console_message, ensure_ascii=False))
+
+        # Ограничиваем размер буфера
+        redis_client.ltrim(BUFFER_KEY, -MAX_BUFFER_SIZE, -1)
+    except Exception as e:
+        print(f"Ошибка записи в console buffer: {e}")
+
     return console_message
 
 def get_console_buffer() -> List[Dict[str, Any]]:
-    """Возвращает копию консольного буфера"""
-    return console_buffer.copy()
+    """Возвращает копию консольного буфера из Redis"""
+    try:
+        messages = redis_client.lrange(BUFFER_KEY, 0, -1)
+        return [json.loads(msg) for msg in messages]
+    except Exception as e:
+        print(f"Ошибка чтения console buffer: {e}")
+        return []
 
 def clear_console_buffer():
-    """Очищает консольный буфер"""
-    global console_buffer
-    console_buffer.clear()
+    """Очищает консольный буфер в Redis"""
+    try:
+        redis_client.delete(BUFFER_KEY)
+    except Exception as e:
+        print(f"Ошибка очистки console buffer: {e}")
 
 def get_console_stats() -> Dict[str, Any]:
     """Возвращает статистику консольного буфера"""

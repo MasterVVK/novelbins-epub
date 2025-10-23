@@ -150,11 +150,17 @@
                         </form>
                     </div>
                     <div class="col-md-3 mb-2">
-                        <form method="POST" action="{{ url_for('main.start_editing', novel_id=novel.id) }}" style="display: inline;">
-                            <button type="submit" class="btn btn-outline-warning w-100">
-                                <i class="bi bi-pencil-square"></i> Редактура
+                        {% if novel.editing_task_id %}
+                            <button type="button" class="btn btn-outline-danger w-100" onclick="cancelEditing({{ novel.id }})">
+                                <i class="bi bi-x-circle"></i> Отменить редактуру
                             </button>
-                        </form>
+                        {% else %}
+                            <form method="POST" action="{{ url_for('main.start_editing', novel_id=novel.id) }}" style="display: inline;">
+                                <button type="submit" class="btn btn-outline-warning w-100">
+                                    <i class="bi bi-pencil-square"></i> Редактура
+                                </button>
+                            </form>
+                        {% endif %}
                     </div>
                     <div class="col-md-3 mb-2">
                         <form method="POST" action="{{ url_for('main.generate_epub', novel_id=novel.id) }}" style="display: inline;">
@@ -559,6 +565,33 @@ async function cancelParsing(novelId) {
         }
     } catch (error) {
         alert('❌ Ошибка при отмене парсинга: ' + error.message);
+    }
+}
+
+// Отмена редактуры
+async function cancelEditing(novelId) {
+    if (!confirm('Вы уверены, что хотите отменить редактуру? Текущий прогресс будет сохранён, но незавершённые главы не будут отредактированы.')) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/novels/${novelId}/edit/cancel`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            alert('✅ Редактура успешно отменена');
+            location.reload(); // Перезагружаем страницу
+        } else {
+            alert('❌ Ошибка: ' + (data.error || 'Неизвестная ошибка'));
+        }
+    } catch (error) {
+        alert('❌ Ошибка при отмене редактуры: ' + error.message);
     }
 }
 

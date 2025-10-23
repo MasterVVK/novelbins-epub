@@ -11,6 +11,7 @@ from typing import Dict, List, Optional, Tuple
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Semaphore
+from flask import current_app
 
 from app import db
 from app.models import Chapter, Novel, Task, Translation
@@ -23,25 +24,51 @@ logger = logging.getLogger(__name__)
 
 class ParallelEditorService:
     """Улучшенный сервис редактуры с параллельной обработкой"""
-    
+
     def __init__(self, translator_service: TranslatorService, max_concurrent_requests: int = 2):
         self.translator = translator_service
         self.template_service = PromptTemplateService
         self.max_concurrent_requests = max_concurrent_requests
         self.api_semaphore = Semaphore(max_concurrent_requests)
+        self._cancel_requested = False  # Флаг отмены для многопоточности
         
+    def request_cancel(self):
+        """Запросить отмену редактуры (безопасно для многопоточности)"""
+        self._cancel_requested = True
+        LogService.log_warning("Запрошена отмена редактуры")
+
+    def is_cancelled(self) -> bool:
+        """Проверить, была ли запрошена отмена"""
+        return self._cancel_requested
+
+    def _edit_chapter_with_app_context(self, chapter: Chapter, flask_app) -> bool:
+        """Wrapper для edit_chapter_with_context с Flask app context"""
+        with flask_app.app_context():
+            return self.edit_chapter_with_context(chapter)
+
     def edit_chapters_batch(self, chapters: List[Chapter], max_parallel_chapters: int = 3) -> Dict[int, bool]:
         """Редактирование пакета глав с параллельной обработкой"""
         results = {}
-        
+
+        # Получаем Flask app для передачи в потоки
+        flask_app = current_app._get_current_object()
+
         with ThreadPoolExecutor(max_workers=max_parallel_chapters) as executor:
-            # Запускаем редактирование глав параллельно
+            # Запускаем редактирование глав параллельно с app context
             future_to_chapter = {
-                executor.submit(self.edit_chapter_with_context, chapter): chapter 
+                executor.submit(self._edit_chapter_with_app_context, chapter, flask_app): chapter
                 for chapter in chapters[:max_parallel_chapters]
             }
-            
+
             for future in as_completed(future_to_chapter):
+                # Проверяем отмену перед обработкой результата
+                if self._cancel_requested:
+                    LogService.log_warning("Обработка результатов прервана из-за отмены")
+                    # Отменяем оставшиеся задачи
+                    for f in future_to_chapter:
+                        f.cancel()
+                    break
+
                 chapter = future_to_chapter[future]
                 try:
                     result = future.result()
@@ -56,15 +83,21 @@ class ParallelEditorService:
                         f"Ошибка при редактировании главы {chapter.chapter_number}: {e}",
                         novel_id=chapter.novel_id, chapter_id=chapter.id
                     )
-                    
+
         return results
         
     def edit_chapter_with_context(self, chapter: Chapter) -> bool:
         """Редактирование главы с использованием контекста предыдущих глав"""
+        # Проверяем отмену в начале
+        if self._cancel_requested:
+            LogService.log_warning(f"Редактура главы {chapter.chapter_number} отменена до начала",
+                                 novel_id=chapter.novel_id, chapter_id=chapter.id)
+            return False
+
         print(f"✏️ Начинаем редактуру главы {chapter.chapter_number} с контекстом")
-        LogService.log_info(f"Начинаем редактуру главы {chapter.chapter_number} с контекстом", 
+        LogService.log_info(f"Начинаем редактуру главы {chapter.chapter_number} с контекстом",
                           novel_id=chapter.novel_id, chapter_id=chapter.id)
-        
+
         # Получаем контекст из предыдущих глав
         context = self._get_chapter_context(chapter)
         
@@ -161,19 +194,28 @@ class ParallelEditorService:
         
         # Этапы 2-3: Параллельная обработка стиля и диалогов
         edited_texts = {}
+
+        # Получаем Flask app для передачи в потоки
+        flask_app = current_app._get_current_object()
+
+        # Вспомогательные функции с app context
+        def improve_style_with_app_context():
+            with flask_app.app_context():
+                return self._improve_style_with_context(text, chapter.id, context)
+
+        def polish_dialogues_with_app_context():
+            with flask_app.app_context():
+                return self._polish_dialogues_with_context(text, chapter.id, context)
+
         with ThreadPoolExecutor(max_workers=2) as executor:
             futures = {}
-            
+
             if strategy.get('needs_style'):
-                futures['style'] = executor.submit(
-                    self._improve_style_with_context, text, chapter.id, context
-                )
-                
+                futures['style'] = executor.submit(improve_style_with_app_context)
+
             if strategy.get('needs_dialogue'):
-                futures['dialogue'] = executor.submit(
-                    self._polish_dialogues_with_context, text, chapter.id, context
-                )
-                
+                futures['dialogue'] = executor.submit(polish_dialogues_with_app_context)
+
             # Собираем результаты
             for stage, future in futures.items():
                 try:
@@ -359,7 +401,7 @@ class ParallelEditorService:
                 summary=original_translation.summary if original_translation else None,
                 translation_type='edited',
                 api_used='gemini-editor',
-                model_used=self.translator.config.model_name,
+                model_used=self.translator.translator.model.model_id,
                 quality_score=8,  # Обычно после редактуры качество ~8
                 translation_time=editing_time,
                 context_used={

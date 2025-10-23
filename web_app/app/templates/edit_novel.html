@@ -397,7 +397,22 @@
                             </div>
                         </div>
                     </div>
-                    
+
+                    <div class="row mt-3">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="editing_threads" class="form-label">
+                                    Количество параллельных потоков редактуры
+                                    <i class="bi bi-info-circle" data-bs-toggle="tooltip" title="Сколько глав обрабатывать одновременно (рекомендуется 2-5 для Ollama)"></i>
+                                </label>
+                                <input type="number" class="form-control" id="editing_threads" name="editing_threads"
+                                       min="1" max="10" step="1"
+                                       value="{{ novel.config.editing_threads if novel.config and novel.config.editing_threads else 3 }}">
+                                <div class="form-text">По умолчанию: 3 потока. Больше потоков = быстрее, но выше нагрузка на сервер</div>
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="d-flex justify-content-between">
                         <a href="{{ url_for('main.novel_detail', novel_id=novel.id) }}" class="btn btn-outline-secondary">
                             <i class="bi bi-arrow-left"></i> Назад

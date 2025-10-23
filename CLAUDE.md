@@ -105,10 +105,19 @@ sudo systemctl start redis-server
 ### Background Task Queue
 
 Celery с Redis для фоновой обработки (`web_app/app/celery_tasks.py`):
-- Парсинг глав новелл с отслеживанием прогресса
-- Параллельный перевод нескольких глав
-- Поддержка отмены задач через сигналы
+- **Парсинг глав**: С отслеживанием прогресса и поддержкой отмены
+- **Параллельный перевод**: Несколько глав одновременно
+- **Параллельная редактура** (`celery_tasks.py:268-417`):
+  - Обработка глав батчами через `ParallelEditorService`
+  - Настраиваемое количество потоков через `novel.config['editing_threads']` (по умолчанию: 3)
+  - Многоуровневая отмена: между батчами, между главами в батче, в начале обработки главы
+  - API endpoint: `POST /api/novels/<id>/edit/cancel`
+- **Отмена задач**: Через сигналы SIGTERM с graceful shutdown
 - Использует отдельную Redis БД (DB 1) для изоляции
+
+**Модель Novel** (`app/models/novel.py`):
+- `editing_task_id`: ID активной Celery задачи редактуры (аналог `parsing_task_id`)
+- `config['editing_threads']`: Количество параллельных потоков редактуры (1-10, рекомендуется 2-5)
 
 ### Configuration System
 

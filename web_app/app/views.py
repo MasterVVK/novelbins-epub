@@ -372,6 +372,7 @@ def edit_novel(novel_id):
         translation_model = request.form.get('translation_model')
         translation_temperature = request.form.get('translation_temperature')
         editing_quality_mode = request.form.get('editing_quality_mode')
+        editing_threads = request.form.get('editing_threads')
         
         # Вычисляем температуру редактирования на основе режима качества
         editing_temperature_map = {
@@ -403,6 +404,7 @@ def edit_novel(novel_id):
             'translation_temperature': float(translation_temperature) if translation_temperature else 0.1,
             'editing_temperature': float(editing_temperature) if editing_temperature else 0.7,
             'editing_quality_mode': editing_quality_mode or 'balanced',
+            'editing_threads': int(editing_threads) if editing_threads else 3,
             'filter_text': request.form.get('filter_text', '').strip()
         }
         
@@ -767,7 +769,7 @@ def start_translation(novel_id):
 
 @main_bp.route('/novels/<int:novel_id>/start-editing', methods=['POST'])
 def start_editing(novel_id):
-    """Запуск редактуры новеллы"""
+    """Запуск редактуры новеллы через Celery"""
     logger.info(f"🚀 Запрос на редактуру новеллы {novel_id}")
     novel = Novel.query.get_or_404(novel_id)
     logger.info(f"📖 Найдена новелла: {novel.title}")
@@ -776,7 +778,6 @@ def start_editing(novel_id):
     chapters = Chapter.query.filter_by(
         novel_id=novel_id,
         status='translated',
-
     ).order_by(Chapter.chapter_number).all()
 
     logger.info(f"🔍 Найдено глав для редактуры: {len(chapters)}")
@@ -788,136 +789,45 @@ def start_editing(novel_id):
         flash('Нет глав для редактуры', 'warning')
         return redirect(url_for('main.novel_detail', novel_id=novel_id))
 
-    # Создаем задачу редактуры
-    task = Task(
-        novel_id=novel_id,
-        task_type='editing',
-        priority=2
-    )
-    db.session.add(task)
-    db.session.commit()
+    # Получаем настройку количества потоков из конфига новеллы
+    parallel_threads = 3  # По умолчанию
+    if novel.config:
+        parallel_threads = novel.config.get('editing_threads', 3)
 
-    def edit_novel(task_id, chapter_ids):
-        logger.info(f"🎯 Фоновый поток редактуры запущен")
-        
-        # Создаем контекст приложения для фонового потока
-        from app import create_app
-        app = create_app()
-        
-        with app.app_context():
-            try:
-                logger.info(f"✅ Контекст приложения создан")
-                logger.info(f"📝 ID глав для редактуры: {chapter_ids}")
-                logger.info(f"📝 ID задачи: {task_id}")
-                
-                # Обновляем статус задачи на running
-                fresh_task = Task.query.get(task_id)
-                if fresh_task:
-                    fresh_task.status = 'running'
-                    fresh_task.started_at = datetime.utcnow()
-                    db.session.add(fresh_task)
-                    db.session.commit()
-                    logger.info(f"✅ Задача {task_id} переведена в статус 'running'")
-                else:
-                    logger.error(f"❌ Не удалось найти задачу {task_id}")
-                    return
-                
-                from app.services.translator_service import TranslatorService
-                from app.services.original_aware_editor_service import OriginalAwareEditorService
+    # Запускаем Celery задачу редактуры
+    try:
+        from app.celery_tasks import edit_novel_chapters_task
+        from app import celery
 
-                # Получаем свежий объект новеллы в контексте текущей сессии
-                fresh_novel = Novel.query.get(novel_id)
-                if not fresh_novel:
-                    logger.error(f"❌ Новелла с ID {novel_id} не найдена")
-                    return
-                
-                # Инициализируем сервисы с конфигурацией из новеллы
-                config = {}
-                if fresh_novel.config:
-                    config['model_name'] = fresh_novel.config.get('translation_model')
-                    config['temperature'] = fresh_novel.config.get('editing_temperature', fresh_novel.config.get('translation_temperature'))
-                translator_service = TranslatorService(config=config)
-                editor_service = OriginalAwareEditorService(translator_service)
-                
-                total_chapters = len(chapter_ids)
-                success_count = 0
-                
-                logger.info(f"🚀 Начинаем редактуру {total_chapters} глав")
-                
-                for i, chapter_id in enumerate(chapter_ids, 1):
-                    try:
-                        # Получаем свежий объект главы в новом контексте сессии
-                        fresh_chapter = Chapter.query.get(chapter_id)
-                        if not fresh_chapter:
-                            logger.error(f"❌ Глава с ID {chapter_id} не найдена в базе")
-                            continue
-                        
-                        logger.info(f"📝 Редактируем главу {fresh_chapter.chapter_number} ({i}/{total_chapters})")
-                        
-                        # Обновляем прогресс
-                        progress = (i / total_chapters) * 100
-                        fresh_task = Task.query.get(task_id)
-                        if fresh_task:
-                            fresh_task.update_progress(progress / 100, f"Редактура главы {fresh_chapter.chapter_number}")
-                            emit_task_update(task_id, progress, 'running')
-                        
-                        # Редактируем главу
-                        success = editor_service.edit_chapter(fresh_chapter)
-                        if success:
-                            success_count += 1
-                            LogService.log_info(f"✅ Глава {fresh_chapter.chapter_number} отредактирована", 
-                                              novel_id=novel_id, chapter_id=fresh_chapter.id)
-                        else:
-                            LogService.log_error(f"❌ Ошибка редактуры главы {fresh_chapter.chapter_number}", 
-                                               novel_id=novel_id, chapter_id=fresh_chapter.id)
-                        
-                        time.sleep(2)  # Пауза между главами
-                        
-                    except Exception as e:
-                        LogService.log_error(f"❌ Ошибка редактуры главы {i}: {e}", novel_id=novel_id)
-                        import traceback
-                        LogService.log_error(f"📄 Traceback: {traceback.format_exc()}", novel_id=novel_id)
-                        continue
-                
-                # Обновляем счетчик отредактированных глав
-                if success_count > 0:
-                    novel_obj = Novel.query.get(novel_id)
-                    if novel_obj:
-                        novel_obj.edited_chapters = success_count
-                        db.session.add(novel_obj)
-                        db.session.commit()
-                        LogService.log_info(f"📊 Обновлен счетчик отредактированных глав: {success_count}", novel_id=novel_id)
-                
-                # Завершаем задачу
-                if success_count == total_chapters:
-                    task.complete(f"Редактура завершена: {success_count}/{total_chapters} глав")
-                else:
-                    task.complete(f"Редактура завершена с ошибками: {success_count}/{total_chapters} глав")
-                
-                LogService.log_info(f"✅ Редактура завершена: {success_count}/{total_chapters} глав", novel_id=novel_id)
-                
-            except Exception as e:
-                LogService.log_error(f"❌ Критическая ошибка редактуры: {e}", novel_id=novel_id)
-                import traceback
-                LogService.log_error(f"❌ Traceback: {traceback.format_exc()}", novel_id=novel_id)
-                
-                # Получаем свежий объект задачи в новом контексте сессии
-                task_id = task.id
-                fresh_task = Task.query.get(task_id)
-                if fresh_task:
-                    fresh_task.fail(f"Критическая ошибка: {e}")
-                else:
-                    LogService.log_error(f"❌ Не удалось найти задачу {task_id} для обновления статуса", novel_id=novel_id)
+        # Отладка: выводим конфигурацию Celery
+        logger.info(f"🔍 Celery broker: {celery.conf.broker_url}")
+        logger.info(f"🔍 Celery backend: {celery.conf.result_backend}")
 
-    # Запускаем редактуру в фоновом потоке
-    import threading
-    chapter_ids = [ch.id for ch in chapters]
-    thread = threading.Thread(target=edit_novel, args=(task.id, chapter_ids))
-    thread.daemon = True
-    thread.start()
+        chapter_ids = [ch.id for ch in chapters]
+        task = edit_novel_chapters_task.apply_async(
+            kwargs={
+                'novel_id': novel_id,
+                'chapter_ids': chapter_ids,
+                'parallel_threads': parallel_threads
+            },
+            queue='czbooks_queue'
+        )
 
-    LogService.log_info(f"🎯 Редактура запущена в фоновом потоке для {len(chapters)} глав", novel_id=novel_id)
-    flash(f'Редактура запущена для {len(chapters)} глав', 'success')
+        # Сохраняем ID задачи в новелле
+        novel.editing_task_id = task.id
+        db.session.commit()
+
+        logger.info(f"✅ Task ID: {task.id}, State: {task.state}")
+        LogService.log_info(
+            f"🎯 Редактура запущена через Celery для {len(chapters)} глав (потоков: {parallel_threads})",
+            novel_id=novel_id
+        )
+        flash(f'Редактура запущена для {len(chapters)} глав (параллельных потоков: {parallel_threads})', 'success')
+
+    except Exception as e:
+        logger.error(f"❌ Ошибка запуска задачи редактуры: {e}")
+        flash(f'Ошибка запуска редактуры: {str(e)}', 'error')
+
     return redirect(url_for('main.novel_detail', novel_id=novel_id))
 
 

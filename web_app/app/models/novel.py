@@ -47,6 +47,7 @@ class Novel(db.Model):
 
     # Celery task ID для отслеживания фоновых задач
     parsing_task_id = Column(String(255))  # ID задачи Celery для парсинга
+    editing_task_id = Column(String(255))  # ID задачи Celery для редактуры
 
     # Связь с шаблоном промпта
     prompt_template_id = Column(Integer, ForeignKey('prompt_templates.id'), nullable=True)
