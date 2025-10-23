@@ -171,3 +171,4 @@ glossary_state.json
 /translations_problems
 /qidian_parsed
 /logs
+**/logs/
