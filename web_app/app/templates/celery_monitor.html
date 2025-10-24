@@ -1,0 +1,440 @@
+{% extends "base.html" %}
+
+{% block title %}Celery Monitor - Novel Translator{% endblock %}
+{% block page_title %}Celery Monitor{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Статус Celery Workers -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="card-title mb-0">
+                        <i class="bi bi-hdd-network"></i> Celery Workers
+                    </h5>
+                    <div>
+                        <button class="btn btn-sm btn-primary" onclick="refreshAll()">
+                            <i class="bi bi-arrow-clockwise"></i> Обновить всё
+                        </button>
+                        <button class="btn btn-sm btn-danger" onclick="purgeQueue()" title="Очистить очередь задач">
+                            <i class="bi bi-trash-fill"></i> Очистить очередь
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div id="workers-status" class="text-center text-muted py-3">
+                        <div class="spinner-border spinner-border-sm" role="status">
+                            <span class="visually-hidden">Загрузка...</span>
+                        </div>
+                        Загрузка информации о workers...
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tabs для разных типов задач -->
+    <div class="row">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <ul class="nav nav-tabs card-header-tabs" id="tasksTabs" role="tablist">
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link active" id="active-tab" data-bs-toggle="tab"
+                                    data-bs-target="#active-tasks" type="button" role="tab">
+                                <i class="bi bi-play-circle"></i> Активные <span id="active-count" class="badge bg-primary ms-1">0</span>
+                            </button>
+                        </li>
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link" id="scheduled-tab" data-bs-toggle="tab"
+                                    data-bs-target="#scheduled-tasks" type="button" role="tab">
+                                <i class="bi bi-clock"></i> Запланированные <span id="scheduled-count" class="badge bg-info ms-1">0</span>
+                            </button>
+                        </li>
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link" id="reserved-tab" data-bs-toggle="tab"
+                                    data-bs-target="#reserved-tasks" type="button" role="tab">
+                                <i class="bi bi-pause-circle"></i> Зарезервированные <span id="reserved-count" class="badge bg-warning ms-1">0</span>
+                            </button>
+                        </li>
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link" id="registered-tab" data-bs-toggle="tab"
+                                    data-bs-target="#registered-tasks" type="button" role="tab">
+                                <i class="bi bi-list-check"></i> Зарегистрированные <span id="registered-count" class="badge bg-secondary ms-1">0</span>
+                            </button>
+                        </li>
+                    </ul>
+                </div>
+                <div class="card-body">
+                    <div class="tab-content" id="tasksTabsContent">
+                        <!-- Активные задачи -->
+                        <div class="tab-pane fade show active" id="active-tasks" role="tabpanel">
+                            <div id="active-tasks-content" class="text-center text-muted py-3">
+                                <div class="spinner-border spinner-border-sm" role="status">
+                                    <span class="visually-hidden">Загрузка...</span>
+                                </div>
+                                Загрузка активных задач...
+                            </div>
+                        </div>
+
+                        <!-- Запланированные задачи -->
+                        <div class="tab-pane fade" id="scheduled-tasks" role="tabpanel">
+                            <div id="scheduled-tasks-content" class="text-center text-muted py-3">
+                                <div class="spinner-border spinner-border-sm" role="status">
+                                    <span class="visually-hidden">Загрузка...</span>
+                                </div>
+                                Загрузка запланированных задач...
+                            </div>
+                        </div>
+
+                        <!-- Зарезервированные задачи -->
+                        <div class="tab-pane fade" id="reserved-tasks" role="tabpanel">
+                            <div id="reserved-tasks-content" class="text-center text-muted py-3">
+                                <div class="spinner-border spinner-border-sm" role="status">
+                                    <span class="visually-hidden">Загрузка...</span>
+                                </div>
+                                Загрузка зарезервированных задач...
+                            </div>
+                        </div>
+
+                        <!-- Зарегистрированные типы задач -->
+                        <div class="tab-pane fade" id="registered-tasks" role="tabpanel">
+                            <div id="registered-tasks-content" class="text-center text-muted py-3">
+                                <div class="spinner-border spinner-border-sm" role="status">
+                                    <span class="visually-hidden">Загрузка...</span>
+                                </div>
+                                Загрузка зарегистрированных задач...
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Автообновление каждые 5 секунд
+let autoRefreshInterval;
+
+// Инициализация при загрузке страницы
+document.addEventListener('DOMContentLoaded', function() {
+    refreshAll();
+
+    // Автообновление
+    autoRefreshInterval = setInterval(refreshAll, 5000);
+});
+
+// Остановка автообновления при уходе со страницы
+window.addEventListener('beforeunload', function() {
+    if (autoRefreshInterval) {
+        clearInterval(autoRefreshInterval);
+    }
+});
+
+// Обновление всех данных
+function refreshAll() {
+    loadWorkersStatus();
+    loadActiveTasks();
+    loadScheduledTasks();
+    loadReservedTasks();
+    loadRegisteredTasks();
+}
+
+// Загрузка статуса workers
+async function loadWorkersStatus() {
+    try {
+        const response = await fetch('/api/celery/status');
+        const data = await response.json();
+
+        const container = document.getElementById('workers-status');
+
+        if (!data.success) {
+            container.innerHTML = `
+                <div class="alert alert-danger" role="alert">
+                    <i class="bi bi-exclamation-triangle"></i> ${data.error}
+                </div>
+            `;
+            return;
+        }
+
+        if (data.workers.length === 0) {
+            container.innerHTML = `
+                <div class="alert alert-warning" role="alert">
+                    <i class="bi bi-exclamation-circle"></i> Нет активных workers
+                </div>
+            `;
+            return;
+        }
+
+        let html = '<div class="row">';
+        data.workers.forEach(worker => {
+            html += `
+                <div class="col-md-6 mb-3">
+                    <div class="card border-success">
+                        <div class="card-body">
+                            <h6 class="card-title">
+                                <i class="bi bi-circle-fill text-success"></i> ${worker.name}
+                            </h6>
+                            <div class="small">
+                                <div><strong>Пул:</strong> ${worker.pool}</div>
+                                <div><strong>Конкурентность:</strong> ${worker.max_concurrency}</div>
+                                <div><strong>Очереди:</strong> ${worker.queues.join(', ')}</div>
+                                <div><strong>Задач зарегистрировано:</strong> ${worker.registered_tasks}</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+        html += '</div>';
+
+        container.innerHTML = html;
+    } catch (error) {
+        console.error('Ошибка загрузки статуса workers:', error);
+        document.getElementById('workers-status').innerHTML = `
+            <div class="alert alert-danger" role="alert">
+                <i class="bi bi-exclamation-triangle"></i> Ошибка загрузки: ${error.message}
+            </div>
+        `;
+    }
+}
+
+// Загрузка активных задач
+async function loadActiveTasks() {
+    try {
+        const response = await fetch('/api/celery/tasks/active');
+        const data = await response.json();
+
+        const container = document.getElementById('active-tasks-content');
+        const countBadge = document.getElementById('active-count');
+
+        countBadge.textContent = data.count || 0;
+
+        if (!data.success || data.tasks.length === 0) {
+            container.innerHTML = `
+                <div class="text-center text-muted py-3">
+                    <i class="bi bi-inbox fs-3"></i>
+                    <p class="mt-2 mb-0">Нет активных задач</p>
+                </div>
+            `;
+            return;
+        }
+
+        container.innerHTML = renderTasksTable(data.tasks, true);
+    } catch (error) {
+        console.error('Ошибка загрузки активных задач:', error);
+        document.getElementById('active-tasks-content').innerHTML = `
+            <div class="alert alert-danger">Ошибка загрузки: ${error.message}</div>
+        `;
+    }
+}
+
+// Загрузка запланированных задач
+async function loadScheduledTasks() {
+    try {
+        const response = await fetch('/api/celery/tasks/scheduled');
+        const data = await response.json();
+
+        const container = document.getElementById('scheduled-tasks-content');
+        const countBadge = document.getElementById('scheduled-count');
+
+        countBadge.textContent = data.count || 0;
+
+        if (!data.success || data.tasks.length === 0) {
+            container.innerHTML = `
+                <div class="text-center text-muted py-3">
+                    <i class="bi bi-inbox fs-3"></i>
+                    <p class="mt-2 mb-0">Нет запланированных задач</p>
+                </div>
+            `;
+            return;
+        }
+
+        container.innerHTML = renderTasksTable(data.tasks, true);
+    } catch (error) {
+        console.error('Ошибка загрузки запланированных задач:', error);
+        document.getElementById('scheduled-tasks-content').innerHTML = `
+            <div class="alert alert-danger">Ошибка загрузки: ${error.message}</div>
+        `;
+    }
+}
+
+// Загрузка зарезервированных задач
+async function loadReservedTasks() {
+    try {
+        const response = await fetch('/api/celery/tasks/reserved');
+        const data = await response.json();
+
+        const container = document.getElementById('reserved-tasks-content');
+        const countBadge = document.getElementById('reserved-count');
+
+        countBadge.textContent = data.count || 0;
+
+        if (!data.success || data.tasks.length === 0) {
+            container.innerHTML = `
+                <div class="text-center text-muted py-3">
+                    <i class="bi bi-inbox fs-3"></i>
+                    <p class="mt-2 mb-0">Нет зарезервированных задач</p>
+                </div>
+            `;
+            return;
+        }
+
+        container.innerHTML = renderTasksTable(data.tasks, true);
+    } catch (error) {
+        console.error('Ошибка загрузки зарезервированных задач:', error);
+        document.getElementById('reserved-tasks-content').innerHTML = `
+            <div class="alert alert-danger">Ошибка загрузки: ${error.message}</div>
+        `;
+    }
+}
+
+// Загрузка зарегистрированных задач
+async function loadRegisteredTasks() {
+    try {
+        const response = await fetch('/api/celery/registered');
+        const data = await response.json();
+
+        const container = document.getElementById('registered-tasks-content');
+        const countBadge = document.getElementById('registered-count');
+
+        countBadge.textContent = data.count || 0;
+
+        if (!data.success || data.tasks.length === 0) {
+            container.innerHTML = `
+                <div class="text-center text-muted py-3">
+                    <i class="bi bi-inbox fs-3"></i>
+                    <p class="mt-2 mb-0">Нет зарегистрированных задач</p>
+                </div>
+            `;
+            return;
+        }
+
+        let html = '<div class="list-group">';
+        data.tasks.forEach(task => {
+            html += `
+                <div class="list-group-item">
+                    <i class="bi bi-code-square"></i> <code>${task}</code>
+                </div>
+            `;
+        });
+        html += '</div>';
+
+        container.innerHTML = html;
+    } catch (error) {
+        console.error('Ошибка загрузки зарегистрированных задач:', error);
+        document.getElementById('registered-tasks-content').innerHTML = `
+            <div class="alert alert-danger">Ошибка загрузки: ${error.message}</div>
+        `;
+    }
+}
+
+// Рендер таблицы задач
+function renderTasksTable(tasks, showActions = false) {
+    let html = `
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th style="width: 250px;">ID задачи</th>
+                        <th>Имя задачи</th>
+                        <th>Worker</th>
+                        <th style="width: 150px;">Аргументы</th>
+                        ${showActions ? '<th style="width: 100px;">Действия</th>' : ''}
+                    </tr>
+                </thead>
+                <tbody>
+    `;
+
+    tasks.forEach(task => {
+        const taskId = task.id || 'N/A';
+        const taskName = task.name ? task.name.split('.').pop() : 'N/A';
+        const worker = task.worker || 'N/A';
+        const args = task.args ? JSON.stringify(task.args) : task.kwargs ? JSON.stringify(task.kwargs) : '[]';
+        const argsShort = args.length > 50 ? args.substring(0, 50) + '...' : args;
+
+        html += `
+            <tr>
+                <td><code class="small">${taskId}</code></td>
+                <td><span class="badge bg-info">${taskName}</span></td>
+                <td><small class="text-muted">${worker}</small></td>
+                <td><small title="${args}">${argsShort}</small></td>
+                ${showActions ? `
+                    <td>
+                        <button class="btn btn-sm btn-danger" onclick="revokeTask('${taskId}')" title="Отменить задачу">
+                            <i class="bi bi-x-circle"></i>
+                        </button>
+                    </td>
+                ` : ''}
+            </tr>
+        `;
+    });
+
+    html += `
+                </tbody>
+            </table>
+        </div>
+    `;
+
+    return html;
+}
+
+// Отмена задачи
+async function revokeTask(taskId) {
+    if (!confirm(`Вы уверены, что хотите отменить задачу ${taskId}?`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/celery/tasks/${taskId}/revoke`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            alert('Задача отменена успешно');
+            refreshAll();
+        } else {
+            alert('Ошибка отмены задачи: ' + data.error);
+        }
+    } catch (error) {
+        console.error('Ошибка отмены задачи:', error);
+        alert('Ошибка отмены задачи: ' + error.message);
+    }
+}
+
+// Очистка очереди
+async function purgeQueue() {
+    if (!confirm('Вы уверены, что хотите очистить ВСЮ очередь задач? Это действие нельзя отменить!')) {
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/celery/queue/purge', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            alert(data.message);
+            refreshAll();
+        } else {
+            alert('Ошибка очистки очереди: ' + data.error);
+        }
+    } catch (error) {
+        console.error('Ошибка очистки очереди:', error);
+        alert('Ошибка очистки очереди: ' + error.message);
+    }
+}
+</script>
+{% endblock %}

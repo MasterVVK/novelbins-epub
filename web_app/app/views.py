@@ -1822,3 +1822,8 @@ def api_get_ollama_model_info():
     except Exception as e:
         logger.error(f"Ошибка получения информации о модели Ollama: {e}")
         return jsonify({'error': str(e)}), 500 
+
+@main_bp.route('/celery-monitor')
+def celery_monitor():
+    """Страница мониторинга Celery"""
+    return render_template('celery_monitor.html')
