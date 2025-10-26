@@ -774,6 +774,25 @@ def start_editing(novel_id):
     novel = Novel.query.get_or_404(novel_id)
     logger.info(f"📖 Найдена новелла: {novel.title}")
 
+    # IDEMPOTENCY CHECK: Проверяем, не запущена ли уже редактура
+    if novel.editing_task_id:
+        from celery.result import AsyncResult
+        from app import celery
+
+        # Проверяем статус существующей задачи
+        task_result = AsyncResult(novel.editing_task_id, app=celery)
+
+        # Если задача активна (PENDING, STARTED, PROGRESS), не запускаем новую
+        if task_result.state in ['PENDING', 'STARTED', 'PROGRESS']:
+            logger.warning(f"⚠️ Редактура уже запущена (task_id: {novel.editing_task_id}, state: {task_result.state})")
+            flash(f'Редактура уже запущена (задача: {novel.editing_task_id[:8]}...)', 'warning')
+            return redirect(url_for('main.novel_detail', novel_id=novel_id))
+        else:
+            # Задача завершена/отменена, можно запустить новую
+            logger.info(f"✅ Предыдущая задача завершена (state: {task_result.state}), запускаем новую")
+            novel.editing_task_id = None
+            db.session.commit()
+
     # Получаем главы для редактуры
     chapters = Chapter.query.filter_by(
         novel_id=novel_id,
