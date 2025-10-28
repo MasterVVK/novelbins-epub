@@ -263,6 +263,66 @@
             </div>
             <div class="card-body">
                 {% if chapters and chapters|length > 0 %}
+
+                <!-- Пагинация сверху -->
+                {% if chapters_pagination and chapters_pagination.pages > 1 %}
+                <nav aria-label="Навигация по страницам глав" class="mb-3">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div class="text-muted">
+                            Показано {{ chapters_pagination.first }} - {{ chapters_pagination.last }} из {{ chapters_pagination.total }} глав
+                        </div>
+                        <ul class="pagination pagination-sm mb-0">
+                            <!-- Кнопка "Предыдущая" -->
+                            {% if chapters_pagination.has_prev %}
+                            <li class="page-item">
+                                <a class="page-link" href="{{ url_for('main.novel_detail', novel_id=novel.id, page=chapters_pagination.prev_num, per_page=per_page) }}">
+                                    <i class="bi bi-chevron-left"></i>
+                                </a>
+                            </li>
+                            {% else %}
+                            <li class="page-item disabled">
+                                <span class="page-link"><i class="bi bi-chevron-left"></i></span>
+                            </li>
+                            {% endif %}
+
+                            <!-- Номера страниц -->
+                            {% for page_num in chapters_pagination.iter_pages(left_edge=2, left_current=2, right_current=3, right_edge=2) %}
+                                {% if page_num %}
+                                    {% if page_num != chapters_pagination.page %}
+                                    <li class="page-item">
+                                        <a class="page-link" href="{{ url_for('main.novel_detail', novel_id=novel.id, page=page_num, per_page=per_page) }}">
+                                            {{ page_num }}
+                                        </a>
+                                    </li>
+                                    {% else %}
+                                    <li class="page-item active">
+                                        <span class="page-link">{{ page_num }}</span>
+                                    </li>
+                                    {% endif %}
+                                {% else %}
+                                <li class="page-item disabled">
+                                    <span class="page-link">...</span>
+                                </li>
+                                {% endif %}
+                            {% endfor %}
+
+                            <!-- Кнопка "Следующая" -->
+                            {% if chapters_pagination.has_next %}
+                            <li class="page-item">
+                                <a class="page-link" href="{{ url_for('main.novel_detail', novel_id=novel.id, page=chapters_pagination.next_num, per_page=per_page) }}">
+                                    <i class="bi bi-chevron-right"></i>
+                                </a>
+                            </li>
+                            {% else %}
+                            <li class="page-item disabled">
+                                <span class="page-link"><i class="bi bi-chevron-right"></i></span>
+                            </li>
+                            {% endif %}
+                        </ul>
+                    </div>
+                </nav>
+                {% endif %}
+
                 <div class="table-responsive">
                     <table class="table table-hover">
                         <thead>
