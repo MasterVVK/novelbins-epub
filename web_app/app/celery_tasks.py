@@ -7,7 +7,6 @@ import signal
 
 # Добавляем пути для импорта парсеров
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..')))
 
 from celery import Task
 from celery.exceptions import SoftTimeLimitExceeded, Terminated
