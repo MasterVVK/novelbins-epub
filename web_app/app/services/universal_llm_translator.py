@@ -242,15 +242,34 @@ class UniversalLLMTranslator:
                         LogService.log_warning(f"⚠️ Временная {error_name} для модели {self.model.model_id}")
                         LogService.log_warning(f"   Текст ошибки: {error}")
 
-                        # Короткие интервалы для server/upstream error: 30 сек, 5 минут
+                        # Интервалы для server/upstream error: 30 сек, 2 мин, 5 мин, 10 мин, 20 мин
                         retry_delays = [
                             (30, "30 секунд"),
-                            (300, "5 минут")
+                            (120, "2 минуты"),
+                            (300, "5 минут"),
+                            (600, "10 минут"),
+                            (1200, "20 минут")
                         ]
 
                         for attempt, (delay_seconds, delay_text) in enumerate(retry_delays, 1):
                             LogService.log_warning(f"⏳ Попытка {attempt}/{len(retry_delays)}: Ожидание {delay_text} перед повторным запросом...")
-                            time.sleep(delay_seconds)
+
+                            # Ожидание с логированием каждые 60 секунд для длительных пауз
+                            if delay_seconds > 60:
+                                remaining = delay_seconds
+                                while remaining > 0:
+                                    wait_chunk = min(60, remaining)
+                                    time.sleep(wait_chunk)
+                                    remaining -= wait_chunk
+                                    if remaining > 0:
+                                        minutes_left = remaining // 60
+                                        seconds_left = remaining % 60
+                                        if minutes_left > 0:
+                                            LogService.log_info(f"   ⏱️  Осталось: {minutes_left} мин {seconds_left} сек")
+                                        else:
+                                            LogService.log_info(f"   ⏱️  Осталось: {seconds_left} сек")
+                            else:
+                                time.sleep(delay_seconds)
 
                             LogService.log_info(f"🔄 Повторная попытка {attempt}/{len(retry_delays)} запроса к {self.model.model_id}")
 

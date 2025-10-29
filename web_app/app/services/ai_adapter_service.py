@@ -351,20 +351,28 @@ class AIAdapterService:
                 # Ollama лучше работает с единым промптом
                 full_prompt = f"{system_prompt}\n\n{user_prompt}"
 
+                # Подготавливаем JSON для запроса
+                request_json = {
+                    'model': self.model.model_id,
+                    'prompt': full_prompt,  # Единый промпт вместо system + prompt
+                    'stream': False,
+                    'options': {
+                        'temperature': temperature,
+                        'num_predict': num_predict,      # Максимальный размер генерации
+                        'num_ctx': num_ctx,              # Размер контекста = промпт + 20%
+                        'num_keep': num_ctx              # Сколько токенов сохранять
+                    }
+                }
+
+                # Включаем thinking mode если он активирован для модели
+                if hasattr(self.model, 'enable_thinking') and self.model.enable_thinking:
+                    request_json['think'] = True
+                    logger.info(f"🧠 Thinking mode активирован для {self.model.model_id}")
+
                 # Делаем запрос к модели с упрощенными параметрами контекста
                 response = await client.post(
                     f"{self.model.api_endpoint}/generate",
-                    json={
-                        'model': self.model.model_id,
-                        'prompt': full_prompt,  # Единый промпт вместо system + prompt
-                        'stream': False,
-                        'options': {
-                            'temperature': temperature,
-                            'num_predict': num_predict,      # Максимальный размер генерации
-                            'num_ctx': num_ctx,              # Размер контекста = промпт + 20%
-                            'num_keep': num_ctx              # Сколько токенов сохранять
-                        }
-                    }
+                    json=request_json
                 )
 
                 if response.status_code == 200:
@@ -372,6 +380,14 @@ class AIAdapterService:
                         data = response.json()
                         content = data.get('response', '')
                         finish_reason = 'stop' if data.get('done') else 'length'
+
+                        # Обработка thinking mode
+                        if 'thinking' in data and data['thinking']:
+                            thinking_text = data['thinking']
+                            logger.info(f"🧠 Thinking процесс: {len(thinking_text)} символов")
+                            logger.debug(f"Thinking содержимое: {thinking_text[:500]}...")
+                            # В thinking mode основной ответ может быть в другом поле
+                            # но обычно он все равно в 'response'
 
                         # Логируем информацию о ответе
                         logger.info(f"Ollama response received: {len(content)} chars, {data.get('eval_count', 0)} tokens")

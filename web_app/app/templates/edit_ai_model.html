@@ -122,6 +122,15 @@
                                 Поддерживает системные промпты
                             </label>
                         </div>
+
+                        <div class="form-check mb-3">
+                            <input class="form-check-input" type="checkbox" id="enable_thinking"
+                                   name="enable_thinking" {% if model.enable_thinking %}checked{% endif %}>
+                            <label class="form-check-label" for="enable_thinking">
+                                <strong>🧠 Включить Thinking Mode</strong>
+                                <div class="form-text">Глубокий анализ с пошаговыми рассуждениями (для DeepSeek, DeepSeek-R1 и других reasoning моделей)</div>
+                            </label>
+                        </div>
                     </div>
 
                     <!-- Рейтинги и рекомендации -->
@@ -255,7 +264,7 @@ document.getElementById('editModelForm').addEventListener('submit', async functi
         } else if (key === 'api_keys') {
             // Разбиваем список ключей по строкам
             data[key] = value.split('\n').map(s => s.trim()).filter(s => s);
-        } else if (key === 'is_active' || key === 'supports_system_prompt') {
+        } else if (key === 'is_active' || key === 'supports_system_prompt' || key === 'enable_thinking') {
             data[key] = true;
         } else if (value !== '') {
             data[key] = value;
@@ -265,6 +274,7 @@ document.getElementById('editModelForm').addEventListener('submit', async functi
     // Добавляем false для неотмеченных чекбоксов
     if (!formData.has('is_active')) data.is_active = false;
     if (!formData.has('supports_system_prompt')) data.supports_system_prompt = false;
+    if (!formData.has('enable_thinking')) data.enable_thinking = false;
 
     try {
         const response = await fetch(this.action, {

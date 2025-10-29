@@ -34,6 +34,9 @@ class AIModel(db.Model):
     supports_temperature = db.Column(db.Boolean, default=True)
     default_temperature = db.Column(db.Float, default=0.3)
 
+    # Thinking mode (для DeepSeek и других reasoning моделей)
+    enable_thinking = db.Column(db.Boolean, default=False, nullable=False)
+
     # Настройки для конкретных провайдеров
     provider_config = db.Column(db.JSON, default={})
     # Для Gemini: {"safety_settings": "block_none", "api_version": "v1beta"}
@@ -82,6 +85,7 @@ class AIModel(db.Model):
             'supports_system_prompt': self.supports_system_prompt,
             'supports_temperature': self.supports_temperature,
             'default_temperature': self.default_temperature,
+            'enable_thinking': self.enable_thinking,
             'provider_config': self.provider_config or {},
             'speed_rating': self.speed_rating,
             'quality_rating': self.quality_rating,

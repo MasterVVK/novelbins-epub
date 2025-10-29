@@ -114,7 +114,7 @@ class AIModelService:
                          'api_key', 'max_input_tokens', 'max_output_tokens',
                          'supports_system_prompt', 'supports_temperature',
                          'default_temperature', 'speed_rating', 'quality_rating',
-                         'cost_rating', 'is_active']:
+                         'cost_rating', 'is_active', 'enable_thinking']:
                 if field in data:
                     setattr(model, field, data[field])
 
