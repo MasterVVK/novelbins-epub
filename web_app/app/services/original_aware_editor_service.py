@@ -113,6 +113,14 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
                 print(f"🎯 Этап 5: Финальная полировка с полной проверкой...")
                 edited_text = self.final_polish_with_original(original_text, edited_text, glossary, chapter.id)
 
+            # КРИТИЧЕСКАЯ ПРОВЕРКА: Убеждаемся что текст действительно изменился
+            if edited_text == translated_text:
+                LogService.log_error(f"Глава {chapter.chapter_number}: текст не изменился после редактуры! Это означает ошибку редактуры.",
+                                   novel_id=chapter.novel_id, chapter_id=chapter.id)
+                print(f"❌ ОШИБКА: Текст не изменился после редактуры главы {chapter.chapter_number}!")
+                print(f"   Это означает, что API не вернул отредактированный текст.")
+                return False
+
             # Финальная валидация
             if not self.validate_with_original(original_text, edited_text, glossary):
                 LogService.log_error(f"Глава {chapter.chapter_number}: финальная валидация не пройдена",
@@ -240,10 +248,16 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
                 self.translator.translator.request_start_time = time.time()
 
             result = self.translator.translator.translate_text(translated, prompt, "", chapter_id, temperature=self.translator.temperature)
-            return result if result else translated
+
+            # КРИТИЧЕСКИ ВАЖНО: Если API вернул None или пустую строку - это ОШИБКА
+            # НЕ возвращаем translated текст, чтобы не записать его как edited!
+            if not result:
+                raise ValueError(f"API вернул пустой результат при исправлении с оригиналом. Редактура невозможна.")
+
+            return result
         except Exception as e:
             LogService.log_error(f"Ошибка исправления с оригиналом: {e}", chapter_id=chapter_id)
-            return translated
+            raise  # Прокидываем исключение выше, чтобы edit_chapter() вернул False
 
     def improve_style_with_original(self, original: str, translated: str,
                                    glossary: Dict, chapter_id: int) -> str:
@@ -282,10 +296,14 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
                 self.translator.translator.request_start_time = time.time()
 
             result = self.translator.translator.translate_text(translated, prompt, "", chapter_id, temperature=self.translator.temperature)
-            return result if result else translated
+
+            if not result:
+                raise ValueError(f"API вернул пустой результат при улучшении стиля. Редактура невозможна.")
+
+            return result
         except Exception as e:
             LogService.log_error(f"Ошибка улучшения стиля с оригиналом: {e}", chapter_id=chapter_id)
-            return translated
+            raise
 
     def polish_dialogues_with_original(self, original: str, translated: str,
                                        glossary: Dict, chapter_id: int) -> str:
@@ -324,10 +342,14 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
                 self.translator.translator.request_start_time = time.time()
 
             result = self.translator.translator.translate_text(translated, prompt, "", chapter_id, temperature=self.translator.temperature)
-            return result if result else translated
+
+            if not result:
+                raise ValueError(f"API вернул пустой результат при полировке диалогов. Редактура невозможна.")
+
+            return result
         except Exception as e:
             LogService.log_error(f"Ошибка полировки диалогов с оригиналом: {e}", chapter_id=chapter_id)
-            return translated
+            raise
 
     def final_polish_with_original(self, original: str, translated: str,
                                    glossary: Dict, chapter_id: int) -> str:
@@ -366,13 +388,20 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
                 self.translator.translator.request_start_time = time.time()
 
             result = self.translator.translator.translate_text(translated, prompt, "", chapter_id, temperature=self.translator.temperature)
+
+            if not result:
+                raise ValueError(f"API вернул пустой результат при финальной полировке. Редактура невозможна.")
+
             # Очищаем от метаданных Gemini
-            if result:
-                result = self._clean_ai_response(result)
-            return result if result else translated
+            result = self._clean_ai_response(result)
+
+            if not result:
+                raise ValueError(f"После очистки от метаданных результат пустой. Редактура невозможна.")
+
+            return result
         except Exception as e:
             LogService.log_error(f"Ошибка финальной полировки с оригиналом: {e}", chapter_id=chapter_id)
-            return translated
+            raise
 
     def validate_with_original(self, original: str, edited: str, glossary: Dict) -> bool:
         """

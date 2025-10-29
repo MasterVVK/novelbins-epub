@@ -440,16 +440,21 @@ def edit_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
                 except Exception as e:
                     LogService.log_error(f"Ошибка получения результата для главы ID={chapter_id}: {e}", novel_id=novel_id)
 
-        # Обновляем статус новеллы
-        novel.status = 'edited'
+        # Обновляем статус новеллы в зависимости от результата
+        if success_count > 0:
+            novel.status = 'edited'
+            completion_msg = f'🎉 [Novel:{novel_id}] Редактура завершена: {success_count}/{total_chapters} глав(ы) отредактировано'
+            LogService.log_info(completion_msg, novel_id=novel_id)
+        else:
+            novel.status = 'editing_error'
+            error_msg = f'❌ [Novel:{novel_id}] Редактура завершена БЕЗ УСПЕШНЫХ РЕЗУЛЬТАТОВ: 0/{total_chapters} глав отредактировано'
+            LogService.log_error(error_msg, novel_id=novel_id)
+
         novel.editing_task_id = None
         db.session.commit()
 
-        completion_msg = f'🎉 [Novel:{novel_id}] Редактура завершена: {success_count}/{total_chapters} глав(ы) отредактировано'
-        LogService.log_info(completion_msg, novel_id=novel_id)
-
         return {
-            'status': 'completed',
+            'status': 'completed' if success_count > 0 else 'failed',
             'message': f'Редактура завершена. Отредактировано {success_count} глав из {total_chapters}',
             'edited_chapters': success_count,
             'total_chapters': total_chapters

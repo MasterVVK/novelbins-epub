@@ -228,14 +228,16 @@ class UniversalLLMTranslator:
 
                         return None
 
-                    # Специальная обработка для Ollama server error (500), upstream error (502), upstream timeout (504) и timeout с короткими повторами
-                    if self.model.provider == 'ollama' and error_type in ['upstream_error', 'upstream_timeout', 'server_error', 'timeout']:
+                    # Специальная обработка для Ollama server error (500), upstream error (502), upstream timeout (504), timeout и unexpected error с короткими повторами
+                    if self.model.provider == 'ollama' and error_type in ['upstream_error', 'upstream_timeout', 'server_error', 'timeout', 'unexpected']:
                         if error_type == 'server_error':
                             error_name = 'внутренняя ошибка сервера (500)'
                         elif error_type == 'upstream_timeout':
                             error_name = 'upstream timeout (504)'
                         elif error_type == 'timeout':
                             error_name = 'таймаут клиента (>20 минут)'
+                        elif error_type == 'unexpected':
+                            error_name = 'неожиданная ошибка сети (RemoteProtocolError и др.)'
                         else:
                             error_name = 'upstream error (502)'
 
@@ -293,8 +295,8 @@ class UniversalLLMTranslator:
                                 LogService.log_warning(f"   Тип ошибки: {retry_error_type}")
                                 LogService.log_warning(f"   Текст ошибки: {retry_error}")
 
-                                # Если это всё ещё server/upstream error/timeout, продолжаем повторы
-                                if retry_error_type in ['upstream_error', 'upstream_timeout', 'server_error', 'timeout']:
+                                # Если это всё ещё server/upstream error/timeout/unexpected, продолжаем повторы
+                                if retry_error_type in ['upstream_error', 'upstream_timeout', 'server_error', 'timeout', 'unexpected']:
                                     LogService.log_warning(f"   → Продолжаем повторы ({retry_error_type})")
                                     continue
                                 else:
