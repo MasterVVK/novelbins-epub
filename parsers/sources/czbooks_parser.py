@@ -156,18 +156,22 @@ class CZBooksParser(BaseParser):
                 print(f"   🌐 Прокси настроен: socks5://{proxy_url}")
 
             # Создаем драйвер с undetected-chromedriver
+            # НЕ указываем явные пути - пусть uc управляет своей копией драйвера
+            # Это решает проблему Permission denied на /usr/bin/chromedriver
             try:
                 self.driver = uc.Chrome(
                     options=options,
-                    driver_executable_path='/usr/bin/chromedriver',
-                    browser_executable_path='/usr/bin/chromium-browser',
-                    version_main=None  # Автоопределение версии
+                    version_main=141  # Указываем версию Chrome явно
                 )
                 print("   ✅ undetected-chromedriver инициализирован")
             except Exception as e:
-                print(f"   ⚠️ Ошибка с путями, пробуем автопоиск: {e}")
-                self.driver = uc.Chrome(options=options)
-                print("   ✅ undetected-chromedriver инициализирован (автопоиск)")
+                print(f"   ⚠️ Ошибка инициализации с версией 141, пробуем автоопределение: {e}")
+                try:
+                    self.driver = uc.Chrome(options=options)
+                    print("   ✅ undetected-chromedriver инициализирован (автоопределение)")
+                except Exception as e2:
+                    print(f"   ❌ Не удалось инициализировать undetected-chromedriver: {e2}")
+                    raise
 
             # Увеличиваем таймауты для Cloudflare challenge
             self.driver.set_page_load_timeout(300)  # 5 минут на загрузку страницы
@@ -182,6 +186,9 @@ class CZBooksParser(BaseParser):
             except Exception as e:
                 print(f"   ⚠️ Не удалось установить HTTP таймаут: {e}")
                 print("   ⏱️ Таймауты установлены: 300s загрузка, 60s скрипты")
+
+            # Автозапуск VNC для веб-трансляции браузера
+            self._start_vnc_if_needed()
 
         else:
             # Fallback на обычный Selenium
@@ -326,6 +333,71 @@ class CZBooksParser(BaseParser):
 
         print("   ✅ Selenium драйвер готов")
 
+    def _start_vnc_if_needed(self):
+        """Запустить VNC сервер для веб-трансляции, если еще не запущен"""
+        import subprocess
+        import os
+
+        try:
+            # Получаем текущий DISPLAY
+            display = os.environ.get('DISPLAY', ':99')
+
+            # Проверяем, запущен ли x11vnc на порту 5900
+            result = subprocess.run(
+                ['pgrep', '-f', f'x11vnc.*rfbport 5900'],
+                capture_output=True
+            )
+
+            if result.returncode != 0:
+                # x11vnc не запущен, запускаем
+                print(f"   🖥️ Запуск VNC сервера для дисплея {display}...")
+
+                # Находим Xauthority файл для текущего дисплея
+                xauth = None
+                try:
+                    # Ищем процесс Xvfb для текущего дисплея
+                    xvfb_result = subprocess.run(
+                        ['ps', 'aux'],
+                        capture_output=True,
+                        text=True
+                    )
+                    for line in xvfb_result.stdout.split('\n'):
+                        if f'Xvfb {display}' in line and '-auth' in line:
+                            parts = line.split()
+                            for i, part in enumerate(parts):
+                                if part == '-auth' and i + 1 < len(parts):
+                                    xauth = parts[i + 1]
+                                    break
+                            if xauth:
+                                break
+                except:
+                    pass
+
+                # Запускаем x11vnc
+                cmd = [
+                    'x11vnc',
+                    '-display', display,
+                    '-rfbport', '5900',
+                    '-shared',
+                    '-forever',
+                    '-nopw',
+                    '-bg',
+                    '-o', '/tmp/x11vnc.log'
+                ]
+
+                if xauth:
+                    cmd.extend(['-auth', xauth])
+
+                subprocess.run(cmd, capture_output=True)
+                print(f"   ✅ VNC сервер запущен на порту 5900")
+                print(f"   🌐 Веб-доступ: http://localhost:6080/vnc.html")
+            else:
+                print(f"   ✅ VNC сервер уже запущен")
+
+        except Exception as e:
+            print(f"   ⚠️ Не удалось запустить VNC: {e}")
+            # Продолжаем работу даже если VNC не запустился
+
     def _get_page_with_selenium(self, url: str, wait_selector: str = None, wait_time: int = 15) -> str:
         """
         Загрузка страницы через Selenium с обходом Cloudflare
@@ -372,17 +444,36 @@ class CZBooksParser(BaseParser):
             page_source = self.driver.page_source
 
             # Проверяем, прошли ли мы Cloudflare (несколько попыток)
-            max_attempts = 3
+            max_attempts = 5  # Увеличено для Turnstile
             for attempt in range(max_attempts):
-                if 'Cloudflare' in page_source and 'Just a moment' in page_source:
-                    wait_time = 15 + (attempt * 5)
+                # Проверяем различные варианты Cloudflare challenge
+                cf_indicators = [
+                    ('Cloudflare' in page_source and 'Just a moment' in page_source),
+                    ('Verify you are human' in page_source),  # Turnstile
+                    ('turnstile' in page_source.lower() and 'challenge' in page_source.lower()),
+                    ('cf-chl' in page_source),  # Cloudflare challenge ID
+                ]
+
+                if any(cf_indicators):
+                    wait_time = 20 + (attempt * 10)  # Увеличено время ожидания
                     print(f"   ⚠️ Cloudflare challenge активен, попытка {attempt + 1}/{max_attempts}, ждем {wait_time}s...")
                     time.sleep(wait_time)
                     page_source = self.driver.page_source
                 else:
                     break
 
-            # Проверка успешности
+            # Проверка успешности - проверяем, что это не Cloudflare
+            cf_still_active = any([
+                ('Verify you are human' in page_source),
+                ('cf-chl' in page_source and 'challenge' in page_source.lower()),
+            ])
+
+            if cf_still_active:
+                print(f"   ❌ Cloudflare challenge не пройден после {max_attempts} попыток")
+                print(f"   💡 Рекомендация: добавьте auth_cookies в настройки новеллы")
+                self.consecutive_errors += 1
+                raise Exception("Не удалось пройти Cloudflare Turnstile challenge. Требуются действительные cookies.")
+
             if len(page_source) > 5000:
                 print(f"   ✅ Страница загружена ({len(page_source)} символов)")
                 self.consecutive_errors = 0

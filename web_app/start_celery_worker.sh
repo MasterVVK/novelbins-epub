@@ -74,6 +74,31 @@ XVFB_DISPLAY=":99"
 XVFB_RESOLUTION="1920x1080x24"
 
 echo -e "${GREEN}====================================${NC}"
+echo -e "${GREEN}  Запуск VNC сервисов${NC}"
+echo -e "${GREEN}====================================${NC}"
+echo
+
+# Запуск websockify для noVNC (если еще не запущен)
+echo -e "${YELLOW}Проверка websockify...${NC}"
+if pgrep -f "websockify.*6080" > /dev/null; then
+    echo -e "${GREEN}✅ websockify уже запущен${NC}"
+else
+    echo -e "${YELLOW}🚀 Запуск websockify...${NC}"
+    nohup python -m websockify \
+        --web ../app/static/novnc \
+        6080 \
+        localhost:5900 \
+        > /tmp/websockify.log 2>&1 &
+    sleep 2
+    if pgrep -f "websockify.*6080" > /dev/null; then
+        echo -e "${GREEN}✅ websockify запущен на порту 6080${NC}"
+    else
+        echo -e "${RED}⚠️  Не удалось запустить websockify (продолжаем без VNC веб-доступа)${NC}"
+    fi
+fi
+echo
+
+echo -e "${GREEN}====================================${NC}"
 echo -e "${GREEN}  Запуск Celery Worker${NC}"
 echo -e "${GREEN}====================================${NC}"
 echo
@@ -84,6 +109,7 @@ echo "  • Redis: localhost:6379/1 (dedicated database)"
 echo "  • Queue: czbooks_queue (dedicated queue)"
 echo "  • Concurrency: 1 worker (для czbooks.net)"
 echo "  • Loglevel: INFO"
+echo "  • VNC веб-доступ: http://localhost:6080/vnc.html"
 echo
 
 # Запуск Celery worker через Xvfb

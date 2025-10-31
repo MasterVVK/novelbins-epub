@@ -12,6 +12,7 @@ from celery import Task
 from celery.exceptions import SoftTimeLimitExceeded, Terminated
 from app import create_app, celery, db
 from app.models import Novel, Chapter
+from app.services.log_service import LogService
 from parsers import create_parser_from_url
 import time
 
@@ -76,6 +77,9 @@ def parse_novel_chapters_task(self, novel_id, start_chapter=None, max_chapters=N
         novel.parsing_task_id = self.request.id
         db.session.commit()
 
+        # Логируем начало парсинга
+        LogService.log_info(f"🚀 [Novel:{novel_id}] Начинаем парсинг: {novel.title}", novel_id=novel_id)
+
         # Создаем парсер
         parser = create_parser_from_url(
             novel.source_url,
@@ -95,6 +99,9 @@ def parse_novel_chapters_task(self, novel_id, start_chapter=None, max_chapters=N
         novel.total_chapters = len(chapters)
         db.session.commit()
 
+        # Логируем количество глав
+        LogService.log_info(f"📚 [Novel:{novel_id}] Найдено глав: {len(chapters)}", novel_id=novel_id)
+
         # Определяем главы для парсинга
         if start_chapter:
             chapters = chapters[start_chapter - 1:]
@@ -108,6 +115,7 @@ def parse_novel_chapters_task(self, novel_id, start_chapter=None, max_chapters=N
         for i, ch in enumerate(chapters, 1):
             # Проверяем отмену задачи
             if _cancel_requested:
+                LogService.log_warning(f"🛑 [Novel:{novel_id}] Парсинг отменен пользователем. Сохранено {saved_count}/{total} глав", novel_id=novel_id)
                 novel.status = 'parsing_cancelled'
                 novel.parsing_task_id = None
                 db.session.commit()
@@ -167,9 +175,13 @@ def parse_novel_chapters_task(self, novel_id, start_chapter=None, max_chapters=N
                 novel.parsed_chapters = saved_count
                 db.session.commit()
 
+                # Логируем сохранение главы
+                if saved_count % 10 == 0 or saved_count == total:  # Каждую 10-ю главу
+                    LogService.log_info(f"📖 [Novel:{novel_id}] Сохранено {saved_count}/{total} глав ({progress}%)", novel_id=novel_id)
+
             except Exception as e:
                 # Логируем ошибку, но продолжаем
-                print(f"Ошибка при парсинге главы {chapter_number}: {str(e)}")
+                LogService.log_warning(f"⚠️ [Novel:{novel_id}, Ch:{chapter_number}] Ошибка: {str(e)}", novel_id=novel_id)
                 continue
 
         # Завершаем парсинг
@@ -179,6 +191,9 @@ def parse_novel_chapters_task(self, novel_id, start_chapter=None, max_chapters=N
         novel.status = 'parsed'
         novel.parsing_task_id = None
         db.session.commit()
+
+        # Логируем успешное завершение
+        LogService.log_info(f"✅ [Novel:{novel_id}] Парсинг завершен успешно! Сохранено {saved_count} глав из {total}", novel_id=novel_id)
 
         return {
             'status': 'completed',
@@ -193,6 +208,9 @@ def parse_novel_chapters_task(self, novel_id, start_chapter=None, max_chapters=N
             parser.close()
         novel = Novel.query.get(novel_id)
         if novel:
+            saved = saved_count if 'saved_count' in locals() else 0
+            total_ch = total if 'total' in locals() else 0
+            LogService.log_warning(f"🛑 [Novel:{novel_id}] Парсинг прерван (SIGTERM). Сохранено {saved}/{total_ch} глав", novel_id=novel_id)
             novel.status = 'parsing_cancelled'
             novel.parsing_task_id = None
             db.session.commit()
@@ -208,6 +226,9 @@ def parse_novel_chapters_task(self, novel_id, start_chapter=None, max_chapters=N
             parser.close()
         novel = Novel.query.get(novel_id)
         if novel:
+            saved = saved_count if 'saved_count' in locals() else 0
+            total_ch = total if 'total' in locals() else 0
+            LogService.log_error(f"⏱️ [Novel:{novel_id}] Превышено время выполнения парсинга. Сохранено {saved}/{total_ch} глав", novel_id=novel_id)
             novel.status = 'parsing_timeout'
             novel.parsing_task_id = None
             db.session.commit()
@@ -218,6 +239,9 @@ def parse_novel_chapters_task(self, novel_id, start_chapter=None, max_chapters=N
             parser.close()
         novel = Novel.query.get(novel_id)
         if novel:
+            saved = saved_count if 'saved_count' in locals() else 0
+            total_ch = total if 'total' in locals() else 0
+            LogService.log_error(f"❌ [Novel:{novel_id}] Критическая ошибка парсинга: {str(e)}. Сохранено {saved}/{total_ch} глав", novel_id=novel_id)
             novel.status = 'parsing_error'
             novel.parsing_task_id = None
             db.session.commit()
