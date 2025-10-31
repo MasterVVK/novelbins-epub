@@ -113,8 +113,9 @@ def parse_novel_chapters_task(self, novel_id, start_chapter=None, max_chapters=N
 
         # Парсим главы
         for i, ch in enumerate(chapters, 1):
-            # Проверяем отмену задачи
-            if _cancel_requested:
+            # Проверяем отмену задачи (через флаг и через БД)
+            db.session.refresh(novel)  # Обновляем объект из БД
+            if _cancel_requested or novel.status == 'parsing_cancelled':
                 LogService.log_warning(f"🛑 [Novel:{novel_id}] Парсинг отменен пользователем. Сохранено {saved_count}/{total} глав", novel_id=novel_id)
                 novel.status = 'parsing_cancelled'
                 novel.parsing_task_id = None
@@ -157,6 +158,23 @@ def parse_novel_chapters_task(self, novel_id, start_chapter=None, max_chapters=N
                     continue
 
                 content = content_data['content']
+
+                # Применяем фильтры текста из конфигурации
+                if novel.config and novel.config.get('filter_text'):
+                    filter_text = novel.config.get('filter_text')
+                    # Разбиваем фильтры по строкам
+                    filters = [f.strip() for f in filter_text.split('\n') if f.strip()]
+                    for filter_pattern in filters:
+                        if filter_pattern:
+                            original_len = len(content)
+                            content = content.replace(filter_pattern, '')
+                            if len(content) != original_len:
+                                LogService.log_info(
+                                    f"🔧 [Novel:{novel_id}, Ch:{chapter_number}] "
+                                    f"Применен фильтр: '{filter_pattern}' "
+                                    f"(удалено {original_len - len(content)} символов)",
+                                    novel_id=novel_id
+                                )
 
                 # Создаем главу
                 chapter = Chapter(
