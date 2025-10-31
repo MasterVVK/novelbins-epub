@@ -193,6 +193,22 @@ def parse_novel_chapters_task(self, novel_id, start_chapter=None, max_chapters=N
                 novel.parsed_chapters = saved_count
                 db.session.commit()
 
+                # Автоматическое сохранение cookies после 10 успешных глав
+                if saved_count == 10 and hasattr(parser, 'get_cookies'):
+                    try:
+                        extracted_cookies = parser.get_cookies()
+                        if extracted_cookies and not novel.is_auth_enabled():
+                            # Сохраняем cookies только если они еще не настроены
+                            novel.auth_cookies = extracted_cookies
+                            novel.auth_enabled = True
+                            db.session.commit()
+                            LogService.log_info(
+                                f"🍪 [Novel:{novel_id}] Автоматически сохранены cookies из браузера (Cloudflare пройден вручную)",
+                                novel_id=novel_id
+                            )
+                    except Exception as e:
+                        LogService.log_warning(f"⚠️ [Novel:{novel_id}] Не удалось сохранить cookies: {e}", novel_id=novel_id)
+
                 # Логируем сохранение главы
                 if saved_count % 10 == 0 or saved_count == total:  # Каждую 10-ю главу
                     LogService.log_info(f"📖 [Novel:{novel_id}] Сохранено {saved_count}/{total} глав ({progress}%)", novel_id=novel_id)

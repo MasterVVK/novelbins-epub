@@ -85,7 +85,7 @@ if pgrep -f "websockify.*6080" > /dev/null; then
 else
     echo -e "${YELLOW}🚀 Запуск websockify...${NC}"
     nohup python -m websockify \
-        --web ../app/static/novnc \
+        --web ./app/static/novnc \
         6080 \
         localhost:5900 \
         > /tmp/websockify.log 2>&1 &

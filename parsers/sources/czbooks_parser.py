@@ -933,6 +933,33 @@ class CZBooksParser(BaseParser):
         print(f"⏳ Пауза {delay:.1f}s (ошибок: {self.consecutive_errors})...")
         time.sleep(delay)
 
+    def get_cookies(self):
+        """
+        Извлечь cookies из браузера Selenium
+
+        Returns:
+            str: Cookies в формате JSON или None если драйвер не доступен
+        """
+        if not self.driver:
+            return None
+
+        try:
+            import json
+            cookies = self.driver.get_cookies()
+
+            # Преобразуем в формат, который ожидает Novel model
+            cookies_dict = {}
+            for cookie in cookies:
+                cookies_dict[cookie['name']] = cookie['value']
+
+            cookies_json = json.dumps(cookies_dict, ensure_ascii=False)
+            print(f"   🍪 Извлечено {len(cookies_dict)} cookies из браузера")
+            return cookies_json
+
+        except Exception as e:
+            print(f"   ⚠️ Ошибка извлечения cookies: {e}")
+            return None
+
     def close(self):
         """Закрыть Selenium драйвер и сессию"""
         if self.driver:
