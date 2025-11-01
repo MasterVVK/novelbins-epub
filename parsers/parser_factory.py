@@ -36,7 +36,7 @@ class ParserFactory:
     }
     
     @classmethod
-    def create_parser(cls, source: str, auth_cookies: str = None, socks_proxy: str = None, epub_path: str = None, max_chapters: int = None, start_chapter: int = None, headless: bool = True) -> BaseParser:
+    def create_parser(cls, source: str, auth_cookies: str = None, socks_proxy: str = None, epub_path: str = None, max_chapters: int = None, start_chapter: int = None, headless: bool = True, cloudflare_max_attempts: int = 5) -> BaseParser:
         """
         Создать парсер по названию источника
         
@@ -70,28 +70,33 @@ class ParserFactory:
         
         # Проверяем поддерживает ли парсер SOCKS прокси и headless
         try:
-            return parser_class(auth_cookies=auth_cookies, socks_proxy=socks_proxy, headless=headless)
+            return parser_class(auth_cookies=auth_cookies, socks_proxy=socks_proxy, headless=headless, cloudflare_max_attempts=cloudflare_max_attempts)
         except TypeError:
-            # Fallback для парсеров без поддержки headless
+            # Fallback для парсеров без поддержки cloudflare_max_attempts
             try:
-                return parser_class(auth_cookies=auth_cookies, socks_proxy=socks_proxy)
+                return parser_class(auth_cookies=auth_cookies, socks_proxy=socks_proxy, headless=headless)
             except TypeError:
-                # Fallback для парсеров без поддержки прокси
-                return parser_class(auth_cookies=auth_cookies)
+                # Fallback для парсеров без поддержки headless
+                try:
+                    return parser_class(auth_cookies=auth_cookies, socks_proxy=socks_proxy)
+                except TypeError:
+                    # Fallback для парсеров без поддержки прокси
+                    return parser_class(auth_cookies=auth_cookies)
     
     @classmethod
-    def create_parser_from_url(cls, url: str, auth_cookies: str = None, socks_proxy: str = None, headless: bool = False) -> BaseParser:
+    def create_parser_from_url(cls, url: str, auth_cookies: str = None, socks_proxy: str = None, headless: bool = False, cloudflare_max_attempts: int = 5) -> BaseParser:
         """
         Создать парсер на основе URL
-        
+
         Args:
             url: URL книги или сайта
             auth_cookies: Cookies для авторизации (опционально)
             socks_proxy: SOCKS прокси для обхода блокировок (опционально)
-            
+            cloudflare_max_attempts: Количество попыток прохождения Cloudflare (только для czbooks)
+
         Returns:
             Экземпляр подходящего парсера
-            
+
         Raises:
             ValueError: Если не удается определить тип парсера по URL
         """
@@ -100,7 +105,7 @@ class ParserFactory:
         if not source:
             raise ValueError(f"Не удается определить источник по URL: {url}")
 
-        return cls.create_parser(source, auth_cookies=auth_cookies, socks_proxy=socks_proxy, headless=headless)
+        return cls.create_parser(source, auth_cookies=auth_cookies, socks_proxy=socks_proxy, headless=headless, cloudflare_max_attempts=cloudflare_max_attempts)
     
     @classmethod
     def detect_source_from_url(cls, url: str) -> Optional[str]:
@@ -195,9 +200,9 @@ def create_parser(source: str, auth_cookies: str = None, socks_proxy: str = None
     return ParserFactory.create_parser(source, auth_cookies=auth_cookies, socks_proxy=socks_proxy, epub_path=epub_path, max_chapters=max_chapters, start_chapter=start_chapter)
 
 
-def create_parser_from_url(url: str, auth_cookies: str = None, socks_proxy: str = None, headless: bool = False) -> BaseParser:
+def create_parser_from_url(url: str, auth_cookies: str = None, socks_proxy: str = None, headless: bool = False, cloudflare_max_attempts: int = 5) -> BaseParser:
     """Создать парсер на основе URL"""
-    return ParserFactory.create_parser_from_url(url, auth_cookies=auth_cookies, socks_proxy=socks_proxy, headless=headless)
+    return ParserFactory.create_parser_from_url(url, auth_cookies=auth_cookies, socks_proxy=socks_proxy, headless=headless, cloudflare_max_attempts=cloudflare_max_attempts)
 
 
 def detect_source(url: str) -> Optional[str]:

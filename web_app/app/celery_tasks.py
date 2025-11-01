@@ -44,7 +44,10 @@ class CallbackTask(Task):
             if novel_id:
                 novel = Novel.query.get(novel_id)
                 if novel:
-                    novel.status = 'error'
+                    # Не перезаписываем уже установленный статус ошибки
+                    # (parsing_error, parsing_timeout, parsing_cancelled)
+                    if novel.status not in ['parsing_error', 'parsing_timeout', 'parsing_cancelled']:
+                        novel.status = 'error'
                     novel.parsing_task_id = None
                     db.session.commit()
 
@@ -110,6 +113,7 @@ def parse_novel_chapters_task(self, novel_id, start_chapter=None, max_chapters=N
 
         total = len(chapters)
         saved_count = 0
+        failed_chapters = []  # Список пропущенных глав для повторного парсинга
 
         # Парсим главы
         for i, ch in enumerate(chapters, 1):
@@ -149,6 +153,8 @@ def parse_novel_chapters_task(self, novel_id, start_chapter=None, max_chapters=N
             ).first()
 
             if existing:
+                # Глава уже существует - считаем как успешно обработанную
+                saved_count += 1
                 continue
 
             try:
@@ -214,25 +220,169 @@ def parse_novel_chapters_task(self, novel_id, start_chapter=None, max_chapters=N
                     LogService.log_info(f"📖 [Novel:{novel_id}] Сохранено {saved_count}/{total} глав ({progress}%)", novel_id=novel_id)
 
             except Exception as e:
-                # Логируем ошибку, но продолжаем
+                # Логируем ошибку и добавляем в список для повторного парсинга
                 LogService.log_warning(f"⚠️ [Novel:{novel_id}, Ch:{chapter_number}] Ошибка: {str(e)}", novel_id=novel_id)
+                failed_chapters.append({
+                    'chapter_number': chapter_number,
+                    'chapter_data': ch,
+                    'error': str(e)
+                })
                 continue
+
+        # ========== ВТОРОЙ ПРОХОД: Повторный парсинг пропущенных глав ==========
+        if failed_chapters:
+            LogService.log_info(
+                f"🔄 [Novel:{novel_id}] Обнаружено {len(failed_chapters)} пропущенных глав. Начинаем повторный парсинг с увеличенным таймаутом...",
+                novel_id=novel_id
+            )
+
+            # Закрываем старый парсер и создаем новый с увеличенным таймаутом
+            parser.close()
+            parser = create_parser_from_url(
+                novel.source_url,
+                auth_cookies=novel.get_auth_cookies() if novel.is_auth_enabled() else None,
+                socks_proxy=novel.get_socks_proxy() if novel.is_proxy_enabled() else None,
+                headless=False,
+                cloudflare_max_attempts=10  # Удвоенное количество попыток (10 вместо 5)
+            )
+
+            retry_saved = 0
+            still_failed = []
+
+            for failed in failed_chapters:
+                chapter_number = failed['chapter_number']
+                ch = failed['chapter_data']
+
+                # Проверяем отмену задачи
+                db.session.refresh(novel)
+                if _cancel_requested or novel.status == 'parsing_cancelled':
+                    LogService.log_warning(
+                        f"🛑 [Novel:{novel_id}] Повторный парсинг отменен. Успешно: {retry_saved}/{len(failed_chapters)}",
+                        novel_id=novel_id
+                    )
+                    break
+
+                # Обновляем прогресс
+                self.update_state(
+                    state='PROGRESS',
+                    meta={
+                        'status': f'Повтор пропущенных: {retry_saved + len(still_failed) + 1}/{len(failed_chapters)}',
+                        'progress': int(((saved_count + retry_saved) / total) * 100),
+                        'current_chapter': chapter_number,
+                        'saved_chapters': saved_count + retry_saved
+                    }
+                )
+
+                # Проверяем, не была ли глава уже сохранена
+                existing = Chapter.query.filter_by(
+                    novel_id=novel_id,
+                    chapter_number=chapter_number
+                ).first()
+
+                if existing:
+                    retry_saved += 1
+                    continue
+
+                try:
+                    LogService.log_info(
+                        f"🔄 [Novel:{novel_id}, Ch:{chapter_number}] Повторная попытка парсинга (увеличенный таймаут: 10 попыток × 40s = 400s)",
+                        novel_id=novel_id
+                    )
+
+                    # Загружаем контент
+                    content_data = parser.get_chapter_content(ch['url'])
+                    if not content_data or not content_data.get('content'):
+                        still_failed.append(failed)
+                        continue
+
+                    content = content_data['content']
+
+                    # Применяем фильтры текста
+                    if novel.config and novel.config.get('filter_text'):
+                        filter_text = novel.config.get('filter_text')
+                        filters = [f.strip() for f in filter_text.split('\n') if f.strip()]
+                        for filter_pattern in filters:
+                            if filter_pattern:
+                                original_len = len(content)
+                                content = content.replace(filter_pattern, '')
+                                if len(content) != original_len:
+                                    LogService.log_info(
+                                        f"🔧 [Novel:{novel_id}, Ch:{chapter_number}] "
+                                        f"Применен фильтр: '{filter_pattern}' "
+                                        f"(удалено {original_len - len(content)} символов)",
+                                        novel_id=novel_id
+                                    )
+
+                    # Создаем главу
+                    chapter = Chapter(
+                        novel_id=novel_id,
+                        chapter_number=chapter_number,
+                        original_title=ch['title'],
+                        url=ch['url'],
+                        original_text=content,
+                        word_count_original=len(content),
+                        status='parsed'
+                    )
+                    db.session.add(chapter)
+                    db.session.commit()
+
+                    retry_saved += 1
+                    saved_count += 1
+                    novel.parsed_chapters = saved_count
+                    db.session.commit()
+
+                    LogService.log_info(
+                        f"✅ [Novel:{novel_id}, Ch:{chapter_number}] Успешно сохранена при повторе ({retry_saved}/{len(failed_chapters)})",
+                        novel_id=novel_id
+                    )
+
+                except Exception as e:
+                    LogService.log_warning(
+                        f"❌ [Novel:{novel_id}, Ch:{chapter_number}] Повторная попытка не удалась: {str(e)}",
+                        novel_id=novel_id
+                    )
+                    still_failed.append(failed)
+
+            # Логируем результаты повторного парсинга
+            if retry_saved > 0:
+                LogService.log_info(
+                    f"✅ [Novel:{novel_id}] Повторный парсинг: успешно {retry_saved}/{len(failed_chapters)} глав",
+                    novel_id=novel_id
+                )
+
+            if still_failed:
+                failed_numbers = [str(f['chapter_number']) for f in still_failed]
+                LogService.log_warning(
+                    f"⚠️ [Novel:{novel_id}] Главы всё ещё не удалось спарсить: {', '.join(failed_numbers)}. "
+                    f"Возможно, требуется ручное прохождение Cloudflare через VNC.",
+                    novel_id=novel_id
+                )
 
         # Завершаем парсинг
         parser.close()
 
+        # Подсчитываем РЕАЛЬНОЕ количество сохраненных глав из базы
+        db.session.refresh(novel)
+        actual_saved = Chapter.query.filter_by(novel_id=novel_id).count()
+
         # Обновляем статус новеллы
         novel.status = 'parsed'
+        novel.parsed_chapters = actual_saved
         novel.parsing_task_id = None
         db.session.commit()
 
+        # Формируем итоговое сообщение
+        final_message = f'Парсинг завершен. Сохранено {actual_saved} глав из {total}'
+        if failed_chapters and 'still_failed' in locals() and len(still_failed) > 0:
+            final_message += f' (⚠️ {len(still_failed)} глав не удалось спарсить)'
+
         # Логируем успешное завершение
-        LogService.log_info(f"✅ [Novel:{novel_id}] Парсинг завершен успешно! Сохранено {saved_count} глав из {total}", novel_id=novel_id)
+        LogService.log_info(f"✅ [Novel:{novel_id}] {final_message}", novel_id=novel_id)
 
         return {
             'status': 'completed',
-            'message': f'Парсинг завершен. Сохранено {saved_count} глав из {total}',
-            'saved_chapters': saved_count,
+            'message': final_message,
+            'saved_chapters': actual_saved,
             'total_chapters': total
         }
 

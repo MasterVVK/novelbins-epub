@@ -58,7 +58,7 @@ class CZBooksParser(BaseParser):
     - Антидетект для webdriver
     """
 
-    def __init__(self, auth_cookies: str = None, socks_proxy: str = None, headless: bool = True):
+    def __init__(self, auth_cookies: str = None, socks_proxy: str = None, headless: bool = True, cloudflare_max_attempts: int = 5):
         """
         Инициализация парсера
 
@@ -68,6 +68,7 @@ class CZBooksParser(BaseParser):
             headless: Использовать headless режим (True) или нет (False)
                      ВАЖНО: Cloudflare лучше обходится в non-headless режиме,
                      но требуется дисплей (Xvfb на сервере)
+            cloudflare_max_attempts: Количество попыток прохождения Cloudflare (по умолчанию 5)
         """
         super().__init__("czbooks")
 
@@ -86,6 +87,9 @@ class CZBooksParser(BaseParser):
         # Счетчик запросов для перезапуска браузера
         self.request_count = 0
         self.max_requests_before_restart = 100  # Перезапускаем браузер каждые 100 запросов
+
+        # Настройка Cloudflare challenge
+        self.cloudflare_max_attempts = cloudflare_max_attempts
 
         print(f"📚 CZBooks Parser инициализирован")
         if auth_cookies:
@@ -444,7 +448,7 @@ class CZBooksParser(BaseParser):
             page_source = self.driver.page_source
 
             # Проверяем, прошли ли мы Cloudflare (несколько попыток)
-            max_attempts = 5  # Увеличено для Turnstile
+            max_attempts = self.cloudflare_max_attempts
             for attempt in range(max_attempts):
                 # Проверяем различные варианты Cloudflare challenge
                 cf_indicators = [

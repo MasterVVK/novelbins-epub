@@ -540,11 +540,11 @@ def novel_detail(novel_id):
     """Детальная страница новеллы"""
     # Получаем параметры пагинации
     page = request.args.get('page', 1, type=int)
-    per_page = request.args.get('per_page', 50, type=int)  # По умолчанию 50 глав на страницу
+    per_page = request.args.get('per_page', 100, type=int)  # По умолчанию 100 глав на страницу
     
     # Ограничиваем количество глав на страницу
-    if per_page > 100:
-        per_page = 100
+    if per_page > 200:
+        per_page = 200
     elif per_page < 10:
         per_page = 10
     
@@ -1165,7 +1165,7 @@ def delete_chapter(chapter_id):
     
     # Получаем параметры пагинации для возврата
     return_page = request.form.get('return_page', 1, type=int)
-    return_per_page = request.form.get('return_per_page', 50, type=int)
+    return_per_page = request.form.get('return_per_page', 100, type=int)
     
     # Полное удаление главы (включая промпты)
     db.session.delete(chapter)
