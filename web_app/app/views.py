@@ -635,7 +635,7 @@ def start_parsing(novel_id):
         db.session.commit()
 
         print(f"✅ Celery задача создана: {task.id}")
-        flash('Парсинг запущен через Celery. Проверьте статус в разделе "Задачи".', 'info')
+        flash('Парсинг запущен! Браузер парсера автоматически развернут ниже для прохождения Cloudflare.', 'success')
 
     except Exception as e:
         print(f"❌ Ошибка запуска Celery задачи: {e}")

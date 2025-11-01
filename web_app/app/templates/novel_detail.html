@@ -246,12 +246,17 @@
             <div class="card-header">
                 <h5 class="card-title mb-0">
                     <i class="bi bi-display"></i> Браузер парсера
-                    <button class="btn btn-sm btn-outline-secondary ms-2" type="button" data-bs-toggle="collapse" data-bs-target="#vncViewer" aria-expanded="false">
+                    {% if novel.status == 'parsing' %}
+                    <span class="badge bg-success ms-2">
+                        <i class="bi bi-broadcast"></i> Активен
+                    </span>
+                    {% endif %}
+                    <button class="btn btn-sm btn-outline-secondary ms-2" type="button" data-bs-toggle="collapse" data-bs-target="#vncViewer" aria-expanded="{{ 'true' if novel.status == 'parsing' else 'false' }}">
                         <i class="bi bi-arrows-angle-expand"></i> Показать/Скрыть
                     </button>
                 </h5>
             </div>
-            <div class="card-body collapse" id="vncViewer">
+            <div class="card-body collapse {{ 'show' if novel.status == 'parsing' else '' }}" id="vncViewer">
                 <div class="alert alert-info">
                     <i class="bi bi-info-circle"></i>
                     <strong>VNC Трансляция:</strong> Здесь отображается браузер, который парсит czbooks.net.
@@ -779,5 +784,30 @@ function showNotification(message, type) {
         }
     }, 3000);
 }
+
+// Автоматически прокрутить к VNC viewer при активном парсинге
+{% if novel.status == 'parsing' %}
+document.addEventListener('DOMContentLoaded', function() {
+    // Небольшая задержка для завершения анимации разворота
+    setTimeout(() => {
+        const vncViewer = document.getElementById('vncViewer');
+        if (vncViewer) {
+            vncViewer.scrollIntoView({
+                behavior: 'smooth',
+                block: 'center'
+            });
+
+            // Подсветка блока для привлечения внимания
+            const vncCard = vncViewer.closest('.card');
+            if (vncCard) {
+                vncCard.style.boxShadow = '0 0 20px rgba(25, 135, 84, 0.5)';
+                setTimeout(() => {
+                    vncCard.style.boxShadow = '';
+                }, 2000);
+            }
+        }
+    }, 500);
+});
+{% endif %}
 </script>
 {% endblock %} 

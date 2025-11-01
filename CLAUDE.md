@@ -163,6 +163,19 @@ Celery с Redis для фоновой обработки (`web_app/app/celery_ta
 - `DATABASE_URL`: SQLite путь к основной базе
 - `PROXY_URL`: SOCKS5 прокси для парсинга
 
+**База данных:**
+- **Путь:** `/home/user/novelbins-epub/web_app/instance/novel_translator.db`
+- **Тип:** SQLite
+- **Размер:** ~5.4 GB (для новеллы с 1397 главами)
+- **Таблицы:** novels, chapters, ai_models, glossary_items, prompt_templates, tasks, log_entries, translations, users
+- **Доступ:**
+  ```bash
+  sqlite3 /home/user/novelbins-epub/web_app/instance/novel_translator.db
+  # Примеры запросов:
+  SELECT id, title, status, parsed_chapters, total_chapters FROM novels;
+  SELECT COUNT(*) FROM chapters WHERE novel_id=13;
+  ```
+
 ### Key Integration Points
 
 **UniversalLLMTranslator с ротацией ключей**:
