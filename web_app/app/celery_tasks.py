@@ -83,6 +83,9 @@ def parse_novel_chapters_task(self, novel_id, start_chapter=None, max_chapters=N
         # Логируем начало парсинга
         LogService.log_info(f"🚀 [Novel:{novel_id}] Начинаем парсинг: {novel.title}", novel_id=novel_id)
 
+        # Проверяем количество уже распарсенных глав
+        existing_chapters_count = Chapter.query.filter_by(novel_id=novel_id).count()
+
         # Создаем парсер
         parser = create_parser_from_url(
             novel.source_url,
@@ -91,19 +94,57 @@ def parse_novel_chapters_task(self, novel_id, start_chapter=None, max_chapters=N
             headless=False  # Для czbooks нужен non-headless
         )
 
-        # Получаем список глав
+        # Пытаемся получить список глав с fallback
         self.update_state(state='PROGRESS', meta={'status': 'Получение списка глав', 'progress': 0})
-        chapters = parser.get_chapter_list(novel.source_url)
+        chapters = None
 
-        if not chapters:
-            raise ValueError("Не удалось получить список глав")
+        try:
+            chapters = parser.get_chapter_list(novel.source_url)
 
-        # Обновляем total_chapters
-        novel.total_chapters = len(chapters)
-        db.session.commit()
+            if not chapters:
+                raise ValueError("Не удалось получить список глав")
 
-        # Логируем количество глав
-        LogService.log_info(f"📚 [Novel:{novel_id}] Найдено глав: {len(chapters)}", novel_id=novel_id)
+            # Обновляем total_chapters
+            novel.total_chapters = len(chapters)
+            db.session.commit()
+
+            # Логируем количество глав
+            LogService.log_info(f"📚 [Novel:{novel_id}] Найдено глав: {len(chapters)}", novel_id=novel_id)
+
+        except Exception as e:
+            # Если не удалось получить список глав (например, Cloudflare блокирует)
+            error_msg = str(e)
+            is_cloudflare_error = 'Cloudflare' in error_msg or 'Turnstile' in error_msg or 'cookies' in error_msg.lower()
+
+            # Если это ошибка Cloudflare И все главы уже есть → используем fallback
+            if is_cloudflare_error and existing_chapters_count > 0 and novel.total_chapters and existing_chapters_count >= novel.total_chapters:
+                LogService.log_warning(
+                    f"⚠️ [Novel:{novel_id}] Не удалось получить список глав (Cloudflare), но все {existing_chapters_count}/{novel.total_chapters} глав уже в базе. Парсинг завершен.",
+                    novel_id=novel_id
+                )
+
+                # Закрываем парсер и завершаем успешно
+                parser.close()
+
+                # Обновляем статус
+                novel.status = 'parsed'
+                novel.parsed_chapters = existing_chapters_count
+                novel.parsing_task_id = None
+                db.session.commit()
+
+                return {
+                    'status': 'completed',
+                    'message': f'Все главы уже распарсены. В базе {existing_chapters_count} глав. (Cloudflare заблокировал получение списка, но это не критично)',
+                    'saved_chapters': existing_chapters_count,
+                    'total_chapters': novel.total_chapters
+                }
+            else:
+                # Если не все главы есть или это другая ошибка → пробрасываем исключение
+                LogService.log_error(
+                    f"❌ [Novel:{novel_id}] Ошибка получения списка глав: {error_msg}. В базе {existing_chapters_count} глав.",
+                    novel_id=novel_id
+                )
+                raise
 
         # Определяем главы для парсинга
         if start_chapter:
