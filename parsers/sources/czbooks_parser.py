@@ -638,7 +638,7 @@ class CZBooksParser(BaseParser):
         # Извлекаем контент
         content = self._extract_chapter_content(soup)
 
-        # Проверяем блокировку
+        # Проверяем блокировку (для czbooks.net всегда False)
         is_locked = self._check_locked(soup, content)
 
         result = {
@@ -815,7 +815,29 @@ class CZBooksParser(BaseParser):
             href = link.get('href', '')
             if href and href not in seen_hrefs:
                 # Проверяем что это действительно ссылка на главу
-                if any(pattern in href for pattern in ['/chapter', '/c/', f'/n/{book_id}/']):
+                # Для czbooks.net: URL глав содержат /n/{book_id}/{chapter_id}?chapterNumber=
+                is_chapter = False
+
+                if '/chapter' in href:
+                    is_chapter = True
+                elif f'/n/{book_id}/' in href:
+                    # Дополнительная проверка: должен быть параметр chapterNumber
+                    # или после book_id должен быть уникальный chapter_id
+                    if '?chapterNumber=' in href:
+                        is_chapter = True
+                    else:
+                        # Проверяем наличие chapter_id после /n/{book_id}/
+                        # Формат: /n/s6pcc1/s6p38obn
+                        parts = href.split(f'/n/{book_id}/')
+                        if len(parts) > 1 and parts[1]:
+                            # Есть что-то после book_id, проверяем что это не навигация
+                            after_book_id = parts[1].split('?')[0].split('/')[0]
+                            # chapter_id обычно содержит буквы и цифры, не китайские символы
+                            # Навигация содержит китайские символы или пустая
+                            if after_book_id and not any('\u4e00' <= c <= '\u9fff' for c in after_book_id):
+                                is_chapter = True
+
+                if is_chapter:
                     seen_hrefs.add(href)
                     unique_links.append(link)
 
@@ -885,38 +907,19 @@ class CZBooksParser(BaseParser):
                 # Объединяем строки обратно с двойными переносами между параграфами
                 content = '\n\n'.join(lines)
 
-                if len(content) > 100:
-                    print(f"      📝 Извлечено строк с <br>: {len(lines)}")
+                if content:  # Сохраняем любой непустой контент, даже короткий
+                    print(f"      📝 Извлечено строк с <br>: {len(lines)} ({len(content)} символов)")
                     return content
 
         return "Content not found"
 
     def _check_locked(self, soup: BeautifulSoup, content: str) -> bool:
-        """Проверить блокировку главы"""
-        # Проверяем только длину контента
-        # Маркеры "vip", "lock" могут быть в рекламе/навигации
-        # Поэтому полагаемся только на длину текста
+        """Проверить блокировку главы
 
-        # Если контент слишком короткий - вероятно превью
-        if len(content) < 500:
-            return True
-
-        # Проверяем на явные маркеры блокировки в САМОМ КОНТЕНТЕ
-        content_lower = content.lower()
-        lock_phrases = [
-            'this chapter is locked',
-            'unlock this chapter',
-            'subscribe to read',
-            'premium content',
-            'vip章节',
-            '本章需要订阅',
-            '订阅后可阅读'
-        ]
-
-        for phrase in lock_phrases:
-            if phrase in content_lower:
-                return True
-
+        ВАЖНО: czbooks.net НЕ имеет VIP системы!
+        Все главы свободно доступны, включая короткие (объявления автора).
+        """
+        # czbooks.net не использует VIP систему - всегда False
         return False
 
     def _delay_between_requests(self):
