@@ -8,6 +8,14 @@ class Config:
     SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL') or 'sqlite:///novel_translator.db'
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
+    # Настройки подключения для PostgreSQL/SQLite
+    SQLALCHEMY_ENGINE_OPTIONS = {
+        'pool_pre_ping': True,  # Проверка соединения перед использованием
+        'pool_recycle': 3600,  # Пересоздавать соединения каждый час
+        'pool_size': 10,  # Размер пула соединений
+        'max_overflow': 20,  # Дополнительные соединения при необходимости
+    }
+
     # Celery - используем Redis DB 1 для изоляции от других worker'ов
     CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL') or 'redis://localhost:6379/1'
     CELERY_RESULT_BACKEND = os.environ.get('CELERY_RESULT_BACKEND') or 'redis://localhost:6379/1'

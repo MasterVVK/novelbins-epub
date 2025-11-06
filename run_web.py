@@ -4,6 +4,10 @@
 """
 import sys
 import os
+from dotenv import load_dotenv
+
+# ВАЖНО: Загружаем .env файл ДО всего
+load_dotenv()
 
 # ВАЖНО: Устанавливаем переменные окружения ДО импорта app
 os.environ.setdefault('CELERY_BROKER_URL', 'redis://localhost:6379/1')

@@ -131,11 +131,12 @@ Celery с Redis для фоновой обработки (`web_app/app/celery_ta
 **Архитектура очередей**:
 - **Одна общая очередь**: `czbooks_queue` для всех задач (парсинг, перевод, редактура)
 - **Один worker**: `--concurrency=1 --pool=solo` из-за ограничений Selenium
-- **Последовательное выполнение**: Все задачи выполняются строго по очереди
-- **ВАЖНО**:
-  - ❌ Парсинг и редактура одновременно НЕ работают
-  - ❌ Редактура разных новелл одновременно НЕ работает
-  - ✅ Задачи выполняются последовательно в порядке поступления
+- **База данных**: PostgreSQL 18.0 с поддержкой параллельных операций (MVCC)
+- **Параллельная работа**:
+  - ✅ Парсинг и перевод одновременно работают (нет блокировок БД)
+  - ✅ Перевод и редактура разных новелл одновременно работают
+  - ⚠️ Celery задачи выполняются последовательно (из-за `--concurrency=1`)
+  - ✅ Внутри одной задачи редактуры - параллельная обработка глав через `ThreadPoolExecutor`
 
 **Задачи**:
 - **Парсинг глав** (`parsing.py:55`):
@@ -178,21 +179,36 @@ Celery с Redis для фоновой обработки (`web_app/app/celery_ta
 Переменные окружения из `.env`:
 - `GEMINI_API_KEYS`: Список Gemini API ключей через запятую
 - `CELERY_BROKER_URL`: Redis URL для Celery (по умолчанию DB 1)
-- `DATABASE_URL`: SQLite путь к основной базе
+- `DATABASE_URL`: PostgreSQL connection string
 - `PROXY_URL`: SOCKS5 прокси для парсинга
 
 **База данных:**
-- **Путь:** `/home/user/novelbins-epub/web_app/instance/novel_translator.db`
-- **Тип:** SQLite
-- **Размер:** ~5.4 GB (для новеллы с 1397 главами)
-- **Таблицы:** novels, chapters, ai_models, glossary_items, prompt_templates, tasks, log_entries, translations, users
+- **Тип:** PostgreSQL 18.0
+- **БД:** `novelbins_epub`
+- **Пользователь:** `novelbins_user`
+- **Connection String:** `postgresql://novelbins_user:novelbins_strong_pass_2025@localhost:5432/novelbins_epub`
+- **Таблицы:** novels, chapters, ai_models, glossary_items, prompt_templates, tasks, log_entries, translations, prompt_history, system_settings
+- **Connection Pool:**
+  - `pool_size`: 10 соединений
+  - `max_overflow`: 20 дополнительных
+  - `pool_pre_ping`: Проверка соединения перед использованием
+  - `pool_recycle`: 3600 секунд
 - **Доступ:**
   ```bash
-  sqlite3 /home/user/novelbins-epub/web_app/instance/novel_translator.db
+  PGPASSWORD='novelbins_strong_pass_2025' psql -U novelbins_user -d novelbins_epub -h localhost
   # Примеры запросов:
   SELECT id, title, status, parsed_chapters, total_chapters FROM novels;
   SELECT COUNT(*) FROM chapters WHERE novel_id=13;
+  # Список таблиц:
+  \dt
+  # Выход:
+  \q
   ```
+- **Преимущества:**
+  - ✅ Неограниченные параллельные операции (MVCC)
+  - ✅ Множественные писатели одновременно
+  - ✅ Нет блокировок "database is locked"
+  - ✅ Production-ready масштабируемость
 
 ### Key Integration Points
 

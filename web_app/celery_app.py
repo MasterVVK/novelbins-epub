@@ -1,6 +1,12 @@
 """
 Celery application для запуска worker
 """
+import os
+from dotenv import load_dotenv
+
+# ВАЖНО: Загружаем .env файл ДО импорта app
+load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
+
 from app import create_app, celery
 
 # Создаём Flask app для контекста
