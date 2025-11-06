@@ -474,7 +474,54 @@ class CZBooksParser(BaseParser):
 
             if cf_still_active:
                 print(f"   ❌ Cloudflare challenge не пройден после {max_attempts} попыток")
+
+                # 🤖 АВТОМАТИЧЕСКОЕ РЕШЕНИЕ через Qwen3-VL
+                print(f"\n{'='*60}")
+                print(f"   🤖 АВТОМАТИЧЕСКОЕ РЕШЕНИЕ TURNSTILE")
+                print(f"   Модель: qwen3-vl:8b через Ollama")
+                print(f"   Попыток: до 3")
+                print(f"{'='*60}\n")
+
+                try:
+                    # Импортируем solver
+                    import sys
+                    import os
+                    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'web_app'))
+
+                    from app.services.cloudflare_solver_ollama import solve_turnstile_sync
+
+                    # Пытаемся решить автоматически
+                    print(f"   🔧 Инициализация CloudflareSolverOllama...")
+                    auto_success = solve_turnstile_sync(
+                        driver=self.driver,
+                        max_attempts=3
+                    )
+
+                    if auto_success:
+                        print(f"\n   {'='*60}")
+                        print(f"   ✅ SUCCESS! Turnstile пройден автоматически!")
+                        print(f"   {'='*60}\n")
+                        page_source = self.driver.page_source
+                        self.consecutive_errors = 0
+                        return page_source
+                    else:
+                        print(f"\n   {'='*60}")
+                        print(f"   ❌ FAILED: Автоматическое решение не удалось")
+                        print(f"   {'='*60}\n")
+
+                except ImportError as ie:
+                    print(f"   ⚠️ CloudflareSolverOllama не доступен: {ie}")
+                    print(f"   💡 Проверьте: pip install httpx")
+                except Exception as e:
+                    print(f"   ❌ Ошибка автоматического решения: {e}")
+                    # Показываем traceback для отладки
+                    import traceback
+                    print(f"   Traceback:")
+                    traceback.print_exc()
+
+                # Fallback на ручное решение
                 print(f"   💡 Рекомендация: добавьте auth_cookies в настройки новеллы")
+                print(f"   💡 Или решите вручную через VNC: http://localhost:6080/vnc.html")
                 self.consecutive_errors += 1
                 raise Exception("Не удалось пройти Cloudflare Turnstile challenge. Требуются действительные cookies.")
 
