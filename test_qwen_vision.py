@@ -263,7 +263,7 @@ Important:
                         "stream": False,
                         "options": {
                             "temperature": 0.1,
-                            "num_predict": 256,
+                            "num_predict": 512,
                         }
                     }
                 )
@@ -376,7 +376,7 @@ Important:
                         "stream": False,
                         "options": {
                             "temperature": 0.1,
-                            "num_predict": 256,
+                            "num_predict": 512,
                         }
                     }
                 )
