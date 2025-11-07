@@ -170,6 +170,7 @@ RESPOND WITH JSON ONLY. NO EXPLANATIONS. NO MARKDOWN. JUST JSON."""
                         "prompt": prompt,
                         "images": [screenshot_b64],
                         "stream": False,
+                        "keep_alive": "5m",  # Кеширование модели в GPU на 5 минут
                         "options": {
                             "temperature": 0.1,  # Низкая температура для точности
                             "num_predict": 4096,  # Увеличено для полной генерации ответа
