@@ -1012,24 +1012,46 @@ class TranslatorService:
                 paragraph_issue = any('абзац' in issue.lower() for issue in validation['critical_issues'])
                 
                 if paragraph_issue:
-                    LogService.log_warning(f"Проблема с абзацами в главе {chapter.chapter_number}, пробуем перевести заново", 
+                    LogService.log_warning(f"Проблема с абзацами в главе {chapter.chapter_number}, пробуем перевести заново",
                                          novel_id=chapter.novel_id, chapter_id=chapter.id)
                     print(f"   ⚠️ Проблема с абзацами: {validation['critical_issues']}")
                     print(f"   🔄 Повторная попытка перевода...")
-                    
+
+                    # Задержка перед повторным переводом (60 секунд)
+                    retry_delay = 60
+                    LogService.log_info(f"⏳ Ожидание {retry_delay} секунд перед повторным переводом...",
+                                      novel_id=chapter.novel_id, chapter_id=chapter.id)
+                    print(f"   ⏳ Ожидание {retry_delay} секунд для стабилизации LLM...")
+
+                    # Ожидание с логированием каждые 10 секунд
+                    remaining = retry_delay
+                    while remaining > 0:
+                        wait_chunk = min(10, remaining)
+                        time.sleep(wait_chunk)
+                        remaining -= wait_chunk
+                        if remaining > 0:
+                            LogService.log_info(f"   ⏱️  Осталось: {remaining} секунд",
+                                              novel_id=chapter.novel_id, chapter_id=chapter.id)
+
+                    # Увеличиваем temperature для получения другого результата
+                    retry_temperature = min(translation_temperature + 0.2, 1.0)
+                    LogService.log_info(f"🌡️ Увеличиваем temperature: {translation_temperature} → {retry_temperature}",
+                                      novel_id=chapter.novel_id, chapter_id=chapter.id)
+                    print(f"   🌡️ Temperature для повторной попытки: {retry_temperature}")
+
                     # Повторный перевод
                     translated_parts_retry = []
                     for i, part in enumerate(text_parts):
-                        LogService.log_info(f"Повторный перевод части {i+1}/{len(text_parts)} главы {chapter.chapter_number}", 
+                        LogService.log_info(f"Повторный перевод части {i+1}/{len(text_parts)} главы {chapter.chapter_number}",
                                           novel_id=chapter.novel_id, chapter_id=chapter.id)
                         print(f"   📝 Повторный перевод части {i+1}/{len(text_parts)}")
-                        
+
                         translated_part = self.translator.translate_text(
-                            part, 
+                            part,
                             prompt_template.translation_prompt,
                             context_prompt,
                             chapter.id,
-                            temperature=translation_temperature
+                            temperature=retry_temperature
                         )
                         
                         if not translated_part:
