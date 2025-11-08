@@ -86,7 +86,7 @@ class CZBooksParser(BaseParser):
 
         # Счетчик запросов для перезапуска браузера
         self.request_count = 0
-        self.max_requests_before_restart = 300  # Перезапускаем браузер каждые 300 запросов (было 100)
+        self.max_requests_before_restart = 100  # Перезапускаем браузер каждые 100 запросов
         self.saved_cookies = []  # Сохраненные cookies для восстановления после перезапуска
 
         # Настройка Cloudflare challenge
