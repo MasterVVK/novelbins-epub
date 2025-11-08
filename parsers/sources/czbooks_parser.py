@@ -86,7 +86,8 @@ class CZBooksParser(BaseParser):
 
         # Счетчик запросов для перезапуска браузера
         self.request_count = 0
-        self.max_requests_before_restart = 100  # Перезапускаем браузер каждые 100 запросов
+        self.max_requests_before_restart = 300  # Перезапускаем браузер каждые 300 запросов (было 100)
+        self.saved_cookies = []  # Сохраненные cookies для восстановления после перезапуска
 
         # Настройка Cloudflare challenge
         self.cloudflare_max_attempts = cloudflare_max_attempts
@@ -100,6 +101,16 @@ class CZBooksParser(BaseParser):
     def restart_driver(self):
         """Перезапустить браузер для освобождения памяти"""
         print("🔄 Перезапуск браузера для освобождения памяти...")
+
+        # Сохраняем cookies перед закрытием
+        if self.driver:
+            try:
+                self.saved_cookies = self.driver.get_cookies()
+                print(f"   💾 Сохранено cookies: {len(self.saved_cookies)} шт.")
+            except Exception as e:
+                print(f"   ⚠️ Не удалось сохранить cookies: {e}")
+                self.saved_cookies = []
+
         if self.driver:
             try:
                 self.driver.quit()
@@ -118,6 +129,83 @@ class CZBooksParser(BaseParser):
         # Инициализируем новый браузер
         self._init_selenium()
         print("   ✅ Новый браузер запущен")
+
+        # Восстанавливаем cookies
+        if self.saved_cookies:
+            self._restore_cookies()
+            print(f"   🔄 Восстановлено cookies: {len(self.saved_cookies)} шт.")
+
+    def _restore_cookies(self):
+        """Восстановить сохраненные cookies после перезапуска браузера"""
+        if not self.driver or not self.saved_cookies:
+            return
+
+        # Сначала нужно открыть страницу czbooks.net для установки cookies
+        print(f"   🔄 Восстановление cookies через загрузку czbooks.net...")
+        try:
+            self.driver.get("https://czbooks.net")
+
+            # Базовая задержка для прохождения Cloudflare challenge
+            initial_wait = 15 + random.uniform(2, 5)
+            print(f"   ⏳ Ожидание прохождения Cloudflare ({initial_wait:.1f}s)...")
+            time.sleep(initial_wait)
+
+            # Проверяем наличие Cloudflare challenge
+            page_source = self.driver.page_source
+            cf_indicators = [
+                ('Verify you are human' in page_source),  # Turnstile
+                ('cf-chl' in page_source),  # Cloudflare challenge ID
+            ]
+
+            if any(cf_indicators):
+                print(f"   ⚠️ Обнаружен Cloudflare challenge при восстановлении cookies")
+
+                # Пытаемся решить через Qwen3-VL
+                try:
+                    import sys
+                    import os
+                    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'web_app'))
+                    from app.services.cloudflare_solver_ollama import solve_turnstile_sync
+
+                    print(f"   🤖 Запуск автоматического решения Turnstile...")
+                    auto_success = solve_turnstile_sync(driver=self.driver, max_attempts=3)
+
+                    if auto_success:
+                        print(f"   ✅ Cloudflare challenge пройден автоматически")
+                    else:
+                        print(f"   ⚠️ Не удалось пройти Cloudflare автоматически")
+                        # Продолжаем попытку восстановления cookies
+                except Exception as e:
+                    print(f"   ⚠️ Ошибка автоматического решения: {e}")
+
+        except Exception as e:
+            print(f"   ⚠️ Ошибка загрузки czbooks.net для cookies: {e}")
+            return
+
+        # Восстанавливаем каждый cookie
+        restored = 0
+        for cookie in self.saved_cookies:
+            try:
+                # Удаляем поля которые могут вызвать ошибки
+                cookie_to_add = {
+                    'name': cookie['name'],
+                    'value': cookie['value'],
+                    'domain': cookie.get('domain', '.czbooks.net'),
+                }
+                # Добавляем опциональные поля если они есть
+                if 'path' in cookie:
+                    cookie_to_add['path'] = cookie['path']
+                if 'secure' in cookie:
+                    cookie_to_add['secure'] = cookie['secure']
+                if 'httpOnly' in cookie:
+                    cookie_to_add['httpOnly'] = cookie['httpOnly']
+
+                self.driver.add_cookie(cookie_to_add)
+                restored += 1
+            except Exception as e:
+                print(f"   ⚠️ Не удалось восстановить cookie {cookie.get('name', 'unknown')}: {e}")
+
+        print(f"   ✅ Успешно восстановлено {restored}/{len(self.saved_cookies)} cookies")
 
     def _init_selenium(self):
         """Инициализация Selenium с обходом Cloudflare и антидетектом"""
@@ -417,7 +505,8 @@ class CZBooksParser(BaseParser):
         # Проверяем, нужен ли перезапуск браузера
         self.request_count += 1
         if self.request_count >= self.max_requests_before_restart:
-            print(f"   📊 Достигнут лимит запросов ({self.request_count}), перезапускаем браузер...")
+            print(f"   📊 Достигнут лимит запросов ({self.request_count}/{self.max_requests_before_restart}), перезапускаем браузер...")
+            print(f"   💾 Cookies будут сохранены и восстановлены для избежания Cloudflare challenge")
             self.restart_driver()
 
         self._init_selenium()

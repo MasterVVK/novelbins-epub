@@ -61,7 +61,7 @@ class Config:
 class DevelopmentConfig(Config):
     """Конфигурация для разработки"""
     DEBUG = True
-    SQLALCHEMY_ECHO = True
+    SQLALCHEMY_ECHO = False
     LOG_LEVEL = 'DEBUG'
 
 

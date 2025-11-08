@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 import httpx
+import time
 from typing import Optional, Dict
 import re
 
@@ -95,9 +96,9 @@ class CloudflareSolverOllama:
 
                     if success:
                         # 4. Проверка успеха после клика
-                        logger.info(f"   ⏳ Ожидание обработки Cloudflare (4 секунды)...")
-                        print(f"      ⏳ Ожидание ответа Cloudflare (4 сек)...")
-                        await asyncio.sleep(4)
+                        logger.info(f"   ⏳ Ожидание обработки Cloudflare (25 секунд)...")
+                        print(f"      ⏳ Ожидание ответа Cloudflare (25 сек)...")
+                        await asyncio.sleep(25)  # Увеличено с 15 до 25 сек для более надежной обработки
 
                         if self._check_success():
                             logger.info(f"   ✅ Turnstile успешно пройден!")
@@ -118,8 +119,8 @@ class CloudflareSolverOllama:
 
             # Пауза перед следующей попыткой
             if attempt < max_attempts:
-                print(f"      ⏸️  Пауза 2 сек перед следующей попыткой...")
-                await asyncio.sleep(2)
+                print(f"      ⏸️  Пауза 6 сек перед следующей попыткой...")
+                await asyncio.sleep(6)  # Увеличено с 4 до 6 сек
 
         logger.error(f"❌ Не удалось решить Turnstile за {max_attempts} попыток")
         print(f"   ❌ Все {max_attempts} попытки исчерпаны")
@@ -172,7 +173,7 @@ RESPOND WITH JSON ONLY. NO EXPLANATIONS. NO MARKDOWN. JUST JSON."""
                         "stream": False,
                         "keep_alive": "5m",  # Кеширование модели в GPU на 5 минут
                         "options": {
-                            "temperature": 0.1,  # Низкая температура для точности
+                            "temperature": 0.0,  # Детерминированный вывод (было 0.1)
                             "num_predict": 4096,  # Увеличено для полной генерации ответа
                             "num_ctx": 8192,      # Расширенный контекст для vision + prompt + генерации
                         }
@@ -440,23 +441,88 @@ RESPOND WITH JSON ONLY. NO EXPLANATIONS. NO MARKDOWN. JUST JSON."""
 
             logger.debug(f"Выполнение клика по координатам ({x}, {y})...")
 
-            # Попытка 1: Проверяем наличие Cloudflare iframe
-            print(f"      🔍 Поиск Cloudflare iframe...")
+            # Попытка 1: Проверяем наличие Cloudflare iframe (множественные методы поиска)
+            print(f"      🔍 Поиск Cloudflare iframe (расширенный поиск)...")
             try:
-                # НОВОЕ: Ожидаем появления iframe (до 5 секунд)
-                print(f"      ⏳ Ожидание динамических iframe (до 5 сек)...")
+                # НОВОЕ: Ожидаем появления iframe (увеличено до 10 секунд)
+                print(f"      ⏳ Ожидание динамических iframe (до 10 сек)...")
                 try:
-                    WebDriverWait(self.driver, 5).until(
+                    WebDriverWait(self.driver, 10).until(
                         EC.presence_of_element_located((By.TAG_NAME, "iframe"))
                     )
                     logger.info("✅ iframe появился после ожидания")
                     print(f"      ✅ iframe появился после ожидания")
                 except:
-                    logger.debug("iframe не появился, работаем без него")
-                    print(f"      ⚠️ iframe не появился, работаем без него")
+                    logger.debug("iframe не появился через стандартный поиск")
+                    print(f"      ⚠️ iframe не появился через стандартный поиск")
 
-                # Cloudflare Turnstile обычно в iframe
-                iframes = self.driver.find_elements(By.TAG_NAME, "iframe")
+                # Множественные методы поиска iframe
+                iframes = []
+
+                # Метод 1: Стандартный поиск по тегу
+                iframes_standard = self.driver.find_elements(By.TAG_NAME, "iframe")
+                iframes.extend(iframes_standard)
+                print(f"      📦 Метод 1 (tag): {len(iframes_standard)} iframe")
+
+                # Метод 2: CSS селектор - Cloudflare challenges
+                try:
+                    iframes_cf = self.driver.find_elements(By.CSS_SELECTOR, "iframe[src*='challenges.cloudflare'], iframe[src*='cf-chl']")
+                    for iframe in iframes_cf:
+                        if iframe not in iframes:
+                            iframes.append(iframe)
+                    print(f"      📦 Метод 2 (CF selector): +{len(iframes_cf)} iframe")
+                except Exception as e:
+                    logger.debug(f"Метод 2 failed: {e}")
+
+                # Метод 3: Поиск по title атрибуту
+                try:
+                    iframes_title = self.driver.find_elements(By.CSS_SELECTOR, "iframe[title*='cloudflare' i], iframe[title*='turnstile' i]")
+                    for iframe in iframes_title:
+                        if iframe not in iframes:
+                            iframes.append(iframe)
+                    print(f"      📦 Метод 3 (title): +{len(iframes_title)} iframe")
+                except Exception as e:
+                    logger.debug(f"Метод 3 failed: {e}")
+
+                # Метод 4: JavaScript поиск (включая shadow DOM)
+                try:
+                    iframes_js = self.driver.execute_script("""
+                        // Поиск всех iframe (включая shadow DOM)
+                        function findAllIframes(root) {
+                            let iframes = Array.from(root.querySelectorAll('iframe'));
+
+                            // Поиск в shadow DOM
+                            root.querySelectorAll('*').forEach(el => {
+                                if (el.shadowRoot) {
+                                    iframes = iframes.concat(findAllIframes(el.shadowRoot));
+                                }
+                            });
+
+                            return iframes;
+                        }
+
+                        return findAllIframes(document);
+                    """)
+                    print(f"      📦 Метод 4 (JS + shadow DOM): {len(iframes_js)} iframe найдено")
+                    logger.info(f"JavaScript нашел {len(iframes_js)} iframe (включая shadow DOM)")
+
+                    # Добавляем только новые
+                    for iframe_js in iframes_js:
+                        # WebElement из JS нужно по-другому обработать
+                        if iframe_js not in iframes:
+                            iframes.append(iframe_js)
+                except Exception as e:
+                    logger.debug(f"Метод 4 (JS) failed: {e}")
+                    print(f"      ⚠️ Метод 4 (JS): {e}")
+
+                # Метод 5: Поиск Turnstile виджета напрямую
+                try:
+                    turnstile_divs = self.driver.find_elements(By.CSS_SELECTOR, "div[id*='cf-turnstile'], div[class*='cf-turnstile']")
+                    if turnstile_divs:
+                        print(f"      🎯 Найдено Turnstile DIV: {len(turnstile_divs)}")
+                        logger.info(f"Найдено {len(turnstile_divs)} Turnstile DIV элементов")
+                except Exception as e:
+                    logger.debug(f"Turnstile DIV search failed: {e}")
                 print(f"      📦 Найдено iframe: {len(iframes)}")
 
                 # Сначала проверяем iframe с явным указанием на Cloudflare
@@ -531,8 +597,38 @@ RESPOND WITH JSON ONLY. NO EXPLANATIONS. NO MARKDOWN. JUST JSON."""
                 print(f"      ⚠️ Ошибка iframe: {e}")
                 self.driver.switch_to.default_content()
 
+            # Прокрутка к координатам и проверка элемента
+            print(f"      📍 Прокрутка к координатам ({x}, {y})...")
+            try:
+                # Прокручиваем страницу так, чтобы координаты были в центре viewport
+                self.driver.execute_script(f"window.scrollTo(0, {y} - window.innerHeight / 2);")
+                time.sleep(0.5)  # Даем время на прокрутку
+
+                # Проверяем элемент под координатами
+                element_info = self.driver.execute_script(f"""
+                    var elem = document.elementFromPoint({x}, {y});
+                    if (elem) {{
+                        return {{
+                            tag: elem.tagName,
+                            id: elem.id,
+                            class: elem.className,
+                            text: elem.textContent ? elem.textContent.substring(0, 50) : ''
+                        }};
+                    }}
+                    return null;
+                """)
+
+                if element_info:
+                    logger.info(f"   📍 Элемент под ({x}, {y}): {element_info['tag']} id='{element_info['id']}' class='{element_info['class']}'")
+                    print(f"      📍 Элемент: <{element_info['tag']}> class='{element_info['class'][:30]}'")
+                else:
+                    logger.warning(f"   ⚠️ Элемент не найден под координатами ({x}, {y})")
+                    print(f"      ⚠️ Элемент не найден под координатами")
+            except Exception as e:
+                logger.debug(f"Ошибка проверки элемента: {e}")
+
             # Попытка 2: JavaScript клик с mouse events на основной странице
-            print(f"      🖱️ JavaScript клик с mouse events на основной странице...")
+            print(f"      🖱️ JavaScript клик с mouse events...")
             try:
                 # УЛУЧШЕНО: Генерируем реалистичные mouse events вместо простого click()
                 self.driver.execute_script(f"""
@@ -561,22 +657,65 @@ RESPOND WITH JSON ONLY. NO EXPLANATIONS. NO MARKDOWN. JUST JSON."""
                 """)
                 logger.info(f"   🖱️ JavaScript mouse events выполнены по ({x}, {y})")
                 print(f"      ✅ JavaScript mouse events выполнены")
-                return True
+                # НЕ возвращаем True сразу - продолжаем к более надежным методам
             except Exception as e:
                 logger.debug(f"JavaScript mouse events не сработали: {e}")
                 print(f"      ⚠️ JavaScript mouse events не сработали: {e}")
 
-            # Попытка 3: Selenium Actions (fallback)
-            print(f"      🖱️ Selenium Actions клик (fallback)...")
-            body = self.driver.find_element("tag name", "body")
-            actions = ActionChains(self.driver)
-            actions.move_to_element_with_offset(body, x, y)
-            actions.click()
-            actions.perform()
+            # Попытка 3: Клик напрямую по Turnstile элементу (если найден)
+            try:
+                print(f"      🎯 Попытка клика напрямую по Turnstile элементу...")
+                turnstile_elements = self.driver.find_elements(By.CSS_SELECTOR,
+                    "div[id*='cf-turnstile'], div[class*='cf-turnstile'], input[type='checkbox'][name*='cf'], label[for*='cf']")
 
-            logger.info(f"   🖱️ Selenium клик выполнен по координатам ({x}, {y})")
-            print(f"      ✅ Selenium Actions клик выполнен")
-            return True
+                if turnstile_elements:
+                    for elem in turnstile_elements[:3]:  # Пробуем первые 3
+                        try:
+                            # Прокручиваем к элементу
+                            self.driver.execute_script("arguments[0].scrollIntoView(true);", elem)
+                            time.sleep(0.3)
+
+                            # Клик через ActionChains с паузами (имитация человека)
+                            actions = ActionChains(self.driver)
+                            actions.move_to_element(elem)
+                            actions.pause(0.5)  # Пауза перед кликом
+                            actions.click()
+                            actions.pause(0.3)  # Пауза после клика
+                            actions.perform()
+
+                            logger.info(f"   🎯 Клик по Turnstile элементу выполнен")
+                            print(f"      ✅ Клик по Turnstile элементу")
+                            return True
+                        except Exception as e:
+                            logger.debug(f"Turnstile элемент не кликабелен: {e}")
+                            continue
+            except Exception as e:
+                logger.debug(f"Turnstile direct click failed: {e}")
+                print(f"      ⚠️ Turnstile direct click: {e}")
+
+            # Попытка 4: Selenium Actions с координатами (fallback)
+            print(f"      🖱️ Selenium Actions клик по координатам (fallback)...")
+            try:
+                body = self.driver.find_element("tag name", "body")
+                actions = ActionChains(self.driver)
+
+                # Реалистичное поведение: медленное движение с паузами
+                actions.move_to_element_with_offset(body, x, y)
+                actions.pause(0.5)  # Пауза после движения
+                actions.click()
+                actions.pause(0.3)  # Пауза после клика
+                actions.perform()
+
+                logger.info(f"   🖱️ Selenium клик выполнен по координатам ({x}, {y})")
+                print(f"      ✅ Selenium Actions клик выполнен")
+                return True
+            except Exception as e:
+                logger.debug(f"Selenium Actions failed: {e}")
+                print(f"      ⚠️ Selenium Actions: {e}")
+                # Все методы провалились
+                logger.warning(f"   ❌ Все методы клика провалились для координат ({x}, {y})")
+                print(f"      ❌ Все методы клика провалились")
+                return False
 
         except Exception as e:
             logger.error(f"Ошибка при клике по координатам ({x}, {y}): {e}")
@@ -680,21 +819,31 @@ RESPOND WITH JSON ONLY. NO EXPLANATIONS. NO MARKDOWN. JUST JSON."""
         try:
             page_source = self.driver.page_source
 
-            # Индикаторы активного Turnstile challenge
+            # Более строгие индикаторы АКТИВНОГО Turnstile challenge
+            # (не просто наличие слова "turnstile" в коде)
             indicators = [
                 'Verify you are human' in page_source,
                 '人机验证' in page_source,  # Китайский вариант
-                'turnstile' in page_source.lower() and 'challenge' in page_source.lower(),
-                'cf-chl' in page_source and 'challenge' in page_source.lower(),
+                'Verifying you are human' in page_source,  # Процесс проверки
+                'cf-challenge-running' in page_source,
             ]
 
-            # Если ни один индикатор не найден - success
-            is_passed = not any(indicators)
+            active_indicators = sum(indicators)
+
+            # Дополнительная проверка: если страница большая (>15000 символов),
+            # значит контент загружен и challenge скорее всего пройден
+            page_size = len(page_source)
+            has_content = page_size > 15000
+
+            # Считаем challenge пройденным если:
+            # 1. Нет активных индикаторов, ИЛИ
+            # 2. Есть много контента (>15000 символов) и не более 1 индикатора
+            is_passed = (active_indicators == 0) or (has_content and active_indicators <= 1)
 
             if is_passed:
-                logger.debug("Turnstile индикаторы не найдены - challenge пройден")
+                logger.debug(f"Turnstile пройден: {active_indicators} индикаторов, {page_size} байт контента")
             else:
-                logger.debug(f"Turnstile все еще активен: {sum(indicators)} индикаторов найдено")
+                logger.debug(f"Turnstile активен: {active_indicators} индикаторов, {page_size} байт контента")
 
             return is_passed
 
