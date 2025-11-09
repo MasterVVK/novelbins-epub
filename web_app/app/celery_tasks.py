@@ -15,6 +15,7 @@ from app.models import Novel, Chapter
 from app.services.log_service import LogService
 from parsers import create_parser_from_url
 import time
+import re
 
 
 # Флаг для отслеживания отмены
@@ -214,7 +215,22 @@ def parse_novel_chapters_task(self, novel_id, start_chapter=None, max_chapters=N
                     for filter_pattern in filters:
                         if filter_pattern:
                             original_len = len(content)
+
+                            # Пытаемся применить фильтр напрямую
                             content = content.replace(filter_pattern, '')
+
+                            # Если не сработало, пробуем с нормализацией пробелов и знаков препинания
+                            if len(content) == original_len:
+                                # Создаем паттерн, где множественные пробелы заменены на \s+
+                                # Экранируем спецсимволы regex
+                                escaped_pattern = re.escape(filter_pattern)
+                                # Заменяем одинарные пробелы на \s+ (один или более пробельных символов)
+                                flexible_pattern = escaped_pattern.replace(r'\ ', r'\s+').replace(r'\　', r'\s+')
+                                # Делаем восклицательный знак опциональным (не экранирован в escaped_pattern)
+                                flexible_pattern = flexible_pattern.replace('！', '[！!]?').replace('!', '[！!]?')
+                                # Пробуем найти и удалить с гибким паттерном
+                                content = re.sub(flexible_pattern, '', content)
+
                             if len(content) != original_len:
                                 LogService.log_info(
                                     f"🔧 [Novel:{novel_id}, Ch:{chapter_number}] "
