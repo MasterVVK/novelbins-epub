@@ -95,10 +95,19 @@ class CloudflareSolverOllama:
                         success = await self._click_turnstile_directly()
 
                     if success:
-                        # 4. Проверка успеха после клика
-                        logger.info(f"   ⏳ Ожидание обработки Cloudflare (25 секунд)...")
-                        print(f"      ⏳ Ожидание ответа Cloudflare (25 сек)...")
-                        await asyncio.sleep(25)  # Увеличено с 15 до 25 сек для более надежной обработки
+                        # 4. Проверка успеха после клика с учетом "Verifying..."
+                        logger.info(f"   ⏳ Ожидание обработки Cloudflare (30 секунд)...")
+                        print(f"      ⏳ Ожидание ответа Cloudflare (30 сек)...")
+                        await asyncio.sleep(30)
+
+                        # Проверяем состояние
+                        page_source = self.driver.page_source
+
+                        # Если Cloudflare обрабатывает запрос ("Verifying...") - ждем дольше
+                        if 'Verifying you are human' in page_source:
+                            logger.info(f"   🔄 Cloudflare обрабатывает запрос, ждем еще 30 секунд...")
+                            print(f"      🔄 Cloudflare обрабатывает... (еще 30 сек)")
+                            await asyncio.sleep(30)
 
                         if self._check_success():
                             logger.info(f"   ✅ Turnstile успешно пройден!")
@@ -685,7 +694,7 @@ RESPOND WITH JSON ONLY. NO EXPLANATIONS. NO MARKDOWN. JUST JSON."""
 
                             logger.info(f"   🎯 Клик по Turnstile элементу выполнен")
                             print(f"      ✅ Клик по Turnstile элементу")
-                            return True
+                            # НЕ возвращаем True - продолжаем к xdotool для большей надежности
                         except Exception as e:
                             logger.debug(f"Turnstile элемент не кликабелен: {e}")
                             continue
@@ -708,14 +717,30 @@ RESPOND WITH JSON ONLY. NO EXPLANATIONS. NO MARKDOWN. JUST JSON."""
 
                 logger.info(f"   🖱️ Selenium клик выполнен по координатам ({x}, {y})")
                 print(f"      ✅ Selenium Actions клик выполнен")
-                return True
+                # НЕ возвращаем True - продолжаем к xdotool для большей надежности
             except Exception as e:
                 logger.debug(f"Selenium Actions failed: {e}")
                 print(f"      ⚠️ Selenium Actions: {e}")
-                # Все методы провалились
-                logger.warning(f"   ❌ Все методы клика провалились для координат ({x}, {y})")
-                print(f"      ❌ Все методы клика провалились")
-                return False
+
+            # Попытка 5: xdotool с визуальной верификацией курсора (ultimate fallback)
+            print(f"      🖱️ xdotool с AI верификацией курсора (ultimate fallback)...")
+            try:
+                xdotool_result = await self._click_with_xdotool(x, y, max_verification_attempts=3)
+                if xdotool_result:
+                    logger.info(f"   🖱️ xdotool клик успешен для ({x}, {y})")
+                    print(f"      ✅ xdotool метод сработал!")
+                    return True
+                else:
+                    logger.warning(f"   ⚠️ xdotool метод не помог")
+                    print(f"      ⚠️ xdotool метод не помог")
+            except Exception as e:
+                logger.debug(f"xdotool method failed: {e}")
+                print(f"      ⚠️ xdotool: {e}")
+
+            # Все методы провалились
+            logger.warning(f"   ❌ Все 5 методов клика провалились для координат ({x}, {y})")
+            print(f"      ❌ Все 5 методов клика провалились")
+            return False
 
         except Exception as e:
             logger.error(f"Ошибка при клике по координатам ({x}, {y}): {e}")
@@ -808,6 +833,277 @@ RESPOND WITH JSON ONLY. NO EXPLANATIONS. NO MARKDOWN. JUST JSON."""
             print(f"      ❌ Ошибка прямого поиска: {e}")
             self.driver.switch_to.default_content()
             return False
+
+    async def _click_with_xdotool(self, x: int, y: int, max_verification_attempts: int = 3) -> bool:
+        """
+        Клик через xdotool с визуальной верификацией позиции курсора через Qwen3-VL
+
+        Стратегия:
+        1. Перемещаем курсор в целевую позицию через xdotool
+        2. Делаем скриншот с курсором через scrot
+        3. Спрашиваем Qwen3-VL: "Курсор находится на чекбоксе?"
+        4. Если да → кликаем, если нет → получаем коррекцию и повторяем
+
+        Args:
+            x, y: Целевые координаты для клика
+            max_verification_attempts: Максимум попыток верификации (по умолчанию 3)
+
+        Returns:
+            bool: True если клик выполнен успешно
+        """
+        try:
+            import subprocess
+            import tempfile
+
+            logger.info(f"   🖱️ xdotool клик с визуальной верификацией для ({x}, {y})...")
+            print(f"      🖱️ xdotool метод (с AI верификацией курсора)...")
+
+            # Получаем DISPLAY из драйвера
+            display = os.getenv('DISPLAY', ':0')
+            logger.debug(f"DISPLAY: {display}")
+
+            for attempt in range(1, max_verification_attempts + 1):
+                try:
+                    logger.info(f"   📍 Попытка xdotool {attempt}/{max_verification_attempts}: перемещение курсора на ({x}, {y})...")
+                    print(f"      📍 Попытка {attempt}/{max_verification_attempts}: перемещение курсора...")
+
+                    # 1. Перемещаем курсор через xdotool
+                    result = subprocess.run(
+                        ['xdotool', 'mousemove', str(x), str(y)],
+                        env={**os.environ, 'DISPLAY': display},
+                        capture_output=True,
+                        text=True,
+                        timeout=5
+                    )
+
+                    if result.returncode != 0:
+                        logger.warning(f"xdotool mousemove failed: {result.stderr}")
+                        print(f"      ⚠️ xdotool mousemove ошибка: {result.stderr[:100]}")
+                        continue
+
+                    # Пауза для стабилизации курсора
+                    await asyncio.sleep(0.3)
+
+                    # 2. Делаем скриншот с курсором
+                    print(f"      📸 Скриншот с курсором...")
+                    screenshot_path = await self._take_full_screen_screenshot(display)
+
+                    if not screenshot_path:
+                        logger.warning(f"Не удалось создать скриншот для верификации")
+                        print(f"      ⚠️ Скриншот не создан")
+                        continue
+
+                    # 3. Верификация позиции курсора через Qwen3-VL
+                    print(f"      🤖 Верификация позиции курсора через {self.model}...")
+                    verification = await self._verify_cursor_position(screenshot_path, x, y)
+
+                    if not verification:
+                        logger.warning(f"Верификация не удалась (попытка {attempt})")
+                        print(f"      ❌ Верификация не удалась")
+                        continue
+
+                    cursor_on_checkbox = verification.get('cursor_on_checkbox', False)
+                    suggested_x = verification.get('suggested_x')
+                    suggested_y = verification.get('suggested_y')
+                    confidence = verification.get('confidence', 0)
+
+                    logger.info(f"   🔍 Верификация: cursor_on_checkbox={cursor_on_checkbox}, confidence={confidence:.2f}")
+                    print(f"      🔍 Курсор на чекбоксе: {cursor_on_checkbox} (уверенность: {confidence:.2f})")
+
+                    if cursor_on_checkbox:
+                        # 4. Курсор правильно позиционирован → кликаем!
+                        logger.info(f"   ✅ Курсор правильно позиционирован, выполняем клик...")
+                        print(f"      ✅ Позиция подтверждена → клик!")
+
+                        # Клик через xdotool
+                        click_result = subprocess.run(
+                            ['xdotool', 'click', '1'],  # Левая кнопка мыши
+                            env={**os.environ, 'DISPLAY': display},
+                            capture_output=True,
+                            text=True,
+                            timeout=5
+                        )
+
+                        if click_result.returncode == 0:
+                            logger.info(f"   🖱️ xdotool клик выполнен успешно!")
+                            print(f"      ✅ xdotool клик выполнен!")
+                            return True
+                        else:
+                            logger.warning(f"xdotool click failed: {click_result.stderr}")
+                            print(f"      ⚠️ xdotool click ошибка: {click_result.stderr[:100]}")
+                            return False
+
+                    elif suggested_x is not None and suggested_y is not None:
+                        # Qwen3-VL предложил коррекцию координат
+                        logger.info(f"   🔄 Qwen3-VL предложил коррекцию: ({suggested_x}, {suggested_y})")
+                        print(f"      🔄 Коррекция координат: ({x}, {y}) → ({suggested_x}, {suggested_y})")
+
+                        # Обновляем координаты для следующей попытки
+                        x, y = suggested_x, suggested_y
+
+                    else:
+                        logger.warning(f"   ⚠️ Курсор не на чекбоксе, коррекция не предложена")
+                        print(f"      ⚠️ Курсор не на чекбоксе, нет коррекции")
+
+                except subprocess.TimeoutExpired:
+                    logger.warning(f"xdotool timeout на попытке {attempt}")
+                    print(f"      ⏱️ xdotool timeout")
+                    continue
+                except Exception as e:
+                    logger.warning(f"Ошибка на попытке xdotool {attempt}: {e}")
+                    print(f"      ⚠️ Ошибка: {e}")
+                    continue
+
+                # Пауза перед следующей попыткой
+                if attempt < max_verification_attempts:
+                    print(f"      ⏸️ Пауза 2 сек перед повтором...")
+                    await asyncio.sleep(2)
+
+            # Все попытки исчерпаны
+            logger.warning(f"   ❌ xdotool: все {max_verification_attempts} попытки верификации исчерпаны")
+            print(f"      ❌ xdotool: все попытки исчерпаны")
+            return False
+
+        except Exception as e:
+            logger.error(f"Критическая ошибка xdotool: {e}")
+            print(f"      ❌ Критическая ошибка xdotool: {e}")
+            import traceback
+            logger.debug(traceback.format_exc())
+            return False
+
+    async def _take_full_screen_screenshot(self, display: str) -> Optional[str]:
+        """
+        Создание полного скриншота экрана с курсором через scrot
+
+        Args:
+            display: DISPLAY переменная (например, ':155')
+
+        Returns:
+            str: Путь к файлу скриншота или None при ошибке
+        """
+        try:
+            import subprocess
+            import tempfile
+
+            # Создаем временный файл для скриншота
+            screenshot_path = os.path.join(tempfile.gettempdir(), f"xdotool_verification_{int(time.time())}.png")
+
+            # scrot захватывает курсор автоматически
+            result = subprocess.run(
+                ['scrot', screenshot_path],
+                env={**os.environ, 'DISPLAY': display},
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+
+            if result.returncode == 0 and os.path.exists(screenshot_path):
+                logger.debug(f"Скриншот с курсором создан: {screenshot_path}")
+                print(f"      💾 Скриншот: {screenshot_path}")
+                return screenshot_path
+            else:
+                logger.warning(f"scrot failed: {result.stderr}")
+                print(f"      ⚠️ scrot ошибка: {result.stderr[:100]}")
+                return None
+
+        except Exception as e:
+            logger.error(f"Ошибка создания скриншота: {e}")
+            print(f"      ⚠️ Ошибка скриншота: {e}")
+            return None
+
+    async def _verify_cursor_position(self, screenshot_path: str, target_x: int, target_y: int) -> Optional[Dict]:
+        """
+        Верификация позиции курсора через Qwen3-VL
+
+        Спрашиваем у модели:
+        - Находится ли курсор на чекбоксе Cloudflare Turnstile?
+        - Если нет, какие правильные координаты?
+
+        Args:
+            screenshot_path: Путь к скриншоту с курсором
+            target_x, target_y: Целевые координаты
+
+        Returns:
+            Dict: {
+                "cursor_on_checkbox": bool,
+                "confidence": float,
+                "suggested_x": int (если cursor_on_checkbox=False),
+                "suggested_y": int (если cursor_on_checkbox=False)
+            }
+            или None при ошибке
+        """
+        try:
+            # Читаем скриншот
+            with open(screenshot_path, 'rb') as f:
+                screenshot_png = f.read()
+            screenshot_b64 = base64.b64encode(screenshot_png).decode('utf-8')
+
+            # Промпт для верификации курсора
+            prompt = f"""You are a precise cursor position verifier. Analyze this screenshot and answer:
+
+QUESTION: Is the mouse cursor positioned EXACTLY on the Cloudflare Turnstile checkbox?
+
+CONTEXT:
+- Target coordinates: ({target_x}, {target_y})
+- Turnstile checkbox is a small square (15-25px) with text "Verify you are human"
+- The cursor should be INSIDE or DIRECTLY ON the checkbox
+
+IMPORTANT: Respond with ONLY valid JSON, nothing else.
+
+If cursor IS on checkbox:
+{{"cursor_on_checkbox": true, "confidence": 0.95}}
+
+If cursor is NOT on checkbox but you can see the checkbox:
+{{"cursor_on_checkbox": false, "confidence": 0.9, "suggested_x": 250, "suggested_y": 180, "reason": "cursor is 20px too far left"}}
+
+If you cannot find the checkbox or cursor:
+{{"cursor_on_checkbox": false, "confidence": 0.5}}
+
+RESPOND WITH JSON ONLY. NO EXPLANATIONS. JUST JSON."""
+
+            logger.debug(f"Отправка запроса верификации к {self.model}...")
+
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                response = await client.post(
+                    f"{self.ollama_url}/api/generate",
+                    json={
+                        "model": self.model,
+                        "prompt": prompt,
+                        "images": [screenshot_b64],
+                        "stream": False,
+                        "keep_alive": "5m",
+                        "options": {
+                            "temperature": 0.0,  # Детерминированный
+                            "num_predict": 2048,
+                            "num_ctx": 8192,
+                        }
+                    }
+                )
+
+                if response.status_code == 200:
+                    data = response.json()
+                    answer = data.get('response', '').strip()
+
+                    logger.debug(f"Qwen3-VL верификация: {answer[:200]}...")
+
+                    # Парсим JSON ответ
+                    verification = self._extract_json_from_response(answer)
+
+                    if verification:
+                        logger.debug(f"Результат верификации: {verification}")
+                        return verification
+                    else:
+                        logger.warning(f"Не удалось распарсить ответ верификации")
+                        return None
+                else:
+                    logger.error(f"Ollama вернул статус {response.status_code}")
+                    return None
+
+        except Exception as e:
+            logger.error(f"Ошибка верификации курсора: {e}")
+            import traceback
+            logger.debug(traceback.format_exc())
+            return None
 
     def _check_success(self) -> bool:
         """

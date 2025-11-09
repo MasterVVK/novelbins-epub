@@ -359,7 +359,7 @@ class CZBooksParser(BaseParser):
             print("   ⏱️ Таймауты установлены: 300s загрузка, 60s скрипты")
 
         # Устанавливаем cookies если есть
-        if self.auth_cookies:
+        if self.auth_cookies and self.auth_cookies.strip():
             print("   🍪 Установка cookies...")
             # Используем JavaScript для контроля загрузки
             try:
