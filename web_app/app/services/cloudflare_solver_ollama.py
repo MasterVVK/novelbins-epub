@@ -829,21 +829,26 @@ RESPOND WITH JSON ONLY. NO EXPLANATIONS. NO MARKDOWN. JUST JSON."""
             ]
 
             active_indicators = sum(indicators)
-
-            # Дополнительная проверка: если страница большая (>15000 символов),
-            # значит контент загружен и challenge скорее всего пройден
             page_size = len(page_source)
-            has_content = page_size > 15000
 
-            # Считаем challenge пройденным если:
-            # 1. Нет активных индикаторов, ИЛИ
-            # 2. Есть много контента (>15000 символов) и не более 1 индикатора
-            is_passed = (active_indicators == 0) or (has_content and active_indicators <= 1)
+            # Проверяем наличие реального контента czbooks (не Cloudflare страницы)
+            has_real_content = any([
+                '<div class="chapter-content"' in page_source,
+                '<div class="novel-content"' in page_source,
+                '<article' in page_source and page_size > 20000,
+                # Китайские символы в большом количестве = реальный контент
+                len([c for c in page_source if '\u4e00' <= c <= '\u9fff']) > 500,
+            ])
+
+            # Считаем challenge пройденным ТОЛЬКО если:
+            # 1. Нет активных индикаторов Cloudflare, ИЛИ
+            # 2. Есть реальный контент страницы czbooks (не просто большой размер)
+            is_passed = (active_indicators == 0) or (has_real_content and active_indicators == 0)
 
             if is_passed:
-                logger.debug(f"Turnstile пройден: {active_indicators} индикаторов, {page_size} байт контента")
+                logger.debug(f"Turnstile пройден: {active_indicators} индикаторов, {page_size} байт, контент: {has_real_content}")
             else:
-                logger.debug(f"Turnstile активен: {active_indicators} индикаторов, {page_size} байт контента")
+                logger.debug(f"Turnstile активен: {active_indicators} индикаторов, {page_size} байт, контент: {has_real_content}")
 
             return is_passed
 
