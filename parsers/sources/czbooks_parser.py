@@ -172,17 +172,27 @@ class CZBooksParser(BaseParser):
 
                     if auto_success:
                         print(f"   ✅ Cloudflare challenge пройден автоматически")
+
+                        # ВАЖНО: Сохраняем новые cookies после успешного прохождения
+                        try:
+                            self.saved_cookies = self.driver.get_cookies()
+                            print(f"   💾 Обновлено cookies: {len(self.saved_cookies)} шт.")
+                        except Exception as e:
+                            print(f"   ⚠️ Не удалось обновить cookies: {e}")
                     else:
-                        print(f"   ⚠️ Не удалось пройти Cloudflare автоматически")
-                        # Продолжаем попытку восстановления cookies
+                        print(f"   ❌ Не удалось пройти Cloudflare автоматически")
+                        print(f"   ⚠️ ПРЕРЫВАЕМ восстановление cookies - старые cookies не работают")
+                        return  # ВАЖНО: Выходим, НЕ восстанавливая неработающие cookies
                 except Exception as e:
-                    print(f"   ⚠️ Ошибка автоматического решения: {e}")
+                    print(f"   ❌ Ошибка автоматического решения: {e}")
+                    print(f"   ⚠️ ПРЕРЫВАЕМ восстановление cookies")
+                    return  # ВАЖНО: Выходим при ошибке
 
         except Exception as e:
             print(f"   ⚠️ Ошибка загрузки czbooks.net для cookies: {e}")
             return
 
-        # Восстанавливаем каждый cookie
+        # Восстанавливаем каждый cookie (только если Cloudflare пройден или отсутствует)
         restored = 0
         for cookie in self.saved_cookies:
             try:
@@ -473,6 +483,7 @@ class CZBooksParser(BaseParser):
                     '-shared',
                     '-forever',
                     '-nopw',
+                    '-cursor', 'most',  # Показывать курсор в VNC для визуального контроля xdotool
                     '-bg',
                     '-o', '/tmp/x11vnc.log'
                 ]
@@ -489,6 +500,75 @@ class CZBooksParser(BaseParser):
         except Exception as e:
             print(f"   ⚠️ Не удалось запустить VNC: {e}")
             # Продолжаем работу даже если VNC не запустился
+
+    def _wait_for_manual_cloudflare_solve(self, check_interval: int = 60, max_wait_time: int = 1800) -> bool:
+        """
+        Ожидание ручного прохождения Cloudflare challenge через VNC
+
+        Args:
+            check_interval: Интервал проверки статуса в секундах (по умолчанию 60 - каждую минуту)
+            max_wait_time: Максимальное время ожидания в секундах (по умолчанию 1800 - 30 минут)
+
+        Returns:
+            True если Cloudflare пройден, False если истек таймаут
+        """
+        import time
+
+        start_time = time.time()
+        check_count = 0
+
+        while True:
+            # Проверяем таймаут
+            elapsed = time.time() - start_time
+            if elapsed >= max_wait_time:
+                print(f"   ⏱️ Таймаут: прошло {int(elapsed/60)} минут")
+                return False
+
+            # Ждем интервал перед проверкой
+            if check_count > 0:  # Не ждем перед первой проверкой
+                remaining = max_wait_time - elapsed
+                wait_time = min(check_interval, remaining)
+                print(f"   ⏳ Ожидание {int(wait_time)}s до следующей проверки... (осталось {int(remaining/60)} мин)")
+                time.sleep(wait_time)
+
+            check_count += 1
+            print(f"\n   🔍 Проверка #{check_count} (прошло {int(elapsed/60)} мин)...")
+
+            # Получаем текущий page_source
+            try:
+                page_source = self.driver.page_source
+            except Exception as e:
+                print(f"   ⚠️ Ошибка получения page_source: {e}")
+                continue
+
+            # Проверяем индикаторы Cloudflare
+            cf_indicators_active = [
+                ('Verify you are human' in page_source),
+                ('Verifying you are human' in page_source),
+                ('cf-challenge-running' in page_source),
+            ]
+
+            # Проверяем наличие реального контента czbooks
+            has_real_content = any([
+                '<div class="chapter-content"' in page_source,
+                '<div class="novel-content"' in page_source,
+                '<article' in page_source and len(page_source) > 20000,
+                # Китайские символы в большом количестве = реальный контент
+                len([c for c in page_source if '\u4e00' <= c <= '\u9fff']) > 500,
+            ])
+
+            cf_still_active = any(cf_indicators_active) and not has_real_content
+
+            if cf_still_active:
+                print(f"   ⚠️ Cloudflare challenge все еще активен")
+                print(f"   📊 Индикаторов: {sum(cf_indicators_active)}, Реальный контент: {has_real_content}")
+                # Продолжаем ждать
+            else:
+                chinese_chars = len([c for c in page_source if '\u4e00' <= c <= '\u9fff'])
+                print(f"   ✅ Cloudflare пройден!")
+                print(f"   📊 Размер страницы: {len(page_source)} символов")
+                print(f"   📊 Китайских символов: {chinese_chars}")
+                return True
 
     def _get_page_with_selenium(self, url: str, wait_selector: str = None, wait_time: int = 15) -> str:
         """
@@ -555,14 +635,28 @@ class CZBooksParser(BaseParser):
                 else:
                     break
 
-            # Проверка успешности - проверяем, что это не Cloudflare
-            cf_still_active = any([
+            # Улучшенная проверка успешности - проверяем наличие РЕАЛЬНОГО контента czbooks
+            cf_indicators_active = [
                 ('Verify you are human' in page_source),
-                ('cf-chl' in page_source and 'challenge' in page_source.lower()),
+                ('Verifying you are human' in page_source),
+                ('cf-challenge-running' in page_source),
+            ]
+
+            # Проверка наличия реального контента czbooks (не Cloudflare страница)
+            has_real_content = any([
+                '<div class="chapter-content"' in page_source,
+                '<div class="novel-content"' in page_source,
+                '<article' in page_source and len(page_source) > 20000,
+                # Китайские символы в большом количестве = реальный контент
+                len([c for c in page_source if '\u4e00' <= c <= '\u9fff']) > 500,
             ])
+
+            cf_still_active = any(cf_indicators_active) and not has_real_content
 
             if cf_still_active:
                 print(f"   ❌ Cloudflare challenge не пройден после {max_attempts} попыток")
+                print(f"   📊 Индикаторов Cloudflare: {sum(cf_indicators_active)}")
+                print(f"   📝 Реальный контент czbooks: {has_real_content}")
 
                 # 🤖 АВТОМАТИЧЕСКОЕ РЕШЕНИЕ через Qwen3-VL
                 print(f"\n{'='*60}")
@@ -590,6 +684,14 @@ class CZBooksParser(BaseParser):
                         print(f"\n   {'='*60}")
                         print(f"   ✅ SUCCESS! Turnstile пройден автоматически!")
                         print(f"   {'='*60}\n")
+
+                        # ВАЖНО: Сохраняем свежие cookies после успешного прохождения
+                        try:
+                            self.saved_cookies = self.driver.get_cookies()
+                            print(f"   💾 Сохранено {len(self.saved_cookies)} свежих cookies для будущих перезапусков")
+                        except Exception as e:
+                            print(f"   ⚠️ Не удалось сохранить cookies: {e}")
+
                         page_source = self.driver.page_source
                         self.consecutive_errors = 0
                         return page_source
@@ -608,18 +710,68 @@ class CZBooksParser(BaseParser):
                     print(f"   Traceback:")
                     traceback.print_exc()
 
-                # Fallback на ручное решение
-                print(f"   💡 Рекомендация: добавьте auth_cookies в настройки новеллы")
-                print(f"   💡 Или решите вручную через VNC: http://localhost:6080/vnc.html")
-                self.consecutive_errors += 1
-                raise Exception("Не удалось пройти Cloudflare Turnstile challenge. Требуются действительные cookies.")
+                # Fallback на ручное решение - ЖДЕМ пользователя
+                print(f"\n{'='*60}")
+                print(f"   👤 ОЖИДАНИЕ РУЧНОГО РЕШЕНИЯ")
+                print(f"   {'='*60}")
+                print(f"   💡 Пройдите Cloudflare вручную через VNC:")
+                print(f"   🌐 http://localhost:6080/vnc.html")
+                print(f"   ⏱️  Проверка статуса каждую минуту (максимум 30 минут)")
+                print(f"   {'='*60}\n")
 
-            if len(page_source) > 5000:
-                print(f"   ✅ Страница загружена ({len(page_source)} символов)")
+                # Ждем ручного решения с периодической проверкой
+                manual_success = self._wait_for_manual_cloudflare_solve(
+                    check_interval=60,  # Проверка каждую минуту
+                    max_wait_time=1800  # Максимум 30 минут
+                )
+
+                if manual_success:
+                    print(f"\n{'='*60}")
+                    print(f"   ✅ SUCCESS! Cloudflare пройден вручную!")
+                    print(f"   {'='*60}\n")
+
+                    # Сохраняем свежие cookies
+                    try:
+                        self.saved_cookies = self.driver.get_cookies()
+                        print(f"   💾 Сохранено {len(self.saved_cookies)} свежих cookies")
+                    except Exception as e:
+                        print(f"   ⚠️ Не удалось сохранить cookies: {e}")
+
+                    page_source = self.driver.page_source
+                    self.consecutive_errors = 0
+                    return page_source
+                else:
+                    print(f"\n{'='*60}")
+                    print(f"   ❌ TIMEOUT: Cloudflare не пройден за 30 минут")
+                    print(f"   {'='*60}\n")
+                    self.consecutive_errors += 1
+                    raise Exception("Не удалось пройти Cloudflare Turnstile challenge. Требуются действительные cookies.")
+
+            # Финальная проверка: размер И наличие реального контента
+            page_size = len(page_source)
+
+            # Проверяем наличие реального контента czbooks
+            chinese_chars = len([c for c in page_source if '\u4e00' <= c <= '\u9fff'])
+            has_chapter_content = any([
+                '<div class="chapter-content"' in page_source,
+                '<div class="novel-content"' in page_source,
+                chinese_chars > 500,
+            ])
+
+            if page_size > 5000 and has_chapter_content:
+                print(f"   ✅ Страница загружена ({page_size} символов, {chinese_chars} китайских символов)")
                 self.consecutive_errors = 0
                 return page_source
+            elif page_size > 5000:
+                # Большая страница БЕЗ реального контента - вероятно Cloudflare
+                print(f"   ⚠️ Страница загружена ({page_size} символов), но НЕТ реального контента")
+                print(f"   📊 Китайских символов: {chinese_chars}")
+                print(f"   ⚠️ Возможно это Cloudflare challenge страница!")
+                self.consecutive_errors += 1
+                # Пробуем вернуть как есть - может парсер справится
+                return page_source
             else:
-                print(f"   ⚠️ Подозрительно малый размер страницы: {len(page_source)}")
+                print(f"   ⚠️ Подозрительно малый размер страницы: {page_size}")
                 self.consecutive_errors += 1
                 return page_source
 
