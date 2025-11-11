@@ -82,14 +82,361 @@ class CloudflareSolverOllama:
                     x_raw, y_raw = coords['x'], coords['y']
                     confidence = coords.get('confidence', 0)
 
-                    # Применяем фиксированную коррекцию смещения (на основе тестирования)
-                    # Исследование показало: модель систематически смещается на X-130px, Y≈0px
-                    # Протестировано: 100+ запросов, разные форматы, модели 4B/8B - стабильное смещение
-                    x = x_raw + 130  # Компенсация смещения -130px
-                    y = y_raw        # Y идеальна (0-2px ошибка на разрешении ~1919×992)
+                    # НОВАЯ АДАПТИВНАЯ КОРРЕКЦИЯ:
+                    # Проверяем несколько вариантов коррекции и выбираем лучший
+                    # на основе проверки что элемент является Turnstile-related
 
-                    logger.info(f"   📍 Qwen3-VL RAW: ({x_raw}, {y_raw}) → С коррекцией: ({x}, {y}), confidence: {confidence:.2f}")
-                    print(f"      📍 Найдено: ({x_raw}, {y_raw}) → Скорректировано: ({x}, {y}) ✅")
+                    correction_variants = [
+                        (0, "без коррекции"),      # Пробуем RAW координаты
+                        (30, "+30px"),              # Малая коррекция
+                        (60, "+60px"),              # Средняя коррекция
+                        (130, "+130px (старая)")    # Старая фиксированная (для совместимости)
+                    ]
+
+                    best_x, best_y = x_raw, y_raw
+                    best_score = 0
+                    best_correction_name = "без коррекции"
+
+                    logger.info(f"   🔍 Тестирую варианты коррекции для RAW: ({x_raw}, {y_raw})")
+                    print(f"      🔍 RAW координаты: ({x_raw}, {y_raw})")
+
+                    # ПРОВЕРКА CSS И POINTER-EVENTS: Элемент может блокировать клики
+                    try:
+                        elem_at_coords = self.driver.execute_script(f"""
+                            var elem = document.elementFromPoint({x_raw}, {y_raw});
+                            if (!elem) return null;
+
+                            var style = window.getComputedStyle(elem);
+                            return {{
+                                tag: elem.tagName,
+                                id: elem.id || '',
+                                className: elem.className || '',
+                                zIndex: style.zIndex,
+                                pointerEvents: style.pointerEvents,
+                                position: style.position,
+                                display: style.display,
+                                visibility: style.visibility,
+                                opacity: style.opacity
+                            }};
+                        """)
+
+                        if elem_at_coords:
+                            logger.info(f"   🎨 CSS элемента под ({x_raw}, {y_raw}):")
+                            logger.info(f"      <{elem_at_coords['tag']}> id='{elem_at_coords['id']}' class='{elem_at_coords['className'][:40]}'")
+                            logger.info(f"      z-index={elem_at_coords['zIndex']}, pointer-events={elem_at_coords['pointerEvents']}, "
+                                      f"position={elem_at_coords['position']}, opacity={elem_at_coords['opacity']}")
+                    except Exception as css_err:
+                        logger.warning(f"   ⚠️ Ошибка проверки CSS: {css_err}")
+
+                    # ПОИСК ВСЕХ ЭЛЕМЕНТОВ TURNSTILE НА СТРАНИЦЕ
+                    try:
+                        turnstile_search = self.driver.execute_script("""
+                            var turnstileElements = document.querySelectorAll('[class*="turnstile"], [id*="turnstile"], [class*="cf-"], input[type="checkbox"]');
+                            var results = [];
+
+                            for (var i = 0; i < Math.min(turnstileElements.length, 5); i++) {
+                                var elem = turnstileElements[i];
+                                var rect = elem.getBoundingClientRect();
+                                var style = window.getComputedStyle(elem);
+
+                                results.push({
+                                    tag: elem.tagName,
+                                    id: elem.id || '',
+                                    className: elem.className || '',
+                                    x: Math.round(rect.left),
+                                    y: Math.round(rect.top),
+                                    width: Math.round(rect.width),
+                                    height: Math.round(rect.height),
+                                    zIndex: style.zIndex,
+                                    display: style.display,
+                                    visibility: style.visibility
+                                });
+                            }
+
+                            return {
+                                total: turnstileElements.length,
+                                elements: results
+                            };
+                        """)
+
+                        if turnstile_search and turnstile_search.get('total', 0) > 0:
+                            logger.info(f"   🔍 Найдено Turnstile элементов на странице: {turnstile_search['total']} шт. (показываю первые 5)")
+                            for elem in turnstile_search.get('elements', []):
+                                logger.info(f"      <{elem['tag']}> id='{elem['id']}' class='{elem['className'][:40]}' "
+                                          f"pos=({elem['x']}, {elem['y']}) size={elem['width']}x{elem['height']} "
+                                          f"z={elem['zIndex']} display={elem['display']}")
+                        else:
+                            logger.info(f"   🔍 Turnstile элементы НЕ найдены через querySelectorAll")
+                    except Exception as search_err:
+                        logger.warning(f"   ⚠️ Ошибка поиска Turnstile элементов: {search_err}")
+
+                    # ПРОВЕРКА IFRAME: Turnstile может быть внутри iframe
+                    try:
+                        iframe_check = self.driver.execute_script("""
+                            var iframes = document.querySelectorAll('iframe');
+                            var results = [];
+
+                            for (var i = 0; i < Math.min(iframes.length, 10); i++) {
+                                var iframe = iframes[i];
+                                var rect = iframe.getBoundingClientRect();
+
+                                results.push({
+                                    index: i,
+                                    src: iframe.src || '',
+                                    id: iframe.id || '',
+                                    className: iframe.className || '',
+                                    x: Math.round(rect.left),
+                                    y: Math.round(rect.top),
+                                    width: Math.round(rect.width),
+                                    height: Math.round(rect.height)
+                                });
+                            }
+
+                            return {
+                                total: iframes.length,
+                                iframes: results
+                            };
+                        """)
+
+                        if iframe_check and iframe_check.get('total', 0) > 0:
+                            logger.info(f"   🖼️ Найдено iframe на странице: {iframe_check['total']} шт.")
+                            for iframe in iframe_check.get('iframes', []):
+                                logger.info(f"      iframe[{iframe['index']}]: id='{iframe['id']}' class='{iframe['className'][:30]}' "
+                                          f"pos=({iframe['x']}, {iframe['y']}) size={iframe['width']}x{iframe['height']}")
+                                logger.info(f"         src: {iframe['src'][:80] if iframe['src'] else '(no src)'}")
+
+                                # Проверяем попадает ли RAW координата в этот iframe
+                                if (iframe['x'] <= x_raw <= iframe['x'] + iframe['width'] and
+                                    iframe['y'] <= y_raw <= iframe['y'] + iframe['height']):
+                                    logger.info(f"         ⚠️ RAW координата ({x_raw}, {y_raw}) ПОПАДАЕТ в этот iframe!")
+                        else:
+                            logger.info(f"   🖼️ iframe НЕ найдены на странице")
+                    except Exception as iframe_err:
+                        logger.warning(f"   ⚠️ Ошибка проверки iframe: {iframe_err}")
+
+                    # ПРОВЕРКА ВСЕХ ЭЛЕМЕНТОВ ПОД КООРДИНАТАМИ (не только верхнего)
+                    try:
+                        elements_stack = self.driver.execute_script(f"""
+                            // elementsFromPoint возвращает ВСЕ элементы под точкой (от верхнего к нижнему)
+                            var elements = document.elementsFromPoint({x_raw}, {y_raw});
+                            var results = [];
+
+                            for (var i = 0; i < Math.min(elements.length, 10); i++) {{
+                                var elem = elements[i];
+                                var style = window.getComputedStyle(elem);
+                                var rect = elem.getBoundingClientRect();
+
+                                results.push({{
+                                    level: i,
+                                    tag: elem.tagName,
+                                    id: elem.id || '',
+                                    className: elem.className || '',
+                                    zIndex: style.zIndex,
+                                    pointerEvents: style.pointerEvents,
+                                    x: Math.round(rect.left),
+                                    y: Math.round(rect.top),
+                                    width: Math.round(rect.width),
+                                    height: Math.round(rect.height)
+                                }});
+                            }}
+
+                            return {{
+                                total: elements.length,
+                                elements: results
+                            }};
+                        """)
+
+                        if elements_stack and elements_stack.get('total', 0) > 0:
+                            logger.info(f"   📚 Стек элементов под ({x_raw}, {y_raw}): {elements_stack['total']} шт. (показываю первые 10)")
+                            for elem in elements_stack.get('elements', []):
+                                logger.info(f"      Z-level {elem['level']}: <{elem['tag']}> id='{elem['id']}' class='{elem['className'][:40]}' "
+                                          f"z-index={elem['zIndex']} pointer={elem['pointerEvents']} size={elem['width']}x{elem['height']}")
+                        else:
+                            logger.info(f"   📚 Стек элементов пуст")
+                    except Exception as stack_err:
+                        logger.warning(f"   ⚠️ Ошибка проверки стека элементов: {stack_err}")
+
+                    # ПОИСК CANVAS ЭЛЕМЕНТОВ (могут отрисовывать Turnstile поверх DOM)
+                    try:
+                        canvas_check = self.driver.execute_script("""
+                            var canvases = document.querySelectorAll('canvas');
+                            var results = [];
+
+                            for (var i = 0; i < Math.min(canvases.length, 5); i++) {
+                                var canvas = canvases[i];
+                                var rect = canvas.getBoundingClientRect();
+                                var style = window.getComputedStyle(canvas);
+
+                                results.push({
+                                    index: i,
+                                    id: canvas.id || '',
+                                    className: canvas.className || '',
+                                    x: Math.round(rect.left),
+                                    y: Math.round(rect.top),
+                                    width: Math.round(rect.width),
+                                    height: Math.round(rect.height),
+                                    zIndex: style.zIndex,
+                                    display: style.display,
+                                    visibility: style.visibility
+                                });
+                            }
+
+                            return {
+                                total: canvases.length,
+                                canvases: results
+                            };
+                        """)
+
+                        if canvas_check and canvas_check.get('total', 0) > 0:
+                            logger.info(f"   🎨 Найдено Canvas элементов: {canvas_check['total']} шт.")
+                            for canvas in canvas_check.get('canvases', []):
+                                logger.info(f"      canvas[{canvas['index']}]: id='{canvas['id']}' class='{canvas['className'][:30]}' "
+                                          f"pos=({canvas['x']}, {canvas['y']}) size={canvas['width']}x{canvas['height']} "
+                                          f"z={canvas['zIndex']} display={canvas['display']}")
+
+                                # Проверяем попадает ли RAW координата в этот canvas
+                                if (canvas['x'] <= x_raw <= canvas['x'] + canvas['width'] and
+                                    canvas['y'] <= y_raw <= canvas['y'] + canvas['height']):
+                                    logger.info(f"         ⚠️ RAW координата ({x_raw}, {y_raw}) ПОПАДАЕТ в этот canvas!")
+                        else:
+                            logger.info(f"   🎨 Canvas элементы НЕ найдены")
+                    except Exception as canvas_err:
+                        logger.warning(f"   ⚠️ Ошибка проверки Canvas: {canvas_err}")
+
+                    # ГЛОБАЛЬНЫЙ ПОИСК TURNSTILE (по всей странице с координатами)
+                    try:
+                        global_turnstile = self.driver.execute_script("""
+                            var turnstiles = document.querySelectorAll('[class*="turnstile" i], [id*="turnstile" i], [class*="cf-" i], [id*="cf-" i]');
+                            var results = [];
+
+                            for (var i = 0; i < Math.min(turnstiles.length, 10); i++) {
+                                var elem = turnstiles[i];
+                                var rect = elem.getBoundingClientRect();
+                                var style = window.getComputedStyle(elem);
+
+                                results.push({
+                                    index: i,
+                                    tag: elem.tagName,
+                                    id: elem.id || '',
+                                    className: elem.className || '',
+                                    x: Math.round(rect.left),
+                                    y: Math.round(rect.top),
+                                    width: Math.round(rect.width),
+                                    height: Math.round(rect.height),
+                                    zIndex: style.zIndex,
+                                    display: style.display,
+                                    visibility: style.visibility,
+                                    opacity: style.opacity
+                                });
+                            }
+
+                            return {
+                                total: turnstiles.length,
+                                elements: results
+                            };
+                        """)
+
+                        if global_turnstile and global_turnstile.get('total', 0) > 0:
+                            logger.info(f"   🔍 ГЛОБАЛЬНЫЙ поиск Turnstile: {global_turnstile['total']} элементов найдено!")
+                            for elem in global_turnstile.get('elements', []):
+                                logger.info(f"      [{elem['index']}] <{elem['tag']}> id='{elem['id']}' class='{elem['className'][:40]}'")
+                                logger.info(f"          pos=({elem['x']}, {elem['y']}) size={elem['width']}x{elem['height']} "
+                                          f"z={elem['zIndex']} display={elem['display']} opacity={elem['opacity']}")
+
+                                # Расстояние от RAW координаты до центра элемента
+                                center_x = elem['x'] + elem['width'] // 2
+                                center_y = elem['y'] + elem['height'] // 2
+                                dist = ((center_x - x_raw)**2 + (center_y - y_raw)**2)**0.5
+                                logger.info(f"          📏 Расстояние от RAW ({x_raw}, {y_raw}) до центра: {dist:.1f}px")
+                        else:
+                            logger.info(f"   🔍 ГЛОБАЛЬНЫЙ поиск: Turnstile элементы НЕ найдены на всей странице!")
+                    except Exception as global_err:
+                        logger.warning(f"   ⚠️ Ошибка глобального поиска Turnstile: {global_err}")
+
+                    for correction_offset, correction_name in correction_variants:
+                        test_x = x_raw + correction_offset
+                        test_y = y_raw
+
+                        # Проверяем элемент под этими координатами
+                        try:
+                            element_check = self.driver.execute_script(f"""
+                                var elem = document.elementFromPoint({test_x}, {test_y});
+                                if (!elem) return null;
+
+                                // РАСШИРЕННАЯ ИНФОРМАЦИЯ ДЛЯ ОТЛАДКИ
+                                var parents = [];
+                                var isTurnstile = false;
+                                var score = 0;
+                                var current = elem;
+
+                                // Поднимаемся по DOM дереву (максимум 10 уровней)
+                                for (var i = 0; i < 10 && current; i++) {{
+                                    var className = current.className || '';
+                                    var id = current.id || '';
+
+                                    // Собираем информацию о родителях
+                                    parents.push({{
+                                        level: i,
+                                        tag: current.tagName,
+                                        id: id,
+                                        className: className,
+                                        hasShadowRoot: !!current.shadowRoot
+                                    }});
+
+                                    // Проверяем класс/id на наличие Turnstile маркеров
+                                    if (className.includes('cf-turnstile') || className.includes('turnstile') ||
+                                        id.includes('cf-turnstile') || id.includes('turnstile')) {{
+                                        isTurnstile = true;
+                                        score = 100;  // Максимальный score для прямого попадания
+                                        break;
+                                    }}
+
+                                    // Частичные совпадения (меньший score)
+                                    if (className.includes('challenge') || className.includes('cloudflare') ||
+                                        id.includes('challenge') || id.includes('cloudflare')) {{
+                                        score = Math.max(score, 50);
+                                    }}
+
+                                    current = current.parentElement;
+                                }}
+
+                                return {{
+                                    tag: elem.tagName,
+                                    className: elem.className || '',
+                                    id: elem.id || '',
+                                    hasShadowRoot: !!elem.shadowRoot,
+                                    isTurnstile: isTurnstile,
+                                    score: score,
+                                    parents: parents
+                                }};
+                            """)
+
+                            # ЛОГИРУЕМ ВСЕ ВАРИАНТЫ (не только лучшие)
+                            if element_check:
+                                logger.info(f"      [{correction_name}] ({test_x}, {test_y}): score={element_check['score']}, <{element_check['tag']}> id='{element_check['id']}' class='{element_check['className'][:40]}' shadowRoot={element_check.get('hasShadowRoot', False)}")
+                                print(f"      [{correction_name}] score={element_check['score']}, <{element_check['tag']}> class='{element_check['className'][:30]}'")
+
+                                # Показываем родительскую цепочку для первого варианта (отладка)
+                                if correction_offset == 0 and element_check.get('parents'):
+                                    logger.info(f"      Родительская цепочка:")
+                                    for parent in element_check['parents'][:5]:  # Первые 5 уровней
+                                        logger.info(f"        L{parent['level']}: <{parent['tag']}> id='{parent['id']}' class='{parent['className'][:40]}' shadow={parent.get('hasShadowRoot', False)}")
+
+                            if element_check and element_check['score'] > best_score:
+                                best_score = element_check['score']
+                                best_x = test_x
+                                best_y = test_y
+                                best_correction_name = correction_name
+
+                        except Exception as e:
+                            logger.warning(f"Ошибка проверки варианта {correction_name}: {e}")
+                            print(f"      ⚠️ Ошибка [{correction_name}]: {e}")
+
+                    # Используем лучший вариант
+                    x, y = best_x, best_y
+
+                    logger.info(f"   ✅ Выбрана коррекция '{best_correction_name}': ({x_raw}, {y_raw}) → ({x}, {y}), score={best_score}")
+                    print(f"      ✅ Лучший вариант: {best_correction_name} → ({x}, {y}) (score: {best_score})")
 
                     # 3. Клик через Selenium
                     print(f"      🖱️  Выполнение клика...")
@@ -832,15 +1179,85 @@ Return ONLY JSON."""
             self.driver.switch_to.default_content()
             return False
 
+    async def _smooth_mouse_move(self, target_x: int, target_y: int, display: str, steps: int = 12) -> bool:
+        """
+        Плавное движение мыши к целевым координатам для имитации человеческого поведения
+
+        Args:
+            target_x, target_y: Целевые координаты
+            display: DISPLAY переменная (например, ':99')
+            steps: Количество промежуточных шагов (по умолчанию 12)
+
+        Returns:
+            bool: True если движение успешно
+        """
+        try:
+            import subprocess
+
+            # Получаем текущую позицию мыши
+            get_pos = subprocess.run(
+                ['xdotool', 'getmouselocation', '--shell'],
+                env={**os.environ, 'DISPLAY': display},
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+
+            current_x, current_y = 0, 0
+            if get_pos.returncode == 0:
+                # Парсим вывод: X=123\nY=456\n...
+                coords = {}
+                for line in get_pos.stdout.split('\n'):
+                    if '=' in line:
+                        key, val = line.split('=')
+                        coords[key] = int(val)
+                current_x = coords.get('X', 0)
+                current_y = coords.get('Y', 0)
+
+            logger.debug(f"Плавное движение: ({current_x}, {current_y}) → ({target_x}, {target_y})")
+
+            # Вычисляем приращения для плавного движения
+            dx = (target_x - current_x) / steps
+            dy = (target_y - current_y) / steps
+
+            # Плавное движение по шагам
+            for i in range(1, steps + 1):
+                x = int(current_x + dx * i)
+                y = int(current_y + dy * i)
+
+                subprocess.run(
+                    ['xdotool', 'mousemove', str(x), str(y)],
+                    env={**os.environ, 'DISPLAY': display},
+                    capture_output=True,
+                    timeout=5
+                )
+
+                # Небольшая задержка между шагами (40ms для реалистичности)
+                await asyncio.sleep(0.04)
+
+            # Финальная позиция (точно на цели)
+            result = subprocess.run(
+                ['xdotool', 'mousemove', str(target_x), str(target_y)],
+                env={**os.environ, 'DISPLAY': display},
+                capture_output=True,
+                timeout=5
+            )
+
+            return result.returncode == 0
+
+        except Exception as e:
+            logger.error(f"Ошибка плавного движения мыши: {e}")
+            return False
+
     async def _click_with_xdotool(self, x: int, y: int, max_verification_attempts: int = 3) -> bool:
         """
         Клик через xdotool с визуальной верификацией позиции курсора через Qwen3-VL
 
         Стратегия:
-        1. Перемещаем курсор в целевую позицию через xdotool
+        1. Перемещаем курсор в целевую позицию через xdotool (ПЛАВНО)
         2. Делаем скриншот с курсором через scrot
         3. Спрашиваем Qwen3-VL: "Курсор находится на чекбоксе?"
-        4. Если да → кликаем, если нет → получаем коррекцию и повторяем
+        4. Если да → кликаем РЕАЛИСТИЧНО, если нет → получаем коррекцию и повторяем
 
         Args:
             x, y: Целевые координаты для клика
@@ -865,22 +1282,41 @@ Return ONLY JSON."""
                     logger.info(f"   📍 Попытка xdotool {attempt}/{max_verification_attempts}: перемещение курсора на ({x}, {y})...")
                     print(f"      📍 Попытка {attempt}/{max_verification_attempts}: перемещение курсора...")
 
-                    # 1. Перемещаем курсор через xdotool
-                    result = subprocess.run(
-                        ['xdotool', 'mousemove', str(x), str(y)],
-                        env={**os.environ, 'DISPLAY': display},
-                        capture_output=True,
-                        text=True,
-                        timeout=5
-                    )
+                    # 1. Активация окна Chrome перед кликом (ИСПРАВЛЕНИЕ)
+                    try:
+                        find_result = subprocess.run(
+                            ['xdotool', 'search', '--class', 'chrome'],
+                            env={**os.environ, 'DISPLAY': display},
+                            capture_output=True,
+                            text=True,
+                            timeout=5
+                        )
 
-                    if result.returncode != 0:
-                        logger.warning(f"xdotool mousemove failed: {result.stderr}")
-                        print(f"      ⚠️ xdotool mousemove ошибка: {result.stderr[:100]}")
+                        if find_result.returncode == 0 and find_result.stdout.strip():
+                            window_id = find_result.stdout.strip().split('\n')[0]
+                            logger.debug(f"Найдено окно Chrome: {window_id}")
+
+                            subprocess.run(
+                                ['xdotool', 'windowactivate', '--sync', window_id],
+                                env={**os.environ, 'DISPLAY': display},
+                                capture_output=True,
+                                timeout=5
+                            )
+                            logger.debug("Окно Chrome активировано")
+                            await asyncio.sleep(0.3)
+                    except Exception as e:
+                        logger.debug(f"Ошибка активации окна: {e}")
+
+                    # 2. Плавное перемещение курсора (ИСПРАВЛЕНИЕ: вместо телепортации)
+                    smooth_success = await self._smooth_mouse_move(x, y, display, steps=12)
+
+                    if not smooth_success:
+                        logger.warning(f"Ошибка плавного движения мыши")
+                        print(f"      ⚠️ Ошибка плавного движения")
                         continue
 
-                    # Пауза для стабилизации курсора
-                    await asyncio.sleep(0.3)
+                    # 3. Увеличенная пауза для стабилизации (ИСПРАВЛЕНИЕ: было 0.3s, стало 1.5s)
+                    await asyncio.sleep(1.5)
 
                     # 2. Делаем скриншот с курсором
                     print(f"      📸 Скриншот с курсором...")
@@ -909,26 +1345,46 @@ Return ONLY JSON."""
                     print(f"      🔍 Курсор на чекбоксе: {cursor_on_checkbox} (уверенность: {confidence:.2f})")
 
                     if cursor_on_checkbox:
-                        # 4. Курсор правильно позиционирован → кликаем!
-                        logger.info(f"   ✅ Курсор правильно позиционирован, выполняем клик...")
-                        print(f"      ✅ Позиция подтверждена → клик!")
+                        # 4. Курсор правильно позиционирован → кликаем РЕАЛИСТИЧНО!
+                        logger.info(f"   ✅ Курсор правильно позиционирован, выполняем реалистичный клик...")
+                        print(f"      ✅ Позиция подтверждена → реалистичный клик!")
 
-                        # Клик через xdotool
-                        click_result = subprocess.run(
-                            ['xdotool', 'click', '1'],  # Левая кнопка мыши
+                        # ИСПРАВЛЕНИЕ: Реалистичный клик (mousedown → пауза → mouseup)
+                        # вместо мгновенного click
+                        mousedown_result = subprocess.run(
+                            ['xdotool', 'mousedown', '1'],  # Нажать кнопку мыши
                             env={**os.environ, 'DISPLAY': display},
                             capture_output=True,
                             text=True,
                             timeout=5
                         )
 
-                        if click_result.returncode == 0:
-                            logger.info(f"   🖱️ xdotool клик выполнен успешно!")
-                            print(f"      ✅ xdotool клик выполнен!")
-                            return True
+                        if mousedown_result.returncode == 0:
+                            # Держим кнопку нажатой 120-180ms (имитация человека)
+                            import random
+                            hold_duration = random.uniform(0.12, 0.18)
+                            await asyncio.sleep(hold_duration)
+
+                            # Отпускаем кнопку
+                            mouseup_result = subprocess.run(
+                                ['xdotool', 'mouseup', '1'],
+                                env={**os.environ, 'DISPLAY': display},
+                                capture_output=True,
+                                text=True,
+                                timeout=5
+                            )
+
+                            if mouseup_result.returncode == 0:
+                                logger.info(f"   🖱️ xdotool реалистичный клик выполнен (hold: {hold_duration:.2f}s)!")
+                                print(f"      ✅ xdotool реалистичный клик выполнен!")
+                                return True
+                            else:
+                                logger.warning(f"xdotool mouseup failed: {mouseup_result.stderr}")
+                                print(f"      ⚠️ xdotool mouseup ошибка: {mouseup_result.stderr[:100]}")
+                                return False
                         else:
-                            logger.warning(f"xdotool click failed: {click_result.stderr}")
-                            print(f"      ⚠️ xdotool click ошибка: {click_result.stderr[:100]}")
+                            logger.warning(f"xdotool mousedown failed: {mousedown_result.stderr}")
+                            print(f"      ⚠️ xdotool mousedown ошибка: {mousedown_result.stderr[:100]}")
                             return False
 
                     elif suggested_x is not None and suggested_y is not None:
