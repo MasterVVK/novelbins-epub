@@ -98,8 +98,13 @@ class CZBooksParser(BaseParser):
         if socks_proxy:
             print(f"   🌐 Прокси: {socks_proxy}")
 
-    def restart_driver(self):
-        """Перезапустить браузер для освобождения памяти"""
+    def restart_driver(self, force_kill_chrome=False):
+        """
+        Перезапустить браузер для освобождения памяти
+
+        Args:
+            force_kill_chrome: Принудительно убить все процессы Chrome через pkill
+        """
         print("🔄 Перезапуск браузера для освобождения памяти...")
 
         # Сохраняем cookies перед закрытием
@@ -114,11 +119,27 @@ class CZBooksParser(BaseParser):
         if self.driver:
             try:
                 self.driver.quit()
-                print("   ✅ Старый браузер закрыт")
+                print("   ✅ Старый браузер закрыт через driver.quit()")
             except Exception as e:
                 print(f"   ⚠️ Ошибка закрытия браузера: {e}")
+                force_kill_chrome = True  # Если quit() не сработал, форсируем убийство
             finally:
                 self.driver = None
+
+        # Если драйвер был мертв (Connection refused) или quit() не сработал
+        if force_kill_chrome:
+            import subprocess
+            print(f"   🔥 Принудительное убийство процессов Chrome...")
+            try:
+                # Убиваем все процессы chrome и chromedriver
+                subprocess.run(['pkill', '-f', 'chrome.*--remote-debugging-port'],
+                             stderr=subprocess.DEVNULL, timeout=5)
+                subprocess.run(['pkill', '-f', 'chromedriver'],
+                             stderr=subprocess.DEVNULL, timeout=5)
+                time.sleep(1)
+                print(f"   ✅ Процессы Chrome принудительно завершены")
+            except Exception as e:
+                print(f"   ⚠️ Ошибка при принудительном завершении: {e}")
 
         # Небольшая пауза перед новым запуском
         time.sleep(2)
@@ -778,6 +799,14 @@ class CZBooksParser(BaseParser):
         except Exception as e:
             print(f"   ❌ Ошибка загрузки страницы: {e}")
             self.consecutive_errors += 1
+
+            # Проверяем, умер ли браузер (Connection refused)
+            error_str = str(e)
+            if 'Connection refused' in error_str or 'NewConnectionError' in error_str:
+                print(f"   🔥 Браузер мертв (Connection refused) - принудительный перезапуск...")
+                self.restart_driver(force_kill_chrome=True)  # Убиваем зависшие процессы
+                print(f"   ✅ Браузер перезапущен с очисткой процессов")
+
             raise
 
     def get_book_info(self, book_url: str) -> Dict:
