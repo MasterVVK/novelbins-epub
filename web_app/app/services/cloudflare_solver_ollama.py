@@ -442,33 +442,63 @@ class CloudflareSolverOllama:
                     print(f"      🖱️  Выполнение клика...")
                     success = await self._click_at_coordinates(x, y)
 
-                    # 3.5. Если клик по координатам не сработал, пробуем найти чекбокс напрямую
-                    if not success:
-                        print(f"      🔄 Попытка найти чекбокс напрямую через селекторы...")
-                        success = await self._click_turnstile_directly()
+                    # 4. Проверка успеха после клика с учетом "Verifying..."
+                    logger.info(f"   ⏳ Ожидание обработки Cloudflare (30 секунд)...")
+                    print(f"      ⏳ Ожидание ответа Cloudflare (30 сек)...")
+                    await asyncio.sleep(30)
 
-                    if success:
-                        # 4. Проверка успеха после клика с учетом "Verifying..."
-                        logger.info(f"   ⏳ Ожидание обработки Cloudflare (30 секунд)...")
-                        print(f"      ⏳ Ожидание ответа Cloudflare (30 сек)...")
+                    # Проверяем состояние
+                    page_source = self.driver.page_source
+
+                    # Если Cloudflare обрабатывает запрос ("Verifying...") - ждем дольше
+                    if 'Verifying you are human' in page_source:
+                        logger.info(f"   🔄 Cloudflare обрабатывает запрос, ждем еще 30 секунд...")
+                        print(f"      🔄 Cloudflare обрабатывает... (еще 30 сек)")
                         await asyncio.sleep(30)
 
-                        # Проверяем состояние
-                        page_source = self.driver.page_source
+                    if self._check_success():
+                        logger.info(f"   ✅ Turnstile успешно пройден!")
+                        print(f"      ✅ Проверка пройдена!")
+                        return True
+                    else:
+                        logger.warning(f"   ⚠️ Turnstile все еще активен после клика по координатам")
+                        print(f"      ❌ Turnstile все еще активен после координат")
 
-                        # Если Cloudflare обрабатывает запрос ("Verifying...") - ждем дольше
-                        if 'Verifying you are human' in page_source:
-                            logger.info(f"   🔄 Cloudflare обрабатывает запрос, ждем еще 30 секунд...")
-                            print(f"      🔄 Cloudflare обрабатывает... (еще 30 сек)")
+                        # 4.5. FALLBACK: Пробуем найти iframe с Turnstile
+                        print(f"      🔄 Fallback: поиск iframe с Turnstile...")
+                        iframe_success = await self._find_and_click_turnstile_iframe()
+
+                        if iframe_success:
+                            # Проверяем результат после клика по iframe
+                            logger.info(f"   ⏳ Ожидание после клика по iframe (30 секунд)...")
+                            print(f"      ⏳ Ожидание результата клика по iframe...")
                             await asyncio.sleep(30)
 
-                        if self._check_success():
-                            logger.info(f"   ✅ Turnstile успешно пройден!")
-                            print(f"      ✅ Проверка пройдена!")
-                            return True
-                        else:
-                            logger.warning(f"   ⚠️ Turnstile все еще активен после клика")
-                            print(f"      ❌ Turnstile все еще активен")
+                            if self._check_success():
+                                logger.info(f"   ✅ Turnstile успешно пройден через iframe!")
+                                print(f"      ✅ Проверка пройдена через iframe!")
+                                return True
+                            else:
+                                logger.warning(f"   ⚠️ Turnstile все еще активен после клика по iframe")
+                                print(f"      ❌ iframe клик не помог")
+
+                        # 4.6. FALLBACK 2: Прямой поиск чекбокса через селекторы
+                        print(f"      🔄 Fallback 2: прямой поиск через селекторы...")
+                        direct_success = await self._click_turnstile_directly()
+
+                        if direct_success:
+                            # Проверяем результат после прямого клика
+                            logger.info(f"   ⏳ Ожидание после прямого клика (30 секунд)...")
+                            print(f"      ⏳ Ожидание результата прямого клика...")
+                            await asyncio.sleep(30)
+
+                            if self._check_success():
+                                logger.info(f"   ✅ Turnstile успешно пройден через прямой клик!")
+                                print(f"      ✅ Проверка пройдена через прямой клик!")
+                                return True
+                            else:
+                                logger.warning(f"   ⚠️ Turnstile все еще активен после прямого клика")
+                                print(f"      ❌ Прямой клик не помог")
                 else:
                     logger.warning(f"   ⚠️ Qwen3-VL не нашел Turnstile на странице")
                     print(f"      ❌ Чекбокс не найден")
@@ -1090,6 +1120,143 @@ Return ONLY JSON."""
         except Exception as e:
             logger.error(f"Ошибка при клике по координатам ({x}, {y}): {e}")
             print(f"      ❌ Ошибка клика: {e}")
+            import traceback
+            logger.debug(traceback.format_exc())
+            return False
+
+    async def _find_and_click_turnstile_iframe(self) -> bool:
+        """
+        Поиск iframe с Turnstile и клик по его центру через xdotool
+
+        Cloudflare часто рендерит Turnstile внутри iframe, который недоступен
+        для обычных DOM-запросов. Этот метод ищет iframe и кликает по его центру,
+        что должно активировать Turnstile чекбокс.
+
+        Returns:
+            bool: True если iframe найден и клик выполнен
+        """
+        try:
+            logger.info(f"   🖼️ Поиск iframe с Cloudflare Turnstile...")
+            print(f"      🖼️ Поиск iframe с Turnstile...")
+
+            # Ищем iframe через JavaScript (включая Shadow DOM)
+            iframe_data = self.driver.execute_script("""
+                function findIframes() {
+                    var results = [];
+
+                    // 1. Обычные iframe на странице
+                    var iframes = document.querySelectorAll('iframe');
+                    for (var i = 0; i < iframes.length; i++) {
+                        var iframe = iframes[i];
+                        var rect = iframe.getBoundingClientRect();
+                        var src = iframe.src || '';
+                        var title = iframe.title || '';
+
+                        // Проверяем признаки Turnstile/Cloudflare
+                        if (src.includes('challenges.cloudflare') ||
+                            src.includes('turnstile') ||
+                            title.toLowerCase().includes('cloudflare') ||
+                            title.toLowerCase().includes('turnstile') ||
+                            iframe.id.includes('cf-') ||
+                            rect.width > 0 && rect.height > 0) {  // Любой видимый iframe
+
+                            results.push({
+                                src: src,
+                                title: title,
+                                id: iframe.id || '',
+                                x: Math.round(rect.left + window.scrollX),
+                                y: Math.round(rect.top + window.scrollY),
+                                width: Math.round(rect.width),
+                                height: Math.round(rect.height),
+                                visible: rect.width > 0 && rect.height > 0,
+                                isTurnstile: src.includes('turnstile') || src.includes('challenges.cloudflare')
+                            });
+                        }
+                    }
+
+                    // 2. Поиск в Shadow DOM (если есть)
+                    function searchShadowDOM(root) {
+                        var elements = root.querySelectorAll('*');
+                        for (var i = 0; i < elements.length; i++) {
+                            if (elements[i].shadowRoot) {
+                                var shadowIframes = elements[i].shadowRoot.querySelectorAll('iframe');
+                                for (var j = 0; j < shadowIframes.length; j++) {
+                                    var iframe = shadowIframes[j];
+                                    var rect = iframe.getBoundingClientRect();
+                                    results.push({
+                                        src: iframe.src || '',
+                                        title: iframe.title || 'shadow-dom',
+                                        id: iframe.id || '',
+                                        x: Math.round(rect.left + window.scrollX),
+                                        y: Math.round(rect.top + window.scrollY),
+                                        width: Math.round(rect.width),
+                                        height: Math.round(rect.height),
+                                        visible: rect.width > 0 && rect.height > 0,
+                                        isTurnstile: false
+                                    });
+                                }
+                                searchShadowDOM(elements[i].shadowRoot);
+                            }
+                        }
+                    }
+
+                    searchShadowDOM(document);
+
+                    return results;
+                }
+
+                return findIframes();
+            """)
+
+            if not iframe_data:
+                logger.warning(f"   ❌ iframe с Turnstile НЕ найдены")
+                print(f"      ❌ iframe не найдены")
+                return False
+
+            logger.info(f"   ✅ Найдено {len(iframe_data)} iframe на странице")
+            print(f"      ✅ Найдено {len(iframe_data)} iframe")
+
+            # Приоритизируем iframe
+            # 1. Сначала ищем явные Turnstile iframe
+            # 2. Затем видимые iframe
+            turnstile_iframes = [f for f in iframe_data if f.get('isTurnstile', False)]
+            visible_iframes = [f for f in iframe_data if f.get('visible', False)]
+
+            target_iframe = None
+            if turnstile_iframes:
+                target_iframe = turnstile_iframes[0]
+                logger.info(f"   🎯 Выбран явный Turnstile iframe: {target_iframe['src'][:60]}")
+            elif visible_iframes:
+                target_iframe = visible_iframes[0]
+                logger.info(f"   🎯 Выбран видимый iframe: {target_iframe['src'][:60] if target_iframe['src'] else '(no src)'}")
+            else:
+                logger.warning(f"   ❌ Не найдено подходящих iframe")
+                return False
+
+            # Вычисляем центр iframe
+            center_x = target_iframe['x'] + target_iframe['width'] // 2
+            center_y = target_iframe['y'] + target_iframe['height'] // 2
+
+            logger.info(f"   📐 iframe координаты: pos=({target_iframe['x']}, {target_iframe['y']}) "
+                       f"size={target_iframe['width']}x{target_iframe['height']}")
+            logger.info(f"   🎯 Центр iframe: ({center_x}, {center_y})")
+            print(f"      🎯 Клик по центру iframe: ({center_x}, {center_y})")
+
+            # Кликаем по центру iframe через xdotool
+            success = await self._click_with_xdotool(center_x, center_y)
+
+            if success:
+                logger.info(f"   ✅ Клик по iframe выполнен успешно!")
+                print(f"      ✅ Клик по iframe успешен!")
+            else:
+                logger.warning(f"   ❌ Клик по iframe не удался")
+                print(f"      ❌ Клик по iframe не удался")
+
+            return success
+
+        except Exception as e:
+            logger.error(f"   ❌ Ошибка при поиске iframe: {e}")
+            print(f"      ❌ Ошибка поиска iframe: {e}")
             import traceback
             logger.debug(traceback.format_exc())
             return False
