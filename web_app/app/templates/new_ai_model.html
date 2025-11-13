@@ -22,6 +22,7 @@
                             <option value="gemini">Google Gemini</option>
                             <option value="openai">OpenAI</option>
                             <option value="anthropic">Anthropic (Claude)</option>
+                            <option value="openrouter">OpenRouter (400+ моделей)</option>
                             <option value="ollama">Ollama (Локальные модели)</option>
                             <option value="custom">Другой провайдер</option>
                         </select>
@@ -264,6 +265,17 @@ function updateProviderFields() {
             apiEndpoint.value = 'https://api.anthropic.com/v1';
             apiKeySection.style.display = 'block';
             setModelPreset('claude-3-5-sonnet-20241022', 'Claude 3.5 Sonnet');
+            break;
+
+        case 'openrouter':
+            apiEndpoint.value = 'https://openrouter.ai/api/v1';
+            apiKeySection.style.display = 'block';
+            setModelPreset('openai/gpt-4o-mini', 'GPT-4o Mini (OpenRouter)');
+            document.getElementById('description').value = 'Доступ к 400+ AI моделям через единый API';
+            // OpenRouter поддерживает множество моделей с разной стоимостью
+            document.getElementById('speed_rating').value = '3';
+            document.getElementById('quality_rating').value = '4';
+            document.getElementById('cost_rating').value = '3';
             break;
 
         case 'ollama':
