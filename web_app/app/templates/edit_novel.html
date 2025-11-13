@@ -369,31 +369,49 @@
                     
                     <hr>
                     <h6 class="mb-3">Настройки редактирования</h6>
-                    
+
                     <div class="row">
                         <div class="col-md-6">
                             <div class="mb-3">
                                 <label for="editing_quality_mode" class="form-label">Режим качества редактирования</label>
                                 <select class="form-select" id="editing_quality_mode" name="editing_quality_mode">
+                                    <option value="custom" {{ 'selected' if novel.config and novel.config.editing_quality_mode == 'custom' else '' }}>
+                                        🎯 Ручная настройка
+                                    </option>
                                     <option value="fast" {{ 'selected' if not novel.config or novel.config.editing_quality_mode == 'fast' else '' }}>
-                                        Быстро (температура: 0.5)
+                                        ⚡ Быстро (температура: 0.5)
                                     </option>
                                     <option value="balanced" {{ 'selected' if novel.config and novel.config.editing_quality_mode == 'balanced' else '' }}>
-                                        Баланс (температура: 0.7)
+                                        ⚖️ Баланс (температура: 0.7)
                                     </option>
                                     <option value="quality" {{ 'selected' if novel.config and novel.config.editing_quality_mode == 'quality' else '' }}>
-                                        Качество (температура: 0.9)
+                                        💎 Качество (температура: 0.9)
                                     </option>
                                 </select>
-                                <div class="form-text">Автоматически устанавливает температуру редактирования</div>
+                                <div class="form-text">Выберите режим или укажите температуру вручную</div>
                             </div>
                         </div>
                         <div class="col-md-6">
                             <div class="mb-3">
-                                <label for="editing_temperature_display" class="form-label">Текущая температура редактирования</label>
-                                <input type="text" class="form-control" id="editing_temperature_display" readonly 
-                                       value="{{ novel.config.editing_temperature if novel.config and novel.config.editing_temperature else '0.7' }}">
-                                <div class="form-text">Устанавливается автоматически в зависимости от режима качества</div>
+                                <label for="editing_temperature" class="form-label">
+                                    Температура редактирования
+                                    <i class="bi bi-info-circle" data-bs-toggle="tooltip"
+                                       title="0.0-1.0. Ниже = точнее, выше = креативнее"></i>
+                                </label>
+                                <input type="number" class="form-control" id="editing_temperature"
+                                       name="editing_temperature"
+                                       min="0" max="1" step="0.1"
+                                       value="{{ novel.config.editing_temperature if novel.config and novel.config.editing_temperature else 0.7 }}"
+                                       {{ 'disabled style="background-color: #e9ecef;"' if not novel.config or novel.config.editing_quality_mode != 'custom' else '' }}>
+                                <div class="form-text">
+                                    <span id="temperature-hint">
+                                        {% if novel.config and novel.config.editing_quality_mode == 'custom' %}
+                                            Доступно только при режиме "Ручная настройка"
+                                        {% else %}
+                                            Включите "Ручная настройка" для изменения
+                                        {% endif %}
+                                    </span>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -448,20 +466,47 @@ document.getElementById('source_type').addEventListener('change', function() {
     }
 });
 
-// Автоматическое обновление температуры редактирования при выборе режима качества
-document.getElementById('editing_quality_mode').addEventListener('change', function() {
-    const mode = this.value;
-    const temperatureDisplay = document.getElementById('editing_temperature_display');
-    
-    const temperatureMap = {
-        'fast': 0.5,
-        'balanced': 0.7,
-        'quality': 0.9
-    };
-    
-    if (temperatureMap[mode]) {
-        temperatureDisplay.value = temperatureMap[mode];
+// Управление температурой редактирования в зависимости от режима качества
+const editingQualityMode = document.getElementById('editing_quality_mode');
+const editingTemperature = document.getElementById('editing_temperature');
+const temperatureHint = document.getElementById('temperature-hint');
+
+const temperatureMap = {
+    'fast': 0.5,
+    'balanced': 0.7,
+    'quality': 0.9
+};
+
+function updateTemperatureField() {
+    const mode = editingQualityMode.value;
+
+    if (mode === 'custom') {
+        // Включаем ручное поле
+        editingTemperature.disabled = false;
+        editingTemperature.style.backgroundColor = '';
+        temperatureHint.textContent = 'Укажите значение от 0.0 до 1.0';
+    } else {
+        // Отключаем ручное поле и устанавливаем значение по режиму
+        editingTemperature.disabled = true;
+        editingTemperature.style.backgroundColor = '#e9ecef';
+        if (temperatureMap[mode]) {
+            editingTemperature.value = temperatureMap[mode];
+        }
+        temperatureHint.textContent = 'Включите "Ручная настройка" для изменения';
     }
+}
+
+editingQualityMode.addEventListener('change', updateTemperatureField);
+
+// Инициализация при загрузке страницы
+document.addEventListener('DOMContentLoaded', function() {
+    updateTemperatureField();
+
+    // Инициализация tooltips Bootstrap
+    const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+    tooltipTriggerList.map(function (tooltipTriggerEl) {
+        return new bootstrap.Tooltip(tooltipTriggerEl);
+    });
 });
 
 // Обработка чекбокса "все главы"

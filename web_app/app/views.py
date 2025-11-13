@@ -371,16 +371,31 @@ def edit_novel(novel_id):
         request_delay = request.form.get('request_delay')
         translation_model = request.form.get('translation_model')
         translation_temperature = request.form.get('translation_temperature')
-        editing_quality_mode = request.form.get('editing_quality_mode')
+        editing_quality_mode = request.form.get('editing_quality_mode', 'balanced')
         editing_threads = request.form.get('editing_threads')
-        
-        # Вычисляем температуру редактирования на основе режима качества
-        editing_temperature_map = {
-            'fast': 0.5,
-            'balanced': 0.7,
-            'quality': 0.9
-        }
-        editing_temperature = editing_temperature_map.get(editing_quality_mode, 0.7)
+
+        # Определяем температуру редактирования
+        if editing_quality_mode == 'custom':
+            # Берем значение из ручного поля
+            editing_temperature_str = request.form.get('editing_temperature')
+            try:
+                editing_temperature = float(editing_temperature_str) if editing_temperature_str else 0.7
+                # Валидация диапазона
+                editing_temperature = max(0.0, min(1.0, editing_temperature))
+                print(f"🎯 Ручная настройка температуры: {editing_temperature}")
+            except (ValueError, TypeError):
+                editing_temperature = 0.7
+                flash('Некорректное значение температуры, установлено 0.7', 'warning')
+                print(f"⚠️  Ошибка парсинга температуры, установлено значение по умолчанию: 0.7")
+        else:
+            # Вычисляем на основе режима качества
+            editing_temperature_map = {
+                'fast': 0.5,
+                'balanced': 0.7,
+                'quality': 0.9
+            }
+            editing_temperature = editing_temperature_map.get(editing_quality_mode, 0.7)
+            print(f"⚙️  Режим '{editing_quality_mode}': температура {editing_temperature}")
         
         # Отладочная информация
         print(f"🔍 Данные формы для '{novel.title}':")
@@ -388,7 +403,9 @@ def edit_novel(novel_id):
         print(f"   request_delay: {request_delay} (тип: {type(request_delay)})")
         print(f"   translation_model: {translation_model}")
         print(f"   translation_temperature: {translation_temperature}")
-        print(f"   editing_quality_mode: {editing_quality_mode} -> editing_temperature: {editing_temperature}")
+        print(f"   editing_quality_mode: {editing_quality_mode}")
+        print(f"   editing_temperature: {editing_temperature} ({'custom' if editing_quality_mode == 'custom' else 'auto'})")
+        print(f"   editing_threads: {editing_threads}")
         print(f"   Старая конфигурация: {novel.config}")
         
         # Обрабатываем опцию "все главы"
