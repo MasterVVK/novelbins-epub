@@ -112,7 +112,7 @@
                                 <div class="mb-3">
                                     <label for="max_output_tokens" class="form-label">Макс. выходных токенов</label>
                                     <input type="number" class="form-control" id="max_output_tokens" name="max_output_tokens"
-                                           value="8000" min="100" max="256000">
+                                           value="8000" min="100" max="2000000">
                                     <div class="form-text">Максимальный размер ответа</div>
                                 </div>
                             </div>
@@ -270,6 +270,7 @@ function updateProviderFields() {
         case 'openrouter':
             apiEndpoint.value = 'https://openrouter.ai/api/v1';
             apiKeySection.style.display = 'block';
+            fetchModelsBtn.style.display = 'block';  // Показываем кнопку для загрузки моделей
             setModelPreset('openai/gpt-4o-mini', 'GPT-4o Mini (OpenRouter)');
             document.getElementById('description').value = 'Доступ к 400+ AI моделям через единый API';
             // OpenRouter поддерживает множество моделей с разной стоимостью
@@ -312,6 +313,7 @@ function toggleApiKey() {
 }
 
 async function fetchAvailableModels() {
+    const provider = document.getElementById('provider').value;
     const endpoint = document.getElementById('api_endpoint').value;
     const availableModelsDiv = document.getElementById('available-models');
 
@@ -320,36 +322,226 @@ async function fetchAvailableModels() {
         return;
     }
 
-    availableModelsDiv.innerHTML = '<div class="alert alert-info">Загрузка списка моделей...</div>';
+    // Для OpenRouter показываем подсказку про API ключ
+    if (provider === 'openrouter' && !document.getElementById('api_key').value) {
+        availableModelsDiv.innerHTML = `
+            <div class="alert alert-info">
+                <i class="bi bi-info-circle"></i> Загрузка списка моделей...
+                <br><small>Совет: добавьте API ключ для получения персонализированных цен</small>
+            </div>
+        `;
+    } else {
+        availableModelsDiv.innerHTML = '<div class="alert alert-info">Загрузка списка моделей...</div>';
+    }
 
     try {
-        const response = await fetch('/api/ollama/models', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({endpoint: endpoint})
-        });
+        let response;
 
-        const models = await response.json();
+        if (provider === 'openrouter') {
+            // Для OpenRouter используем API ключ для персонализированных цен
+            const apiKey = document.getElementById('api_key').value;
+            response = await fetch('/api/openrouter/models', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({api_key: apiKey})
+            });
+        } else if (provider === 'ollama') {
+            response = await fetch('/api/ollama/models', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({endpoint: endpoint})
+            });
+        } else {
+            availableModelsDiv.innerHTML = '<div class="alert alert-warning">Получение списка моделей не поддерживается для этого провайдера</div>';
+            return;
+        }
+
+        const responseData = await response.json();
+
+        // Проверка на ошибку в ответе
+        if (response.status !== 200 || responseData.error) {
+            const errorMsg = responseData.error || 'Неизвестная ошибка';
+            availableModelsDiv.innerHTML = `<div class="alert alert-danger">Ошибка получения моделей: ${errorMsg}</div>`;
+            return;
+        }
+
+        // Обработка разных форматов ответа
+        let models, metadata;
+        if (provider === 'openrouter' && responseData.models) {
+            // OpenRouter возвращает объект с models и metadata
+            models = responseData.models;
+            metadata = responseData.metadata;
+        } else {
+            // Ollama возвращает массив моделей
+            models = responseData;
+            metadata = null;
+        }
 
         if (models.length > 0) {
-            let html = '<div class="alert alert-success">Доступные модели:</div><div class="list-group">';
-            for (const model of models) {
-                // Сохраняем информацию о лимитах токенов в data атрибутах
-                const maxInput = model.recommended_max_input || 8192;
-                const maxOutput = model.recommended_max_output || 2048;
+            // Сохраняем модели глобально для фильтрации
+            window.allModels = models;
+            window.currentProvider = provider;
+
+            let html = `
+                <div class="alert alert-success">
+                    Доступные модели: <strong>${models.length}</strong>`;
+
+            // Показываем информацию о персонализированных ценах для OpenRouter
+            if (metadata && metadata.personalized) {
+                if (metadata.key_source === 'env') {
+                    html += `<br><small>🔑 Используются персонализированные цены (ключ из .env)</small>`;
+                } else if (metadata.key_source === 'user') {
+                    html += `<br><small>🔑 Используются персонализированные цены (ключ предоставлен)</small>`;
+                }
+            } else if (provider === 'openrouter') {
+                html += `<br><small>💡 Показаны общедоступные цены. Добавьте API ключ для персональных тарифов.</small>`;
+            }
+
+            html += `</div>`;
+
+            if (provider === 'openrouter') {
+                // Добавляем панель фильтров для OpenRouter
                 html += `
-                    <a href="#" class="list-group-item list-group-item-action"
-                       onclick="selectOllamaModel('${model.name}', '${model.name}', ${maxInput}, ${maxOutput}); return false;">
-                        <strong>${model.name}</strong>
-                        ${model.size ? `<span class="badge bg-secondary ms-2">${(model.size / 1024 / 1024 / 1024).toFixed(1)}GB</span>` : ''}
-                        ${model.recommended_max_input ? `<span class="badge bg-info ms-1">${Math.round(model.recommended_max_input/1000)}k токенов</span>` : ''}
-                    </a>
+                    <div class="card mb-3">
+                        <div class="card-body">
+                            <div class="row mb-2">
+                                <div class="col-md-6">
+                                    <input type="text"
+                                           class="form-control"
+                                           id="modelSearch"
+                                           placeholder="🔍 Поиск по названию или ID модели..."
+                                           onkeyup="filterModels()">
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="btn-group w-100" role="group">
+                                        <input type="checkbox" class="btn-check" id="showFreeOnly" onchange="filterModels()">
+                                        <label class="btn btn-outline-success" for="showFreeOnly">
+                                            🆓 Только бесплатные
+                                        </label>
+
+                                        <button type="button" class="btn btn-outline-primary dropdown-toggle"
+                                                data-bs-toggle="dropdown" aria-expanded="false">
+                                            🏢 Фильтр по провайдеру
+                                        </button>
+                                        <ul class="dropdown-menu" id="providerFilter">
+                                            <li><a class="dropdown-item active" href="#" onclick="filterByProvider('all'); return false;">Все провайдеры</a></li>
+                                            <li><hr class="dropdown-divider"></li>
+                                            <li><a class="dropdown-item" href="#" onclick="filterByProvider('openai'); return false;">OpenAI</a></li>
+                                            <li><a class="dropdown-item" href="#" onclick="filterByProvider('anthropic'); return false;">Anthropic</a></li>
+                                            <li><a class="dropdown-item" href="#" onclick="filterByProvider('google'); return false;">Google</a></li>
+                                            <li><a class="dropdown-item" href="#" onclick="filterByProvider('meta'); return false;">Meta</a></li>
+                                            <li><a class="dropdown-item" href="#" onclick="filterByProvider('mistral'); return false;">Mistral</a></li>
+                                            <li><a class="dropdown-item" href="#" onclick="filterByProvider('qwen'); return false;">Qwen</a></li>
+                                            <li><a class="dropdown-item" href="#" onclick="filterByProvider('deepseek'); return false;">DeepSeek</a></li>
+                                            <li><a class="dropdown-item" href="#" onclick="filterByProvider('other'); return false;">Другие</a></li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-12">
+                                    <small class="text-muted">
+                                        Показано: <span id="visibleCount">${models.length}</span> из ${models.length} моделей
+                                    </small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 `;
+            }
+
+            html += '<div class="list-group" id="modelsList">';
+
+            if (provider === 'openrouter') {
+                // Отображение моделей OpenRouter
+                for (const model of models) {
+                    const categories = model.categories ? model.categories.join(', ') : '';
+                    const categoriesArray = model.categories || [];
+
+                    // Определяем основного провайдера для фильтрации
+                    let mainProvider = 'other';
+                    if (categoriesArray.length > 0) {
+                        const firstCategory = categoriesArray[0].toLowerCase();
+                        if (firstCategory.includes('openai')) mainProvider = 'openai';
+                        else if (firstCategory.includes('anthropic')) mainProvider = 'anthropic';
+                        else if (firstCategory.includes('google')) mainProvider = 'google';
+                        else if (firstCategory.includes('meta')) mainProvider = 'meta';
+                        else if (firstCategory.includes('mistral')) mainProvider = 'mistral';
+                        else if (firstCategory.includes('alibaba') || firstCategory.includes('qwen')) mainProvider = 'qwen';
+                        else if (firstCategory.includes('deepseek')) mainProvider = 'deepseek';
+                        else mainProvider = 'other';
+                    }
+
+                    const recommendations = model.recommended_for ? model.recommended_for.map(r => {
+                        const labels = {
+                            'long_context': '📜 Длинный контекст',
+                            'vision': '👁️ Мультимодальная',
+                            'free_tier': '🆓 Бесплатная',
+                            'cost_effective': '💰 Экономичная'
+                        };
+                        return labels[r] || r;
+                    }).join(' ') : '';
+
+                    const isFree = model.prompt_price === 0 && model.completion_price === 0;
+
+                    // Экранируем кавычки для безопасной передачи в onclick
+                    const safeModelId = (model.id || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+                    const safeModelName = (model.name || model.id).replace(/'/g, "\\'").replace(/"/g, '&quot;');
+
+                    const modelItem = `
+                        <a href="#" class="list-group-item list-group-item-action model-item"
+                           data-model-id="${model.id.toLowerCase()}"
+                           data-model-name="${(model.name || model.id).toLowerCase()}"
+                           data-is-free="${isFree}"
+                           data-provider="${mainProvider}"
+                           data-context-length="${model.context_length}"
+                           data-max-output="${model.max_output_tokens}"
+                           onclick="selectOpenRouterModel('${safeModelId}', '${safeModelName}', ${model.context_length}, ${model.max_output_tokens}); return false;">
+                            <div class="d-flex justify-content-between align-items-start">
+                                <div>
+                                    <strong>${model.name || model.id}</strong>
+                                    ${categories ? `<small class="text-muted ms-2">[${categories}]</small>` : ''}
+                                    ${isFree ? '<span class="badge bg-success ms-2">🆓 Бесплатная</span>' : ''}
+                                    <br>
+                                    <small class="text-muted">${model.description || ''}</small>
+                                    ${recommendations ? `<br><small>${recommendations}</small>` : ''}
+                                </div>
+                                <div class="text-end">
+                                    <span class="badge bg-primary">${Math.round(model.context_length/1000)}k контекст</span>
+                                    <br>
+                                    <small class="text-muted">${model.pricing}</small>
+                                </div>
+                            </div>
+                        </a>
+                    `;
+                    html += modelItem;
+                }
+            } else if (provider === 'ollama') {
+                // Отображение моделей Ollama (существующий код)
+                for (const model of models) {
+                    // Сохраняем информацию о лимитах токенов в data атрибутах
+                    const maxInput = model.recommended_max_input || 8192;
+                    const maxOutput = model.recommended_max_output || 2048;
+                    html += `
+                        <a href="#" class="list-group-item list-group-item-action"
+                           onclick="selectOllamaModel('${model.name}', '${model.name}', ${maxInput}, ${maxOutput}); return false;">
+                            <strong>${model.name}</strong>
+                            ${model.size ? `<span class="badge bg-secondary ms-2">${(model.size / 1024 / 1024 / 1024).toFixed(1)}GB</span>` : ''}
+                            ${model.recommended_max_input ? `<span class="badge bg-info ms-1">${Math.round(model.recommended_max_input/1000)}k токенов</span>` : ''}
+                        </a>
+                    `;
+                }
             }
             html += '</div>';
             availableModelsDiv.innerHTML = html;
         } else {
-            availableModelsDiv.innerHTML = '<div class="alert alert-warning">Модели не найдены. Проверьте, что Ollama запущен.</div>';
+            if (provider === 'ollama') {
+                availableModelsDiv.innerHTML = '<div class="alert alert-warning">Модели не найдены. Проверьте, что Ollama запущен.</div>';
+            } else if (provider === 'openrouter') {
+                availableModelsDiv.innerHTML = '<div class="alert alert-warning">Не удалось получить список моделей OpenRouter. Проверьте подключение к интернету.</div>';
+            } else {
+                availableModelsDiv.innerHTML = '<div class="alert alert-warning">Модели не найдены.</div>';
+            }
         }
     } catch (error) {
         availableModelsDiv.innerHTML = `<div class="alert alert-danger">Ошибка: ${error.message}</div>`;
@@ -360,6 +552,60 @@ function selectModel(modelId, modelName) {
     document.getElementById('model_id').value = modelId;
     document.getElementById('name').value = modelName;
     document.getElementById('available-models').innerHTML = '';
+}
+
+function selectOpenRouterModel(modelId, modelName, contextLength, maxOutput) {
+    // Устанавливаем базовые значения
+    document.getElementById('model_id').value = modelId;
+    document.getElementById('name').value = modelName || modelId;
+    document.getElementById('available-models').innerHTML = '';
+
+    // Устанавливаем лимиты токенов
+    document.getElementById('max_input_tokens').value = contextLength || 128000;
+    document.getElementById('max_output_tokens').value = maxOutput || 4096;
+
+    // Показываем информацию об успешном выборе
+    const infoDiv = document.createElement('div');
+    infoDiv.className = 'alert alert-success mt-2';
+    infoDiv.innerHTML = `
+        <i class="bi bi-check-circle"></i> Модель выбрана: <strong>${modelName || modelId}</strong>
+        <ul class="mb-0 mt-2">
+            <li>Контекст: <strong>${contextLength} токенов</strong></li>
+            <li>Максимальный вывод: <strong>${maxOutput} токенов</strong></li>
+        </ul>
+    `;
+    document.getElementById('available-models').appendChild(infoDiv);
+
+    // Устанавливаем рекомендуемые настройки для популярных моделей
+    if (modelId.includes('gpt-4o-mini')) {
+        document.getElementById('speed_rating').value = '5';
+        document.getElementById('quality_rating').value = '3';
+        document.getElementById('cost_rating').value = '4';
+    } else if (modelId.includes('gpt-4o')) {
+        document.getElementById('speed_rating').value = '3';
+        document.getElementById('quality_rating').value = '5';
+        document.getElementById('cost_rating').value = '2';
+    } else if (modelId.includes('claude')) {
+        document.getElementById('speed_rating').value = '3';
+        document.getElementById('quality_rating').value = '5';
+        document.getElementById('cost_rating').value = '2';
+    } else if (modelId.includes('gemini-2.5-flash')) {
+        document.getElementById('speed_rating').value = '5';
+        document.getElementById('quality_rating').value = '3';
+        document.getElementById('cost_rating').value = '4';
+    } else if (modelId.includes('gemini-2.5-pro')) {
+        document.getElementById('speed_rating').value = '3';
+        document.getElementById('quality_rating').value = '4';
+        document.getElementById('cost_rating').value = '3';
+    } else if (modelId.includes('llama')) {
+        document.getElementById('speed_rating').value = '2';
+        document.getElementById('quality_rating').value = '4';
+        document.getElementById('cost_rating').value = '5';
+    } else if (modelId.includes('qwen')) {
+        document.getElementById('speed_rating').value = '2';
+        document.getElementById('quality_rating').value = '4';
+        document.getElementById('cost_rating').value = '4';
+    }
 }
 
 async function selectOllamaModel(modelId, modelName, maxInput, maxOutput) {
@@ -493,5 +739,121 @@ document.getElementById('modelForm').addEventListener('submit', async function(e
         alert('Ошибка: ' + error.message);
     }
 });
+
+// Глобальная переменная для текущего фильтра провайдера
+window.currentProviderFilter = 'all';
+
+// Функция фильтрации моделей OpenRouter
+function filterModels() {
+    if (window.currentProvider !== 'openrouter') return;
+
+    const searchTerm = document.getElementById('modelSearch').value.toLowerCase();
+    const showFreeOnly = document.getElementById('showFreeOnly').checked;
+    const modelItems = document.querySelectorAll('.model-item');
+
+    let visibleCount = 0;
+
+    modelItems.forEach(item => {
+        let show = true;
+
+        // Фильтр по поисковому запросу
+        if (searchTerm) {
+            const modelId = item.getAttribute('data-model-id') || '';
+            const modelName = item.getAttribute('data-model-name') || '';
+            if (!modelId.includes(searchTerm) && !modelName.includes(searchTerm)) {
+                show = false;
+            }
+        }
+
+        // Фильтр только бесплатные
+        if (showFreeOnly && item.getAttribute('data-is-free') !== 'true') {
+            show = false;
+        }
+
+        // Фильтр по провайдеру
+        if (window.currentProviderFilter !== 'all') {
+            const itemProvider = item.getAttribute('data-provider') || 'other';
+
+            if (window.currentProviderFilter === 'other') {
+                // Для "Другие" показываем все, что не в основных провайдерах
+                const mainProviders = ['openai', 'anthropic', 'google', 'meta', 'mistral', 'qwen', 'deepseek'];
+                const hasMainProvider = mainProviders.some(p => itemProvider.includes(p));
+                if (hasMainProvider) {
+                    show = false;
+                }
+            } else {
+                // Для конкретного провайдера
+                if (!itemProvider.includes(window.currentProviderFilter)) {
+                    show = false;
+                }
+            }
+        }
+
+        // Показываем или скрываем элемент
+        if (show) {
+            item.style.display = '';
+            visibleCount++;
+        } else {
+            item.style.display = 'none';
+        }
+    });
+
+    // Обновляем счетчик
+    const visibleCountEl = document.getElementById('visibleCount');
+    if (visibleCountEl) {
+        visibleCountEl.textContent = visibleCount;
+    }
+}
+
+// Функция фильтрации по провайдеру
+function filterByProvider(provider) {
+    window.currentProviderFilter = provider;
+
+    // Обновляем активный пункт в dropdown
+    const dropdownItems = document.querySelectorAll('#providerFilter .dropdown-item');
+    dropdownItems.forEach(item => {
+        item.classList.remove('active');
+        if (item.getAttribute('onclick').includes(`'${provider}'`)) {
+            item.classList.add('active');
+        }
+    });
+
+    // Применяем фильтр
+    filterModels();
+}
+
+// Функция выбора модели OpenRouter
+function selectOpenRouterModel(modelId, modelName, contextLength, maxOutputTokens) {
+    console.log('Выбор модели:', {modelId, modelName, contextLength, maxOutputTokens});
+
+    // Заполняем поля формы (правильные ID!)
+    const modelIdField = document.getElementById('model_id');
+    const nameField = document.getElementById('name');
+    const maxInputField = document.getElementById('max_input_tokens');
+    const maxOutputField = document.getElementById('max_output_tokens');
+
+    if (!modelIdField || !nameField || !maxInputField || !maxOutputField) {
+        console.error('Не найдены поля формы!');
+        alert('Ошибка: не найдены поля формы');
+        return;
+    }
+
+    modelIdField.value = modelId;
+    nameField.value = modelName;
+    maxInputField.value = contextLength;
+    maxOutputField.value = maxOutputTokens;
+
+    console.log('Поля заполнены успешно');
+
+    // Скрываем список моделей и показываем подтверждение
+    document.getElementById('available-models').innerHTML = `
+        <div class="alert alert-success">
+            <i class="bi bi-check-circle"></i> Модель выбрана: <strong>${modelName}</strong><br>
+            <small class="text-muted">ID: ${modelId} | Контекст: ${contextLength.toLocaleString()} токенов | Макс. вывод: ${maxOutputTokens.toLocaleString()} токенов</small>
+        </div>`;
+
+    // Прокручиваем к форме
+    modelIdField.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
 </script>
 {% endblock %}

@@ -1857,7 +1857,79 @@ def api_get_ollama_model_info():
 
     except Exception as e:
         logger.error(f"Ошибка получения информации о модели Ollama: {e}")
-        return jsonify({'error': str(e)}), 500 
+        return jsonify({'error': str(e)}), 500
+
+
+@main_bp.route('/api/openrouter/models', methods=['POST'])
+def api_fetch_openrouter_models():
+    """API для получения списка моделей OpenRouter"""
+    from app.services.ai_model_service import AIModelService
+    import asyncio
+    import os
+
+    try:
+        data = request.json
+        api_key = data.get('api_key')  # Опционально, для персонализированных цен
+
+        # Проверяем, откуда взят ключ
+        key_source = None
+        if api_key:
+            key_source = 'user'  # Ключ предоставлен пользователем
+        elif os.getenv('OPENROUTER_API_KEY'):
+            key_source = 'env'  # Ключ загружен из .env
+            # Функция fetch_openrouter_models сама загрузит ключ из env
+
+        # Запускаем асинхронную функцию
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        models = loop.run_until_complete(AIModelService.fetch_openrouter_models(api_key))
+
+        # Фильтруем и сортируем модели по релевантности
+        # Приоритизируем популярные и доступные модели
+        priority_models = [
+            'openai/gpt-4o-mini',
+            'openai/gpt-4o',
+            'anthropic/claude-3.5-sonnet',
+            'google/gemini-2.5-flash',
+            'google/gemini-2.5-pro',
+            'meta-llama/llama-3.3-70b-instruct',
+            'qwen/qwen-2.5-72b-instruct',
+            'deepseek/deepseek-v3',
+            'mistralai/mixtral-8x22b-instruct'
+        ]
+
+        # Разделяем модели на приоритетные и остальные
+        priority_list = []
+        other_models = []
+
+        for model in models:
+            if model['id'] in priority_models:
+                priority_list.append(model)
+            else:
+                other_models.append(model)
+
+        # Сортируем приоритетные модели по порядку в списке
+        priority_list.sort(key=lambda x: priority_models.index(x['id'])
+                          if x['id'] in priority_models else 999)
+
+        # Объединяем: сначала приоритетные, потом остальные
+        sorted_models = priority_list + other_models
+
+        # Возвращаем модели с метаданными
+        result = {
+            'models': sorted_models,
+            'metadata': {
+                'count': len(sorted_models),
+                'key_source': key_source,  # 'user', 'env', or None
+                'personalized': key_source is not None  # True если используются персональные цены
+            }
+        }
+
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"Ошибка при получении списка моделей OpenRouter: {e}")
+        return jsonify({'error': str(e)}), 500
+
 
 @main_bp.route('/celery-monitor')
 def celery_monitor():

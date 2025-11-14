@@ -102,6 +102,8 @@ class AIAdapterService:
                 return await self._call_anthropic(system_prompt, user_prompt, temperature, max_tokens)
             elif self.model.provider == 'ollama':
                 return await self._call_ollama(system_prompt, user_prompt, temperature, max_tokens)
+            elif self.model.provider == 'openrouter':
+                return await self._call_openrouter(system_prompt, user_prompt, temperature, max_tokens)
             else:
                 return {'success': False, 'error': f'Неподдерживаемый провайдер: {self.model.provider}'}
 
@@ -521,6 +523,145 @@ class AIAdapterService:
             }
         except Exception as e:
             error_msg = f'Неожиданная ошибка при запросе к Ollama: {type(e).__name__}: {str(e)}'
+            logger.error(error_msg)
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return {
+                'success': False,
+                'error': error_msg,
+                'error_type': 'unexpected'
+            }
+
+    async def _call_openrouter(self, system_prompt: str, user_prompt: str,
+                               temperature: float, max_tokens: int) -> Dict:
+        """Вызов OpenRouter API (OpenAI-совместимый формат) с динамическим расчетом max_tokens"""
+        if not self.model.api_key:
+            return {'success': False, 'error': 'API ключ не указан'}
+
+        # 🔧 ДИНАМИЧЕСКИЙ РАСЧЕТ max_tokens (как для Ollama)
+        # Объединяем промпты для оценки размера
+        full_prompt = f"{system_prompt}\n\n{user_prompt}"
+
+        # Оценка длины промпта на основе языка
+        prompt_length = self._estimate_tokens(full_prompt)
+
+        # Для перевода: выход обычно ≈ вход × 1.5 (китайский → русский)
+        estimated_output = int(prompt_length * 1.5)
+
+        # Ограничения:
+        # 1. Не больше max_output_tokens модели
+        # 2. Не больше 16,384 для бесплатных моделей (чтобы избежать rate limit)
+        # 3. Минимум 2,048 токенов для стабильности
+        actual_max_tokens = min(estimated_output, self.model.max_output_tokens, 16384)
+
+        if actual_max_tokens < 2048:
+            actual_max_tokens = 2048
+
+        # Логируем параметры запроса с префиксом главы
+        log_prefix = ""
+        if self.chapter_id:
+            from app.models import Chapter
+            chapter = Chapter.query.get(self.chapter_id)
+            if chapter:
+                log_prefix = f"[Novel:{chapter.novel_id}, Ch:{chapter.chapter_number}] "
+
+        logger.info(f"OpenRouter динамический расчет для {self.model.name}:")
+        logger.info(f"  📝 Размер промпта: ~{prompt_length:,} токенов")
+        logger.info(f"  📏 Расчетный выход (промпт × 1.5): {estimated_output:,} токенов")
+        logger.info(f"  🔧 Запрос max_tokens: {actual_max_tokens:,} токенов")
+        logger.info(f"  📊 Лимит модели: {self.model.max_output_tokens:,} токенов")
+
+        LogService.log_info(f"{log_prefix}OpenRouter запрос: {self.model.model_id} | Temperature: {temperature} | Max tokens: {actual_max_tokens:,} (динамический) / {self.model.max_output_tokens:,}")
+
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                response = await client.post(
+                    'https://openrouter.ai/api/v1/chat/completions',
+                    headers={
+                        'Authorization': f'Bearer {self.model.api_key}',
+                        'Content-Type': 'application/json',
+                        'HTTP-Referer': 'https://github.com/novelbins/novelbins-epub',  # Опционально
+                        'X-Title': 'NovelBins EPUB Translator'  # Опционально
+                    },
+                    json={
+                        'model': self.model.model_id,
+                        'messages': [
+                            {'role': 'system', 'content': system_prompt},
+                            {'role': 'user', 'content': user_prompt}
+                        ],
+                        'temperature': temperature,
+                        'max_tokens': actual_max_tokens
+                    }
+                )
+
+                if response.status_code == 200:
+                    data = response.json()
+                    choices = data.get('choices', [])
+                    if choices:
+                        return {
+                            'success': True,
+                            'content': choices[0].get('message', {}).get('content', ''),
+                            'usage': data.get('usage', {}),
+                            'finish_reason': choices[0].get('finish_reason', 'unknown')
+                        }
+                    else:
+                        return {'success': False, 'error': 'Нет вариантов в ответе'}
+                else:
+                    # Обработка ошибок
+                    error_detail = f'HTTP {response.status_code}'
+                    try:
+                        error_data = response.json()
+                        if 'error' in error_data:
+                            error_message = error_data['error']
+                            if isinstance(error_message, dict):
+                                error_detail = error_message.get('message', str(error_message))
+                            else:
+                                error_detail = str(error_message)
+                    except:
+                        error_detail = response.text[:500]
+
+                    # Определяем тип ошибки
+                    error_type = 'general'
+                    error_lower = error_detail.lower()
+
+                    if response.status_code == 429:
+                        error_type = 'rate_limit'
+                    elif response.status_code == 401:
+                        error_type = 'auth_error'
+                    elif response.status_code == 402:
+                        error_type = 'insufficient_credits'
+                    elif 'weekly usage limit' in error_lower or 'weekly limit' in error_lower:
+                        error_type = 'weekly_limit'
+                    elif 'daily usage limit' in error_lower or 'daily limit' in error_lower:
+                        error_type = 'daily_limit'
+
+                    logger.error(f"OpenRouter error: {error_detail} (type: {error_type})")
+
+                    return {
+                        'success': False,
+                        'error': f'Ошибка OpenRouter: {error_detail}',
+                        'error_type': error_type,
+                        'status_code': response.status_code
+                    }
+
+        except httpx.TimeoutException:
+            error_msg = f'Таймаут при обращении к OpenRouter (>120s). Модель: {self.model.model_id}'
+            logger.error(error_msg)
+            return {
+                'success': False,
+                'error': error_msg,
+                'error_type': 'timeout'
+            }
+        except httpx.ConnectError as e:
+            error_msg = f'Не удалось подключиться к OpenRouter API'
+            logger.error(f"{error_msg}: {str(e)}")
+            return {
+                'success': False,
+                'error': error_msg,
+                'error_type': 'connection'
+            }
+        except Exception as e:
+            error_msg = f'Неожиданная ошибка при запросе к OpenRouter: {type(e).__name__}: {str(e)}'
             logger.error(error_msg)
             import traceback
             logger.error(f"Traceback: {traceback.format_exc()}")

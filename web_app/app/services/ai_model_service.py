@@ -259,6 +259,9 @@ class AIModelService:
             elif model.provider == 'anthropic':
                 # Тест Anthropic
                 result = await AIModelService._test_anthropic(model, test_prompt)
+            elif model.provider == 'openrouter':
+                # Тест OpenRouter
+                result = await AIModelService._test_openrouter(model, test_prompt)
             else:
                 result = {'success': False, 'error': f'Неподдерживаемый провайдер: {model.provider}'}
 
@@ -481,6 +484,56 @@ class AIModelService:
             return {'success': False, 'error': str(e)}
 
     @staticmethod
+    async def _test_openrouter(model: AIModel, prompt: str) -> Dict:
+        """Тестировать OpenRouter модель"""
+        try:
+            if not model.api_key:
+                return {'success': False, 'error': 'API ключ не указан'}
+
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(
+                    'https://openrouter.ai/api/v1/chat/completions',
+                    headers={
+                        'Authorization': f'Bearer {model.api_key}',
+                        'Content-Type': 'application/json',
+                        'HTTP-Referer': 'https://github.com/novelbins/novelbins-epub',
+                        'X-Title': 'NovelBins EPUB Translator'
+                    },
+                    json={
+                        'model': model.model_id,
+                        'messages': [{'role': 'user', 'content': prompt}],
+                        'temperature': model.default_temperature,
+                        'max_tokens': 512  # Реалистичный тест (было 100)
+                    }
+                )
+
+                if response.status_code == 200:
+                    result = response.json()
+                    choices = result.get('choices', [])
+                    if choices:
+                        text = choices[0].get('message', {}).get('content', '')
+                        return {
+                            'success': True,
+                            'response': text[:100],
+                            'model_info': {'model': model.model_id}
+                        }
+                    else:
+                        return {'success': False, 'error': 'Нет вариантов в ответе'}
+                else:
+                    error_data = response.json()
+                    error_msg = 'Неизвестная ошибка'
+                    if 'error' in error_data:
+                        error_info = error_data['error']
+                        if isinstance(error_info, dict):
+                            error_msg = error_info.get('message', str(error_info))
+                        else:
+                            error_msg = str(error_info)
+                    return {'success': False, 'error': error_msg}
+
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    @staticmethod
     async def fetch_ollama_models(api_endpoint: str) -> List[Dict]:
         """Получить список доступных моделей из Ollama"""
         try:
@@ -616,3 +669,124 @@ class AIModelService:
                 'recommended_max_input': 8192,
                 'recommended_max_output': 2048
             }
+
+    @staticmethod
+    async def fetch_openrouter_models(api_key: str = None) -> List[Dict]:
+        """Получить список доступных моделей из OpenRouter
+
+        Args:
+            api_key: API ключ OpenRouter (опционально, для получения персонализированных цен)
+                    Если не указан, пытается загрузить из переменной окружения OPENROUTER_API_KEY
+
+        Returns:
+            Список моделей с метаданными
+        """
+        import os
+
+        try:
+            # Пытаемся получить ключ из переменной окружения, если не передан явно
+            if not api_key:
+                api_key = os.getenv('OPENROUTER_API_KEY')
+
+            headers = {}
+            using_personal_key = False
+
+            if api_key:
+                headers['Authorization'] = f'Bearer {api_key}'
+                using_personal_key = True
+
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(
+                    'https://openrouter.ai/api/v1/models',
+                    headers=headers
+                )
+
+                if response.status_code == 200:
+                    data = response.json()
+                    models = []
+
+                    for model in data.get('data', []):
+                        model_id = model.get('id', '')
+
+                        # Получаем информацию о ценах (OpenRouter возвращает строки)
+                        pricing = model.get('pricing', {})
+                        prompt_price = float(pricing.get('prompt', '0') or '0')
+                        completion_price = float(pricing.get('completion', '0') or '0')
+
+                        # Форматируем цену для отображения
+                        if prompt_price == 0 and completion_price == 0:
+                            price_info = 'Бесплатно'
+                        else:
+                            # Цены в OpenRouter указаны за токен, умножаем на 1M для отображения за миллион
+                            prompt_price_m = prompt_price * 1000000
+                            completion_price_m = completion_price * 1000000
+                            price_info = f'${prompt_price_m:.2f}/${completion_price_m:.2f} за 1M токенов'
+
+                        # Определяем категорию модели
+                        categories = []
+                        if 'gpt' in model_id.lower():
+                            categories.append('OpenAI')
+                        elif 'claude' in model_id.lower():
+                            categories.append('Anthropic')
+                        elif 'gemini' in model_id.lower():
+                            categories.append('Google')
+                        elif 'llama' in model_id.lower():
+                            categories.append('Meta')
+                        elif 'qwen' in model_id.lower():
+                            categories.append('Alibaba')
+                        elif 'deepseek' in model_id.lower():
+                            categories.append('DeepSeek')
+                        elif 'mistral' in model_id.lower() or 'mixtral' in model_id.lower():
+                            categories.append('Mistral')
+
+                        # Получаем лимиты токенов
+                        context_length = model.get('context_length', 4096)
+                        # OpenRouter хранит max_completion_tokens в top_provider
+                        top_provider = model.get('top_provider', {})
+                        max_output = top_provider.get('max_completion_tokens',
+                                                      min(context_length // 4, 4096))
+
+                        models.append({
+                            'id': model_id,
+                            'name': model.get('name', model_id),
+                            'description': model.get('description', ''),
+                            'context_length': context_length,
+                            'max_output_tokens': max_output,
+                            'pricing': price_info,
+                            'prompt_price': prompt_price,
+                            'completion_price': completion_price,
+                            'categories': categories,
+                            'architecture': model.get('architecture', {}),
+                            'top_provider': model.get('top_provider', {}),
+                            'per_request_limits': model.get('per_request_limits', {}),
+                            'recommended_for': []
+                        })
+
+                        # Добавляем рекомендации на основе характеристик
+                        if context_length >= 100000:
+                            models[-1]['recommended_for'].append('long_context')
+
+                        # Проверяем модальность для vision моделей
+                        architecture = model.get('architecture', {})
+                        modality = architecture.get('modality', '')
+                        if 'vision' in model_id.lower() or 'image' in modality or 'multimodal' in modality:
+                            models[-1]['recommended_for'].append('vision')
+
+                        if prompt_price == 0:
+                            models[-1]['recommended_for'].append('free_tier')
+                        if prompt_price > 0 and prompt_price < 0.000001:  # Меньше $1 за миллион токенов
+                            models[-1]['recommended_for'].append('cost_effective')
+
+                    # Сортируем модели: сначала бесплатные, потом по цене
+                    models.sort(key=lambda x: (x['prompt_price'], x['completion_price'], x['id']))
+
+                    logger.info(f"Получено {len(models)} моделей из OpenRouter")
+                    return models
+
+                else:
+                    logger.error(f"Ошибка получения моделей OpenRouter: {response.status_code}")
+                    return []
+
+        except Exception as e:
+            logger.error(f"Ошибка при запросе к OpenRouter API: {e}")
+            return []
