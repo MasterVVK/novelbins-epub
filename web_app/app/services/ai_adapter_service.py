@@ -538,6 +538,10 @@ class AIAdapterService:
         if not self.model.api_key:
             return {'success': False, 'error': 'API ключ не указан'}
 
+        # Логируем статус thinking для отладки
+        if hasattr(self.model, 'enable_thinking'):
+            logger.info(f"🔍 enable_thinking = {self.model.enable_thinking} для модели {self.model.model_id}")
+
         # 🔧 ДИНАМИЧЕСКИЙ РАСЧЕТ max_tokens (как для Ollama)
         # Объединяем промпты для оценки размера
         full_prompt = f"{system_prompt}\n\n{user_prompt}"
@@ -546,7 +550,14 @@ class AIAdapterService:
         prompt_length = self._estimate_tokens(full_prompt)
 
         # Для перевода: выход обычно ≈ вход × 1.5 (китайский → русский)
-        estimated_output = int(prompt_length * 1.5)
+        # Для reasoning моделей: нужно × 4.0 из-за внутреннего процесса мышления
+        if hasattr(self.model, 'enable_thinking') and self.model.enable_thinking:
+            multiplier = 4.0  # Reasoning модели требуют больше токенов
+            logger.info(f"  🧠 Reasoning модель: используем multiplier × {multiplier}")
+        else:
+            multiplier = 1.5  # Обычные модели
+
+        estimated_output = int(prompt_length * multiplier)
 
         # Ограничения:
         # 1. Не больше max_output_tokens модели
@@ -567,7 +578,7 @@ class AIAdapterService:
 
         logger.info(f"OpenRouter динамический расчет для {self.model.name}:")
         logger.info(f"  📝 Размер промпта: ~{prompt_length:,} токенов")
-        logger.info(f"  📏 Расчетный выход (промпт × 1.5): {estimated_output:,} токенов")
+        logger.info(f"  📏 Расчетный выход (промпт × {multiplier}): {estimated_output:,} токенов")
         logger.info(f"  🔧 Запрос max_tokens: {actual_max_tokens:,} токенов")
         logger.info(f"  📊 Лимит модели: {self.model.max_output_tokens:,} токенов")
 
@@ -590,17 +601,70 @@ class AIAdapterService:
                             {'role': 'user', 'content': user_prompt}
                         ],
                         'temperature': temperature,
-                        'max_tokens': actual_max_tokens
+                        'max_tokens': actual_max_tokens,
+                        # Для reasoning моделей: исключаем reasoning из ответа, оставляем только финальный content
+                        'reasoning': {
+                            'effort': 'high',
+                            'exclude': True  # Модель думает внутренне, но возвращает только content
+                        }
                     }
                 )
 
                 if response.status_code == 200:
                     data = response.json()
+
+                    # 🔍 ОТЛАДОЧНОЕ ЛОГИРОВАНИЕ: Полная структура ответа
+                    logger.info(f"🔍 DEBUG: Response keys: {list(data.keys())}")
+                    if 'choices' in data:
+                        logger.info(f"🔍 DEBUG: Choices count: {len(data['choices'])}")
+                        if data['choices']:
+                            first_choice = data['choices'][0]
+                            logger.info(f"🔍 DEBUG: First choice keys: {list(first_choice.keys())}")
+                            if 'message' in first_choice:
+                                msg = first_choice['message']
+                                logger.info(f"🔍 DEBUG: Message keys: {list(msg.keys())}")
+                                logger.info(f"🔍 DEBUG: Content length: {len(msg.get('content', ''))}")
+                                logger.info(f"🔍 DEBUG: Content preview: {msg.get('content', '')[:200]}")
+                                # Проверяем поле reasoning (не reasoning_details!)
+                                if 'reasoning' in msg:
+                                    logger.info(f"🔍 DEBUG: Reasoning field exists!")
+                                    logger.info(f"🔍 DEBUG: Reasoning length: {len(msg.get('reasoning', ''))}")
+                                    logger.info(f"🔍 DEBUG: Reasoning preview: {msg.get('reasoning', '')[:200]}")
+
                     choices = data.get('choices', [])
                     if choices:
+                        message = choices[0].get('message', {})
+                        content = message.get('content', '')
+
+                        # 🔧 ЛОГИРОВАНИЕ REASONING МОДЕЛЕЙ (только для отладки)
+                        # Для reasoning моделей (kimi-k2-thinking, deepseek-reasoner, o1, o3, Claude 3.7+)
+                        # финальный ответ ВСЕГДА в content, reasoning_details содержит процесс мышления
+                        if hasattr(self.model, 'enable_thinking') and self.model.enable_thinking:
+                            reasoning_details = message.get('reasoning_details', [])
+
+                            # Логируем для отладки (но НЕ используем reasoning_details как контент!)
+                            if reasoning_details:
+                                reasoning_length = sum(len(d.get('text', '')) for d in reasoning_details if d.get('type') == 'reasoning.text')
+                                logger.info(f"🧠 Reasoning модель: получено {len(reasoning_details)} reasoning блоков (процесс мышления)")
+                                logger.info(f"   Reasoning длина: {reasoning_length} символов (НЕ используется в переводе)")
+                                logger.info(f"   Content длина: {len(content)} символов (финальный ответ)")
+                                logger.info(f"   Reasoning types: {[d.get('type') for d in reasoning_details]}")
+
+                                # 🔍 DEBUG: Проверяем содержимое reasoning_details
+                                for idx, detail in enumerate(reasoning_details):
+                                    detail_text = detail.get('text', '')
+                                    logger.info(f"   🔍 Reasoning_detail[{idx}] length: {len(detail_text)}")
+                                    logger.info(f"   🔍 Reasoning_detail[{idx}] first 300 chars: {detail_text[:300]}")
+                                    logger.info(f"   🔍 Reasoning_detail[{idx}] last 500 chars: {detail_text[-500:]}")
+
+                        # 🔍 ФИНАЛЬНОЕ ЛОГИРОВАНИЕ перед возвратом
+                        logger.info(f"🔍 DEBUG: Returning content length: {len(content)}")
+                        logger.info(f"🔍 DEBUG: Content is empty: {not content}")
+                        logger.info(f"🔍 DEBUG: Content is None: {content is None}")
+
                         return {
                             'success': True,
-                            'content': choices[0].get('message', {}).get('content', ''),
+                            'content': content,
                             'usage': data.get('usage', {}),
                             'finish_reason': choices[0].get('finish_reason', 'unknown')
                         }
