@@ -326,15 +326,21 @@ class AIAdapterService:
                     logger.info(f"num_ctx ({num_ctx:,}) меньше минимального ({min_context_size:,}), устанавливаем минимум")
                     num_ctx = min_context_size
 
-                # num_predict = num_ctx × 2 (но не больше максимума модели)
-                # Логика: для перевода выход обычно больше входа
-                num_predict = min(num_ctx * 2, self.model.max_output_tokens)
+                # num_predict = num_ctx × 2 (обычные модели)
+                # Для reasoning моделей: num_ctx × 4 (требуют больше токенов для внутреннего мышления)
+                if hasattr(self.model, 'enable_thinking') and self.model.enable_thinking:
+                    predict_multiplier = 4  # Reasoning модели
+                    logger.info(f"  🧠 Reasoning модель: используем multiplier × {predict_multiplier} для num_predict")
+                else:
+                    predict_multiplier = 2  # Обычные модели
+
+                num_predict = min(num_ctx * predict_multiplier, self.model.max_output_tokens)
 
                 # Логируем упрощенную логику расчета
                 logger.info(f"Ollama: Расчет контекста для {self.model.name}:")
                 logger.info(f"  📝 Размер промпта: ~{prompt_length:,} токенов")
                 logger.info(f"  📏 num_ctx (промпт + 20%): {num_ctx:,} токенов")
-                logger.info(f"  🔧 num_predict: {num_predict:,} токенов (макс. вывод)")
+                logger.info(f"  🔧 num_predict: {num_predict:,} токенов (num_ctx × {predict_multiplier})")
                 logger.info(f"  📊 Лимиты модели: max_input={model_max_context:,}, max_output={self.model.max_output_tokens:,}")
 
                 # Логируем параметры запроса
