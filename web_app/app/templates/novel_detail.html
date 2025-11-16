@@ -93,11 +93,11 @@
                         <small class="text-muted">{{ novel.editing_progress_percentage }}%</small>
                     </div>
 
-                    <!-- Выравнивание -->
+                    <!-- Сопоставление -->
                     <div class="mb-3">
                         <div class="d-flex justify-content-between align-items-center mb-1">
                             <small class="text-muted">
-                                <i class="bi bi-diagram-3 text-info"></i> Выравнивание
+                                <i class="bi bi-diagram-3 text-info"></i> Сопоставление
                             </small>
                             <small class="text-muted">{{ novel.aligned_chapters or 0 }}/{{ novel.total_chapters }} глав</small>
                         </div>
@@ -190,12 +190,12 @@
                     <div class="col-md-6 mb-2">
                         {% if novel.alignment_task_id %}
                             <button type="button" class="btn btn-outline-danger w-100" onclick="cancelAlignment({{ novel.id }})">
-                                <i class="bi bi-x-circle"></i> Отменить выравнивание
+                                <i class="bi bi-x-circle"></i> Отменить сопоставление
                             </button>
                         {% else %}
                             <form method="POST" action="{{ url_for('main.start_alignment', novel_id=novel.id) }}" style="display: inline; width: 100%;">
                                 <button type="submit" class="btn btn-outline-info w-100">
-                                    <i class="bi bi-diagram-3"></i> Билингвальное выравнивание
+                                    <i class="bi bi-diagram-3"></i> Сопоставление с оригиналом
                                 </button>
                             </form>
                         {% endif %}
@@ -428,6 +428,9 @@
                                             <li><a class="dropdown-item" href="#" onclick="changeChapterStatus({{ chapter.id }}, 'edited'); return false;">
                                                 <i class="bi bi-pencil-square text-warning"></i> Отредактировано
                                             </a></li>
+                                            <li><a class="dropdown-item" href="#" onclick="changeChapterStatus({{ chapter.id }}, 'aligned'); return false;">
+                                                <i class="bi bi-diagram-3 text-info"></i> Сопоставлено
+                                            </a></li>
                                             <li><hr class="dropdown-divider"></li>
                                             <li><a class="dropdown-item" href="#" onclick="changeChapterStatus({{ chapter.id }}, 'pending'); return false;">
                                                 <i class="bi bi-hourglass text-secondary"></i> В ожидании
@@ -439,7 +442,7 @@
                                     <a href="{{ url_for('main.chapter_detail', chapter_id=chapter.id) }}" class="btn btn-sm btn-outline-primary">
                                         <i class="bi bi-eye"></i>
                                     </a>
-                                    {% if chapter.status in ['translated', 'edited'] %}
+                                    {% if chapter.status in ['translated', 'edited', 'aligned'] %}
                                     <a href="{{ url_for('main.edit_chapter', chapter_id=chapter.id) }}" class="btn btn-sm btn-outline-warning">
                                         <i class="bi bi-pencil"></i>
                                     </a>
@@ -721,7 +724,7 @@ async function cancelEditing(novelId) {
 }
 
 async function cancelAlignment(novelId) {
-    if (!confirm('Вы уверены, что хотите отменить выравнивание? Текущий прогресс будет сохранён, но незавершённые главы не будут выровнены.')) {
+    if (!confirm('Вы уверены, что хотите отменить сопоставление? Текущий прогресс будет сохранён, но незавершённые главы не будут сопоставлены.')) {
         return;
     }
 
@@ -736,7 +739,7 @@ async function cancelAlignment(novelId) {
         const data = await response.json();
 
         if (data.success) {
-            alert('✅ Выравнивание успешно отменено');
+            alert('✅ Сопоставление успешно отменено');
             location.reload(); // Перезагружаем страницу
         } else {
             alert('❌ Ошибка: ' + (data.error || 'Неизвестная ошибка'));

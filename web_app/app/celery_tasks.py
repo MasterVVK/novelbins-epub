@@ -16,6 +16,7 @@ from app.services.log_service import LogService
 from parsers import create_parser_from_url
 import time
 import re
+from datetime import datetime
 
 
 # Флаг для отслеживания отмены

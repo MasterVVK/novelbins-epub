@@ -86,6 +86,7 @@ def register_template_filters(app):
                 'parsed': 'bi-file-text',
                 'translated': 'bi-translate',
                 'edited': 'bi-pencil-square',
+                'aligned': 'bi-diagram-3',
                 'error': 'bi-exclamation-triangle',
             },
             'task_status': {
@@ -124,6 +125,7 @@ def register_template_filters(app):
                 'parsed': 'Распарсено',
                 'translated': 'Переведено',
                 'edited': 'Отредактировано',
+                'aligned': 'Сопоставлено',
                 'error': 'Ошибка',
             },
             'task_status': {

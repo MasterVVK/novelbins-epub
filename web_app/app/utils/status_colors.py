@@ -21,6 +21,7 @@ class StatusColors:
     CONTENT_PARSED = 'primary'         # Синий - распарсено (как кнопка "Парсинг")
     CONTENT_TRANSLATED = 'success'     # Зеленый - переведено (как кнопка "Перевод")
     CONTENT_EDITED = 'warning'         # Желтый - отредактировано (как кнопка "Редактура")
+    CONTENT_ALIGNED = 'info'           # Голубой - выровнено (как кнопка "Билингвальное выравнивание")
     CONTENT_ERROR = 'danger'           # Красный - ошибка
     
     # Типы задач (соответствуют цветам действий)
@@ -61,6 +62,7 @@ class StatusColors:
             'parsed': cls.CONTENT_PARSED,
             'translated': cls.CONTENT_TRANSLATED,
             'edited': cls.CONTENT_EDITED,
+            'aligned': cls.CONTENT_ALIGNED,
             'error': cls.CONTENT_ERROR,
         }
         return color_map.get(status, cls.PROCESS_PENDING)
@@ -142,6 +144,7 @@ class StatusColors:
                 'parsed': 'bi-file-text',
                 'translated': 'bi-translate',
                 'edited': 'bi-pencil-square',
+                'aligned': 'bi-diagram-3',
                 'error': 'bi-exclamation-triangle',
             },
             'task_status': {
@@ -178,6 +181,7 @@ class StatusColors:
                 'parsed': 'Распарсено',
                 'translated': 'Переведено',
                 'edited': 'Отредактировано',
+                'aligned': 'Сопоставлено',
                 'error': 'Ошибка',
             },
             'task_status': {

@@ -882,12 +882,12 @@ def start_editing(novel_id):
 
 @main_bp.route('/novels/<int:novel_id>/start-alignment', methods=['POST'])
 def start_alignment(novel_id):
-    """Запуск билингвального выравнивания новеллы через Celery"""
-    logger.info(f"🚀 Запрос на выравнивание новеллы {novel_id}")
+    """Запуск сопоставления с оригиналом новеллы через Celery"""
+    logger.info(f"🚀 Запрос на сопоставление новеллы {novel_id}")
     novel = Novel.query.get_or_404(novel_id)
     logger.info(f"📖 Найдена новелла: {novel.title}")
 
-    # IDEMPOTENCY CHECK: Проверяем, не запущено ли уже выравнивание
+    # IDEMPOTENCY CHECK: Проверяем, не запущено ли уже сопоставление
     if novel.alignment_task_id:
         from celery.result import AsyncResult
         from app import celery
@@ -897,8 +897,8 @@ def start_alignment(novel_id):
 
         # Если задача активна (PENDING, STARTED, PROGRESS), не запускаем новую
         if task_result.state in ['PENDING', 'STARTED', 'PROGRESS']:
-            logger.warning(f"⚠️ Выравнивание уже запущено (task_id: {novel.alignment_task_id}, state: {task_result.state})")
-            flash(f'Выравнивание уже запущено (задача: {novel.alignment_task_id[:8]}...)', 'warning')
+            logger.warning(f"⚠️ Сопоставление уже запущено (task_id: {novel.alignment_task_id}, state: {task_result.state})")
+            flash(f'Сопоставление уже запущено (задача: {novel.alignment_task_id[:8]}...)', 'warning')
             return redirect(url_for('main.novel_detail', novel_id=novel_id))
         else:
             # Задача завершена/отменена, можно запустить новую
@@ -906,23 +906,23 @@ def start_alignment(novel_id):
             novel.alignment_task_id = None
             db.session.commit()
 
-    # Получаем главы для выравнивания
-    # ВАЖНО: Только отредактированные (status='edited'), но еще НЕ выровненные
+    # Получаем главы для сопоставления
+    # ВАЖНО: Только отредактированные (status='edited'), но еще НЕ сопоставленные
     chapters = Chapter.query.filter_by(
         novel_id=novel_id,
-        status='edited'  # Только отредактированные, еще не выровненные
+        status='edited'  # Только отредактированные, еще не сопоставленные
     ).filter(
         Chapter.original_text.isnot(None),  # Есть китайский оригинал
         Chapter.original_text != ''
     ).order_by(Chapter.chapter_number).all()
 
-    logger.info(f"🔍 Найдено глав для выравнивания: {len(chapters)}")
+    logger.info(f"🔍 Найдено глав для сопоставления: {len(chapters)}")
     for ch in chapters[:5]:  # Логируем первые 5
         logger.info(f"  - Глава {ch.chapter_number}: {ch.original_title} (оригинал: {bool(ch.original_text)})")
 
     if not chapters:
-        logger.warning("❌ Нет глав для выравнивания (нужны отредактированные главы с оригиналом)")
-        flash('Нет глав для выравнивания. Требуются отредактированные главы (status=edited) с китайским оригиналом.', 'warning')
+        logger.warning("❌ Нет глав для сопоставления (нужны отредактированные главы с оригиналом)")
+        flash('Нет глав для сопоставления. Требуются отредактированные главы (status=edited) с китайским оригиналом.', 'warning')
         return redirect(url_for('main.novel_detail', novel_id=novel_id))
 
     # Получаем настройку количества потоков из конфига новеллы
@@ -930,7 +930,7 @@ def start_alignment(novel_id):
     if novel.config:
         parallel_threads = novel.config.get('alignment_threads', 3)
 
-    # Запускаем Celery задачу выравнивания
+    # Запускаем Celery задачу сопоставления
     try:
         from app.celery_tasks import align_novel_chapters_task
         from app import celery
@@ -955,14 +955,14 @@ def start_alignment(novel_id):
 
         logger.info(f"✅ Task ID: {task.id}, State: {task.state}")
         LogService.log_info(
-            f"🎯 Выравнивание запущено через Celery для {len(chapters)} глав (потоков: {parallel_threads})",
+            f"🎯 Сопоставление запущено через Celery для {len(chapters)} глав (потоков: {parallel_threads})",
             novel_id=novel_id
         )
-        flash(f'Выравнивание запущено для {len(chapters)} глав (параллельных потоков: {parallel_threads})', 'success')
+        flash(f'Сопоставление запущено для {len(chapters)} глав (параллельных потоков: {parallel_threads})', 'success')
 
     except Exception as e:
-        logger.error(f"❌ Ошибка запуска задачи выравнивания: {e}")
-        flash(f'Ошибка запуска выравнивания: {str(e)}', 'error')
+        logger.error(f"❌ Ошибка запуска задачи сопоставления: {e}")
+        flash(f'Ошибка запуска сопоставления: {str(e)}', 'error')
 
     return redirect(url_for('main.novel_detail', novel_id=novel_id))
 
