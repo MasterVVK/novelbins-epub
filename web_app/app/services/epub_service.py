@@ -15,13 +15,13 @@ sys.path.insert(0, str(project_root))
 
 try:
     from ebooklib import epub
-    from models import EPUBConfig
-    from database import DatabaseManager
 except ImportError as e:
-    logging.error(f"Ошибка импорта модулей для EPUB: {e}")
+    logging.error(f"Ошибка импорта ebooklib: {e}")
     epub = None
-    EPUBConfig = None
-    DatabaseManager = None
+
+# EPUBConfig и DatabaseManager больше не нужны в web_app контексте
+EPUBConfig = None
+DatabaseManager = None
 
 logger = logging.getLogger(__name__)
 
