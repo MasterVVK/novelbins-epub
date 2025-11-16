@@ -822,9 +822,12 @@ class EPUBService:
     def _create_bilingual_chapter_page(self, chapter: Dict, nav_css: epub.EpubItem, novel_id: int) -> epub.EpubHtml:
         """Создание страницы главы с двуязычным содержимым (с LLM выравниванием)"""
         from app.utils.text_alignment import BilingualTextAligner
-        from app.models import Chapter
+        from app.models import Chapter, Novel
         from app.services.bilingual_alignment_service import BilingualAlignmentService
         from app import db
+
+        # Получаем объект новеллы для настроек префикса
+        novel = Novel.query.get(novel_id)
 
         # Получаем полный объект главы из базы данных (по novel_id И chapter_number!)
         db_chapter = Chapter.query.filter_by(
@@ -868,22 +871,47 @@ class EPUBService:
                 style='alternating'
             )
 
+        # Форматируем заголовок главы с учетом настроек новеллы
+        if novel:
+            # Если префикс пустой, то не добавляем префикс вообще (согласно подсказке в форме)
+            if novel.epub_chapter_prefix_text == '':
+                prefix_mode = 'never'
+                prefix_text = ''
+            else:
+                prefix_mode = novel.epub_add_chapter_prefix if novel.epub_add_chapter_prefix else 'auto'
+                prefix_text = novel.epub_chapter_prefix_text if novel.epub_chapter_prefix_text is not None else 'Глава'
+
+            formatted_title = self._format_chapter_title(
+                chapter_number=chapter['number'],
+                title=chapter['title'],
+                prefix_mode=prefix_mode,
+                prefix_text=prefix_text
+            )
+        else:
+            # Если новелла не найдена, используем стандартное форматирование
+            formatted_title = self._format_chapter_title(
+                chapter_number=chapter['number'],
+                title=chapter['title'],
+                prefix_mode='auto',
+                prefix_text='Глава'
+            )
+
         chapter_content = f"""
         <!DOCTYPE html>
         <html>
         <head>
-            <title>Глава {chapter['number']}: {chapter['title']}</title>
+            <title>{formatted_title}</title>
             <link rel="stylesheet" type="text/css" href="style/nav.css"/>
         </head>
         <body>
-            <h2 class="chapter-title">Глава {chapter['number']}: {chapter['title']}</h2>
+            <h2 class="chapter-title">{formatted_title}</h2>
             {content_html}
         </body>
         </html>
         """
 
         chapter_page = epub.EpubHtml(
-            title=f"Глава {chapter['number']}: {chapter['title']}",
+            title=formatted_title,
             file_name=f'chapter_{chapter["number"]:03d}.xhtml',
             content=chapter_content
         )

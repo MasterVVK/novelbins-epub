@@ -478,11 +478,18 @@ def edit_novel(novel_id):
         
         # Обрабатываем настройки EPUB
         epub_add_chapter_prefix = request.form.get('epub_add_chapter_prefix', 'auto')
-        epub_chapter_prefix_text = request.form.get('epub_chapter_prefix_text', 'Глава').strip()
-        
+        epub_chapter_prefix_text = request.form.get('epub_chapter_prefix_text')
+
+        # Если значение None (не передано), используем 'Глава' по умолчанию
+        # Если пустая строка (удалено пользователем), сохраняем пустую строку
+        if epub_chapter_prefix_text is None:
+            epub_chapter_prefix_text = 'Глава'
+        else:
+            epub_chapter_prefix_text = epub_chapter_prefix_text.strip()
+
         novel.epub_add_chapter_prefix = epub_add_chapter_prefix
-        novel.epub_chapter_prefix_text = epub_chapter_prefix_text or 'Глава'
-        
+        novel.epub_chapter_prefix_text = epub_chapter_prefix_text
+
         print(f"📚 Настройки EPUB: префикс={epub_add_chapter_prefix}, текст='{epub_chapter_prefix_text}'")
 
         # Принудительно обновляем объект в сессии

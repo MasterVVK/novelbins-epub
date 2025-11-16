@@ -375,12 +375,12 @@
                         <div class="col-md-6">
                             <div class="mb-3">
                                 <label for="epub_chapter_prefix_text" class="form-label">Текст префикса</label>
-                                <input type="text" class="form-control" id="epub_chapter_prefix_text" name="epub_chapter_prefix_text" 
-                                       value="{{ novel.epub_chapter_prefix_text or 'Глава' }}" 
-                                       placeholder="Глава">
+                                <input type="text" class="form-control" id="epub_chapter_prefix_text" name="epub_chapter_prefix_text"
+                                       value="{{ novel.epub_chapter_prefix_text if novel.epub_chapter_prefix_text is not none else '' }}"
+                                       placeholder="Глава (по умолчанию)">
                                 <div class="form-text">
                                     Текст, который будет использоваться в префиксе.<br>
-                                    Например: "Глава", "Chapter", "Часть" и т.д.
+                                    Например: "Глава", "Chapter", "Часть" и т.д. Оставьте пустым, чтобы не добавлять префикс.
                                 </div>
                             </div>
                         </div>
