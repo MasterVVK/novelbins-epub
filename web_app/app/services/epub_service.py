@@ -820,9 +820,10 @@ class EPUBService:
         return toc_page
 
     def _create_bilingual_chapter_page(self, chapter: Dict, nav_css: epub.EpubItem, novel_id: int) -> epub.EpubHtml:
-        """Создание страницы главы с двуязычным содержимым"""
+        """Создание страницы главы с двуязычным содержимым (с LLM выравниванием)"""
         from app.utils.text_alignment import BilingualTextAligner
         from app.models import Chapter
+        from app.services.bilingual_alignment_service import BilingualAlignmentService
         from app import db
 
         # Получаем полный объект главы из базы данных (по novel_id И chapter_number!)
@@ -841,17 +842,24 @@ class EPUBService:
             logger.info(f"   Заголовок главы: {db_chapter.original_title}")
             content_html = f'<p class="russian-sentence">{chapter["content"]}</p>'
         else:
-            # Выравниваем русский перевод и китайский оригинал
-            russian_text = chapter['content']
-            chinese_text = db_chapter.original_text
-
-            logger.info(f"✅ Глава {chapter['number']}: найден оригинал ({len(chinese_text)} символов)")
+            # Используем LLM выравнивание
+            logger.info(f"✅ Глава {chapter['number']}: начинаем LLM выравнивание")
             logger.info(f"   Заголовок: {db_chapter.original_title}")
-            logger.info(f"   Перевод: {len(russian_text)} символов")
 
-            # Разбиваем на предложения и выравниваем
-            aligned_pairs = BilingualTextAligner.align_sentences(russian_text, chinese_text)
-            logger.info(f"   Выровнено {len(aligned_pairs)} пар предложений")
+            # Создаем сервис LLM выравнивания
+            alignment_service = BilingualAlignmentService()
+
+            # Получаем выравнивание (из кэша или создаем новое)
+            alignments = alignment_service.align_chapter(
+                chapter=db_chapter,
+                force_refresh=False,  # Используем кэш если есть
+                save_to_cache=True    # Сохраняем результат
+            )
+
+            logger.info(f"   Получено выравнивание: {len(alignments)} пар")
+
+            # Конвертируем формат LLM [{ru, zh, type, confidence}] в формат для EPUB [(ru, zh)]
+            aligned_pairs = [(pair['ru'], pair['zh']) for pair in alignments]
 
             # Форматируем для EPUB (чередование)
             content_html = BilingualTextAligner.format_for_epub(

@@ -146,12 +146,14 @@ def create_app(config_name=None):
     from .api.chapters import chapters_bp
     from .api.editing import editing_bp
     from .api.celery_monitor import celery_monitor_bp
+    from .api.bilingual_api import bilingual_api
     from .views import main_bp
 
     app.register_blueprint(api_bp, url_prefix='/api')
     app.register_blueprint(chapters_bp)
     app.register_blueprint(editing_bp, url_prefix='/api')
     app.register_blueprint(celery_monitor_bp, url_prefix='/api')
+    app.register_blueprint(bilingual_api)  # уже имеет url_prefix='/api/bilingual'
     app.register_blueprint(main_bp)
 
     # Регистрация фильтров для шаблонов

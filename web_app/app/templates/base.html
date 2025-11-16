@@ -106,6 +106,11 @@
                             </a>
                         </li>
                         <li class="nav-item">
+                            <a class="nav-link {{ 'active' if request.endpoint == 'main.bilingual_templates' }}" href="{{ url_for('main.bilingual_templates') }}">
+                                <i class="bi bi-translate"></i> Двуязычные шаблоны
+                            </a>
+                        </li>
+                        <li class="nav-item">
                             <a class="nav-link {{ 'active' if request.endpoint == 'main.ai_models' }}" href="{{ url_for('main.ai_models') }}">
                                 <i class="bi bi-cpu"></i> AI Модели
                             </a>

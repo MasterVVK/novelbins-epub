@@ -116,6 +116,212 @@
     </div>
 </div>
 
+<!-- Двуязычное выравнивание (LLM) -->
+<div class="card mt-4" id="bilingualAlignmentCard">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="card-title mb-0">
+            <i class="bi bi-translate"></i> Двуязычное выравнивание (LLM)
+        </h5>
+        <div>
+            <button type="button" class="btn btn-sm btn-primary" onclick="loadAlignment()">
+                <i class="bi bi-arrow-clockwise"></i> Загрузить выравнивание
+            </button>
+            <button type="button" class="btn btn-sm btn-warning" onclick="regenerateAlignment()">
+                <i class="bi bi-arrow-repeat"></i> Пересоздать
+            </button>
+        </div>
+    </div>
+    <div class="card-body">
+        <div id="alignmentContent">
+            <div class="text-center text-muted py-4">
+                <i class="bi bi-info-circle"></i>
+                Нажмите "Загрузить выравнивание" для просмотра результатов LLM выравнивания
+            </div>
+        </div>
+
+        <!-- Статистика выравнивания -->
+        <div id="alignmentStats" class="mt-3" style="display: none;">
+            <div class="row">
+                <div class="col-md-3">
+                    <div class="card bg-light">
+                        <div class="card-body text-center">
+                            <h6 class="text-muted">Всего пар</h6>
+                            <h4 id="stat-total-pairs">-</h4>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card bg-light">
+                        <div class="card-body text-center">
+                            <h6 class="text-muted">Качество</h6>
+                            <h4 id="stat-quality">-</h4>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card bg-light">
+                        <div class="card-body text-center">
+                            <h6 class="text-muted">Покрытие RU</h6>
+                            <h4 id="stat-coverage-ru">-</h4>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card bg-light">
+                        <div class="card-body text-center">
+                            <h6 class="text-muted">Покрытие ZH</h6>
+                            <h4 id="stat-coverage-zh">-</h4>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="mt-2">
+                <small class="text-muted">
+                    <strong>Метод:</strong> <span id="stat-method">-</span> |
+                    <strong>Модель:</strong> <span id="stat-model">-</span> |
+                    <strong>Создано:</strong> <span id="stat-created">-</span>
+                </small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let currentChapterId = {{ chapter.id }};
+
+// Загрузка выравнивания
+function loadAlignment() {
+    const contentDiv = document.getElementById('alignmentContent');
+    const statsDiv = document.getElementById('alignmentStats');
+
+    contentDiv.innerHTML = '<div class="text-center py-4"><div class="spinner-border" role="status"></div><p class="mt-2">Загрузка выравнивания...</p></div>';
+
+    fetch(`/api/bilingual/chapters/${currentChapterId}/alignment`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                displayAlignment(data);
+
+                // Показываем статистику если есть кэш
+                if (data.cached) {
+                    statsDiv.style.display = 'block';
+                    document.getElementById('stat-total-pairs').textContent = data.count || '-';
+                    document.getElementById('stat-quality').textContent =
+                        data.quality_score ? (data.quality_score * 100).toFixed(0) + '%' : '-';
+                    document.getElementById('stat-coverage-ru').textContent =
+                        data.coverage_ru ? (data.coverage_ru * 100).toFixed(0) + '%' : '-';
+                    document.getElementById('stat-coverage-zh').textContent =
+                        data.coverage_zh ? (data.coverage_zh * 100).toFixed(0) + '%' : '-';
+                    document.getElementById('stat-method').textContent = data.method || '-';
+                    document.getElementById('stat-model').textContent = data.model_used || '-';
+                    document.getElementById('stat-created').textContent =
+                        data.created_at ? new Date(data.created_at).toLocaleString('ru-RU') : '-';
+                }
+            } else {
+                contentDiv.innerHTML = `<div class="alert alert-danger">${data.error}</div>`;
+            }
+        })
+        .catch(error => {
+            console.error('Ошибка загрузки:', error);
+            contentDiv.innerHTML = '<div class="alert alert-danger">Ошибка загрузки выравнивания</div>';
+        });
+}
+
+// Отображение выравнивания
+function displayAlignment(data) {
+    const contentDiv = document.getElementById('alignmentContent');
+
+    if (!data.alignments || data.alignments.length === 0) {
+        contentDiv.innerHTML = '<div class="alert alert-warning">Выравнивание пока не создано</div>';
+        return;
+    }
+
+    let html = '<div class="table-responsive"><table class="table table-sm table-bordered">';
+    html += '<thead><tr><th width="5%">#</th><th width="42%">Русский</th><th width="42%">中文</th><th width="11%">Тип / Уверенность</th></tr></thead><tbody>';
+
+    data.alignments.forEach((pair, index) => {
+        const confidenceBadge = getConfidenceBadge(pair.confidence);
+        const typeBadge = getTypeBadge(pair.type);
+
+        html += `
+            <tr>
+                <td class="text-center">${index + 1}</td>
+                <td>${escapeHtml(pair.ru)}</td>
+                <td lang="zh">${escapeHtml(pair.zh)}</td>
+                <td class="text-center">
+                    ${typeBadge}<br>
+                    ${confidenceBadge}
+                </td>
+            </tr>
+        `;
+    });
+
+    html += '</tbody></table></div>';
+    contentDiv.innerHTML = html;
+}
+
+// Получение бейджа для уверенности
+function getConfidenceBadge(confidence) {
+    const percent = (confidence * 100).toFixed(0);
+    let badgeClass = 'secondary';
+
+    if (confidence >= 0.9) badgeClass = 'success';
+    else if (confidence >= 0.7) badgeClass = 'primary';
+    else if (confidence >= 0.5) badgeClass = 'warning';
+    else badgeClass = 'danger';
+
+    return `<span class="badge bg-${badgeClass}">${percent}%</span>`;
+}
+
+// Получение бейджа для типа текста
+function getTypeBadge(type) {
+    const badges = {
+        'dialogue': '<span class="badge bg-info">Диалог</span>',
+        'description': '<span class="badge bg-secondary">Описание</span>',
+        'action': '<span class="badge bg-warning">Действие</span>',
+        'internal': '<span class="badge bg-primary">Мысли</span>',
+        'unknown': '<span class="badge bg-light text-dark">-</span>'
+    };
+    return badges[type] || badges['unknown'];
+}
+
+// Экранирование HTML
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// Пересоздание выравнивания
+function regenerateAlignment() {
+    if (!confirm('Вы уверены? Это удалит текущее выравнивание и создаст новое через LLM.')) {
+        return;
+    }
+
+    const contentDiv = document.getElementById('alignmentContent');
+    contentDiv.innerHTML = '<div class="text-center py-4"><div class="spinner-border" role="status"></div><p class="mt-2">Пересоздание выравнивания через LLM...</p></div>';
+
+    fetch(`/api/bilingual/chapters/${currentChapterId}/alignment/regenerate`, {
+        method: 'POST'
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            displayAlignment(data);
+            alert('Выравнивание успешно пересоздано!');
+            // Перезагружаем чтобы обновить статистику
+            loadAlignment();
+        } else {
+            contentDiv.innerHTML = `<div class="alert alert-danger">${data.error}</div>`;
+        }
+    })
+    .catch(error => {
+        console.error('Ошибка:', error);
+        contentDiv.innerHTML = '<div class="alert alert-danger">Ошибка пересоздания выравнивания</div>';
+    });
+}
+</script>
+
 <!-- История промптов -->
 {% if prompt_history %}
 <div class="card mt-4">

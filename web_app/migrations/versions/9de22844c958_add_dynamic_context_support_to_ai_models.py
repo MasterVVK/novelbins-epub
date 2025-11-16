@@ -1,7 +1,7 @@
 """Add dynamic context support to AI models
 
 Revision ID: 9de22844c958
-Revises: ade198205b78
+Revises:
 Create Date: 2025-10-21 20:44:25.982896
 
 """
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision = '9de22844c958'
-down_revision = 'ade198205b78'
+down_revision = None
 branch_labels = None
 depends_on = None
 

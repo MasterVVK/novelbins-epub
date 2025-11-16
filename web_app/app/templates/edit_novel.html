@@ -84,7 +84,26 @@
                         </select>
                         <div class="form-text">Выберите специальный шаблон промпта для перевода этой новеллы</div>
                     </div>
-                    
+
+                    <div class="mb-3">
+                        <label for="bilingual_template_id" class="form-label">
+                            <i class="bi bi-translate"></i> Шаблон двуязычного выравнивания
+                        </label>
+                        <select class="form-select" id="bilingual_template_id" name="bilingual_template_id">
+                            <option value="none" {{ 'selected' if not novel.bilingual_template_id else '' }}>По умолчанию</option>
+                            {% if bilingual_templates %}
+                                {% for template in bilingual_templates %}
+                                <option value="{{ template.id }}" {{ 'selected' if novel.bilingual_template_id == template.id else '' }}>
+                                    {{ template.name }}
+                                    {% if template.category %}({{ template.category }}){% endif %}
+                                    {% if template.default_model_name %} - {{ template.default_model_name }}{% endif %}
+                                </option>
+                                {% endfor %}
+                            {% endif %}
+                        </select>
+                        <div class="form-text">Шаблон для параллельного отображения китайского оригинала и русского перевода</div>
+                    </div>
+
                     <hr>
                     <h6 class="mb-3">Настройки парсинга</h6>
                     

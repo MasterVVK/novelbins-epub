@@ -8,6 +8,8 @@ from .prompt_template import PromptTemplate
 from .log_entry import LogEntry
 from .prompt_history import PromptHistory
 from .ai_model import AIModel
+from .bilingual_prompt_template import BilingualPromptTemplate
+from .bilingual_alignment import BilingualAlignment
 
 __all__ = [
     'Novel',
@@ -19,5 +21,7 @@ __all__ = [
     'PromptTemplate',
     'LogEntry',
     'PromptHistory',
-    'AIModel'
+    'AIModel',
+    'BilingualPromptTemplate',
+    'BilingualAlignment'
 ]

@@ -33,6 +33,7 @@ class Chapter(db.Model):
     novel = relationship('Novel', back_populates='chapters')
     translations = relationship('Translation', back_populates='chapter', cascade='all, delete-orphan')
     prompt_history = relationship('PromptHistory', back_populates='chapter', cascade='all, delete-orphan')
+    bilingual_alignment = relationship('BilingualAlignment', back_populates='chapter', uselist=False, cascade='all, delete-orphan')
 
     def __repr__(self):
         return f'<Chapter {self.chapter_number} of {self.novel.title}>'

@@ -52,6 +52,9 @@ class Novel(db.Model):
     # Связь с шаблоном промпта
     prompt_template_id = Column(Integer, ForeignKey('prompt_templates.id'), nullable=True)
 
+    # Связь с шаблоном двуязычного выравнивания
+    bilingual_template_id = Column(Integer, ForeignKey('bilingual_prompt_templates.id'), nullable=True)
+
     # Метаданные
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -61,6 +64,7 @@ class Novel(db.Model):
     glossary_items = relationship('GlossaryItem', back_populates='novel', cascade='all, delete-orphan')
     tasks = relationship('Task', back_populates='novel', cascade='all, delete-orphan')
     prompt_template = relationship('PromptTemplate', back_populates='novels')
+    bilingual_template = relationship('BilingualPromptTemplate', back_populates='novels')
 
     def __repr__(self):
         return f'<Novel {self.title}>'
@@ -108,6 +112,14 @@ class Novel(db.Model):
         if self.prompt_template:
             return self.prompt_template
         return PromptTemplate.get_default_template()
+
+    def get_bilingual_template(self):
+        """Получение шаблона двуязычного выравнивания для новеллы"""
+        if self.bilingual_template:
+            return self.bilingual_template
+        # Импортируем здесь чтобы избежать циклических импортов
+        from app.models.bilingual_prompt_template import BilingualPromptTemplate
+        return BilingualPromptTemplate.get_default_template()
     
     def soft_delete(self):
         """Мягкое удаление новеллы (деактивация)"""

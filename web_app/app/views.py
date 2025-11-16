@@ -361,6 +361,13 @@ def edit_novel(novel_id):
         else:
             novel.prompt_template_id = None
 
+        # Обновляем двуязычный шаблон
+        bilingual_template_id = request.form.get('bilingual_template_id')
+        if bilingual_template_id:
+            novel.bilingual_template_id = int(bilingual_template_id) if bilingual_template_id != 'none' else None
+        else:
+            novel.bilingual_template_id = None
+
         # Обновляем конфигурацию
         if not novel.config:
             novel.config = {}
@@ -501,7 +508,11 @@ def edit_novel(novel_id):
     from app.services.ai_adapter_service import AIAdapterService
     ai_models = AIAdapterService.get_available_models(active_only=True)
 
-    return render_template('edit_novel.html', novel=novel, prompt_templates=prompt_templates, available_sources=available_sources, ai_models=ai_models)
+    # Получаем доступные двуязычные шаблоны
+    from app.services.bilingual_prompt_template_service import BilingualPromptTemplateService
+    bilingual_templates = BilingualPromptTemplateService.get_all_templates()
+
+    return render_template('edit_novel.html', novel=novel, prompt_templates=prompt_templates, available_sources=available_sources, ai_models=ai_models, bilingual_templates=bilingual_templates)
 
 
 @main_bp.route('/novels/<int:novel_id>/delete', methods=['POST'])
@@ -1502,6 +1513,16 @@ def delete_prompt_template(template_id):
     
     flash(f'Шаблон "{template_name}" удален', 'success')
     return redirect(url_for('main.prompt_templates'))
+
+
+@main_bp.route('/bilingual-templates')
+def bilingual_templates():
+    """Страница управления двуязычными шаблонами (LLM выравнивание)"""
+    # Получаем доступные AI модели из базы данных
+    from app.services.ai_adapter_service import AIAdapterService
+    ai_models = AIAdapterService.get_available_models(active_only=True)
+
+    return render_template('bilingual_templates_list.html', ai_models=ai_models)
 
 
 @main_bp.route('/novels/<int:novel_id>/glossary')
