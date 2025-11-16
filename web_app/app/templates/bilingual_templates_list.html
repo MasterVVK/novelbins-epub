@@ -1,0 +1,604 @@
+{% extends "base.html" %}
+
+{% block title %}Двуязычные шаблоны{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="row">
+        <div class="col-12">
+            <div class="card shadow-sm">
+                <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                    <h4 class="mb-0">
+                        <i class="fas fa-language"></i> Двуязычные шаблоны (LLM выравнивание)
+                    </h4>
+                    <button class="btn btn-light btn-sm" onclick="createNewTemplate()">
+                        <i class="fas fa-plus"></i> Новый шаблон
+                    </button>
+                </div>
+
+                <div class="card-body">
+                    <!-- Информация о системе -->
+                    <div class="alert alert-info mb-3">
+                        <i class="fas fa-info-circle"></i>
+                        <strong>О двуязычных шаблонах:</strong> Эти шаблоны используются для LLM-выравнивания китайского оригинала и русского перевода при создании двуязычных EPUB. Результаты кэшируются в БД для ускорения повторных генераций.
+                    </div>
+
+                    <!-- Статистика -->
+                    <div class="row mb-3" id="stats-row">
+                        <div class="col-md-3">
+                            <div class="card bg-light">
+                                <div class="card-body text-center">
+                                    <h5 class="text-muted">Всего шаблонов</h5>
+                                    <h3 id="stat-total">-</h3>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card bg-light">
+                                <div class="card-body text-center">
+                                    <h5 class="text-muted">Выравниваний</h5>
+                                    <h3 id="stat-alignments">-</h3>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card bg-light">
+                                <div class="card-body text-center">
+                                    <h5 class="text-muted">Высокое качество</h5>
+                                    <h3 id="stat-quality">-</h3>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card bg-light">
+                                <div class="card-body text-center">
+                                    <h5 class="text-muted">Новелл с шаблоном</h5>
+                                    <h3 id="stat-novels">-</h3>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Название</th>
+                                    <th>Категория</th>
+                                    <th>Режим</th>
+                                    <th>Модель</th>
+                                    <th>Temperature</th>
+                                    <th>Max Tokens</th>
+                                    <th>Статус</th>
+                                    <th style="width: 250px;">Действия</th>
+                                </tr>
+                            </thead>
+                            <tbody id="templates-list">
+                                <!-- Шаблоны будут загружены через JavaScript -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Модальное окно для копирования -->
+<div class="modal fade" id="copyModal" tabindex="-1" role="dialog">
+    <div class="modal-dialog" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Копирование шаблона</h5>
+                <button type="button" class="close" data-bs-dismiss="modal">
+                    <span>&times;</span>
+                </button>
+            </div>
+            <div class="modal-body">
+                <form id="copyForm">
+                    <input type="hidden" id="templateIdToCopy">
+                    <div class="form-group">
+                        <label for="newTemplateName">Название копии:</label>
+                        <input type="text" class="form-control" id="newTemplateName"
+                               placeholder="Оставьте пустым для автоматического названия">
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                <button type="button" class="btn btn-primary" onclick="confirmCopy()">
+                    <i class="fas fa-copy"></i> Создать копию
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Модальное окно для создания/редактирования шаблона -->
+<div class="modal fade" id="templateModal" tabindex="-1" role="dialog">
+    <div class="modal-dialog modal-lg" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="templateModalTitle">Создание шаблона</h5>
+                <button type="button" class="close" data-bs-dismiss="modal">
+                    <span>&times;</span>
+                </button>
+            </div>
+            <div class="modal-body">
+                <form id="templateForm">
+                    <input type="hidden" id="templateId">
+
+                    <div class="form-group">
+                        <label for="templateName">Название <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="templateName" required
+                               placeholder="Например: Сянься двуязычный">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="templateDescription">Описание</label>
+                        <textarea class="form-control" id="templateDescription" rows="2"
+                                  placeholder="Краткое описание шаблона"></textarea>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="templateCategory">Категория</label>
+                                <select class="form-control" id="templateCategory">
+                                    <option value="xianxia">Сянься</option>
+                                    <option value="wuxia">Уся</option>
+                                    <option value="fantasy">Фэнтези</option>
+                                    <option value="modern">Современный</option>
+                                    <option value="general">Общий</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="templateAlignmentMode">Режим выравнивания</label>
+                                <select class="form-control" id="templateAlignmentMode">
+                                    <option value="sentence">Предложения</option>
+                                    <option value="paragraph">Абзацы</option>
+                                    <option value="semantic_block">Семантические блоки</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="templateDefaultModel">AI Модель по умолчанию</label>
+                        <select class="form-control" id="templateDefaultModel">
+                            <option value="">Не выбрана</option>
+                            {% if ai_models %}
+                                {% for model in ai_models %}
+                                    <option value="{{ model.id }}"
+                                            data-provider="{{ model.provider }}"
+                                            data-name="{{ model.name }}">
+                                        {{ model.name }} ({{ model.provider|upper }})
+                                    </option>
+                                {% endfor %}
+                            {% endif %}
+                        </select>
+                        <small class="form-text text-muted">Модель используется для выравнивания текста</small>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="templateTemperature">Temperature</label>
+                                <input type="number" class="form-control" id="templateTemperature"
+                                       step="0.1" min="0" max="2" value="0.3">
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="templateMaxTokens">Max Tokens</label>
+                                <input type="number" class="form-control" id="templateMaxTokens"
+                                       min="1000" max="100000" value="8000">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="templateAlignmentPrompt">
+                            Промпт выравнивания <span class="text-danger">*</span>
+                            <small class="text-muted">(используйте {chinese_text} и {russian_text})</small>
+                        </label>
+                        <textarea class="form-control" id="templateAlignmentPrompt" rows="10" required
+                                  placeholder="Промпт для LLM выравнивания..."></textarea>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="templateSystemPrompt">Системный промпт (опционально)</label>
+                        <textarea class="form-control" id="templateSystemPrompt" rows="3"
+                                  placeholder="Системный промпт для настройки поведения модели..."></textarea>
+                    </div>
+
+                    <div class="form-check mb-3">
+                        <input type="checkbox" class="form-check-input" id="templateIsDefault">
+                        <label class="form-check-label" for="templateIsDefault">
+                            Установить как шаблон по умолчанию
+                        </label>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                <button type="button" class="btn btn-primary" onclick="saveTemplate()">
+                    <i class="fas fa-save"></i> Сохранить
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Загрузка статистики
+function loadStats() {
+    fetch('/api/bilingual/stats')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                document.getElementById('stat-total').textContent = data.stats.total_templates;
+                document.getElementById('stat-alignments').textContent = data.stats.total_alignments;
+                document.getElementById('stat-quality').textContent =
+                    `${data.stats.high_quality_alignments} (${data.stats.quality_percentage}%)`;
+                document.getElementById('stat-novels').textContent = data.stats.novels_with_template;
+            }
+        })
+        .catch(error => console.error('Ошибка загрузки статистики:', error));
+}
+
+// Загрузка списка шаблонов
+function loadTemplates() {
+    fetch('/api/bilingual/templates')
+        .then(response => response.json())
+        .then(data => {
+            const tbody = document.getElementById('templates-list');
+            tbody.innerHTML = '';
+
+            if (data.templates && data.templates.length > 0) {
+                data.templates.forEach(template => {
+                    const row = createTemplateRow(template);
+                    tbody.appendChild(row);
+                });
+            } else {
+                tbody.innerHTML = '<tr><td colspan="7" class="text-center">Нет доступных шаблонов</td></tr>';
+            }
+        })
+        .catch(error => {
+            console.error('Ошибка загрузки шаблонов:', error);
+            showNotification('Ошибка загрузки шаблонов', 'error');
+        });
+}
+
+// Создание строки таблицы для шаблона
+function createTemplateRow(template) {
+    const tr = document.createElement('tr');
+
+    const categoryBadge = getCategoryBadge(template.category);
+    const statusBadge = template.is_active
+        ? '<span class="badge badge-success">Активен</span>'
+        : '<span class="badge badge-secondary">Неактивен</span>';
+
+    const modeBadge = getModeBadge(template.alignment_mode);
+
+    // Форматирование модели
+    const modelDisplay = template.default_model_name
+        ? `<small>${template.default_model_name}<br><span class="text-muted">(${template.default_model_provider || ''})</span></small>`
+        : '<span class="text-muted">Не выбрана</span>';
+
+    tr.innerHTML = `
+        <td>
+            <strong>${template.name}</strong>
+            ${template.is_default ? '<span class="badge badge-primary ml-2">По умолчанию</span>' : ''}
+        </td>
+        <td>${categoryBadge}</td>
+        <td>${modeBadge}</td>
+        <td>${modelDisplay}</td>
+        <td>${template.temperature || '0.3'}</td>
+        <td>${template.max_tokens || '8000'}</td>
+        <td>${statusBadge}</td>
+        <td>
+            <div class="btn-group btn-group-sm" role="group">
+                <button class="btn btn-outline-primary" onclick="editTemplate(${template.id})"
+                        title="Редактировать">
+                    <i class="fas fa-edit"></i>
+                </button>
+                <button class="btn btn-outline-success" onclick="copyTemplate(${template.id})"
+                        title="Копировать">
+                    <i class="fas fa-copy"></i>
+                </button>
+                ${!template.is_default ? `
+                <button class="btn btn-outline-warning" onclick="setDefault(${template.id})"
+                        title="Сделать по умолчанию">
+                    <i class="fas fa-star"></i>
+                </button>` : ''}
+                <button class="btn btn-outline-danger" onclick="deleteTemplate(${template.id}, '${template.name}')"
+                        title="Удалить">
+                    <i class="fas fa-trash"></i>
+                </button>
+            </div>
+        </td>
+    `;
+
+    return tr;
+}
+
+// Получение бейджа для категории
+function getCategoryBadge(category) {
+    const badges = {
+        'xianxia': '<span class="badge badge-purple">Сянься</span>',
+        'wuxia': '<span class="badge badge-warning">Уся</span>',
+        'modern': '<span class="badge badge-info">Современный</span>',
+        'fantasy': '<span class="badge badge-success">Фэнтези</span>',
+        'general': '<span class="badge badge-secondary">Общий</span>'
+    };
+    return badges[category] || `<span class="badge badge-secondary">${category || 'Общий'}</span>`;
+}
+
+// Получение бейджа для режима выравнивания
+function getModeBadge(mode) {
+    const badges = {
+        'sentence': '<span class="badge badge-info">Предложения</span>',
+        'paragraph': '<span class="badge badge-primary">Абзацы</span>',
+        'semantic_block': '<span class="badge badge-success">Блоки</span>'
+    };
+    return badges[mode] || `<span class="badge badge-secondary">${mode || 'sentence'}</span>`;
+}
+
+// Создание нового шаблона
+function createNewTemplate() {
+    document.getElementById('templateModalTitle').textContent = 'Создание шаблона';
+    document.getElementById('templateId').value = '';
+    document.getElementById('templateForm').reset();
+
+    // Устанавливаем дефолтные значения
+    document.getElementById('templateTemperature').value = '0.3';
+    document.getElementById('templateMaxTokens').value = '8000';
+    document.getElementById('templateCategory').value = 'xianxia';
+    document.getElementById('templateAlignmentMode').value = 'sentence';
+
+    // Bootstrap 5 (без jQuery)
+    const modal = new bootstrap.Modal(document.getElementById('templateModal'));
+    modal.show();
+}
+
+// Редактирование шаблона
+function editTemplate(templateId) {
+    console.log('editTemplate called with ID:', templateId);
+
+    fetch(`/api/bilingual/templates/${templateId}`)
+        .then(response => {
+            console.log('Response status:', response.status);
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            return response.json();
+        })
+        .then(data => {
+            console.log('Data received:', data);
+
+            if (data.success) {
+                const template = data.template;
+                console.log('Template data:', template);
+
+                try {
+                    document.getElementById('templateModalTitle').textContent = 'Редактирование шаблона';
+                    document.getElementById('templateId').value = template.id;
+                    document.getElementById('templateName').value = template.name;
+                    document.getElementById('templateDescription').value = template.description || '';
+                    document.getElementById('templateCategory').value = template.category || 'xianxia';
+                    document.getElementById('templateAlignmentMode').value = template.alignment_mode || 'sentence';
+                    document.getElementById('templateDefaultModel').value = template.default_model_id || '';
+                    document.getElementById('templateTemperature').value = template.temperature || 0.3;
+                    document.getElementById('templateMaxTokens').value = template.max_tokens || 8000;
+                    document.getElementById('templateAlignmentPrompt').value = template.alignment_prompt || '';
+                    document.getElementById('templateSystemPrompt').value = template.system_prompt || '';
+                    document.getElementById('templateIsDefault').checked = template.is_default || false;
+
+                    console.log('Form fields populated successfully');
+
+                    // Bootstrap 5 (без jQuery)
+                    const modalElement = document.getElementById('templateModal');
+                    if (!modalElement) {
+                        throw new Error('Modal element not found!');
+                    }
+
+                    const modal = new bootstrap.Modal(modalElement);
+                    modal.show();
+                    console.log('Modal shown');
+                } catch (err) {
+                    console.error('Error populating form:', err);
+                    showNotification('Ошибка заполнения формы: ' + err.message, 'error');
+                }
+            } else {
+                console.error('API returned error:', data.error);
+                showNotification(data.error || 'Ошибка загрузки шаблона', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Fetch error:', error);
+            showNotification('Ошибка загрузки шаблона: ' + error.message, 'error');
+        });
+}
+
+// Сохранение шаблона
+function saveTemplate() {
+    const templateId = document.getElementById('templateId').value;
+    const isNew = !templateId;
+
+    const defaultModelId = document.getElementById('templateDefaultModel').value;
+
+    const data = {
+        name: document.getElementById('templateName').value,
+        description: document.getElementById('templateDescription').value,
+        category: document.getElementById('templateCategory').value,
+        alignment_mode: document.getElementById('templateAlignmentMode').value,
+        default_model_id: defaultModelId ? parseInt(defaultModelId) : null,
+        temperature: parseFloat(document.getElementById('templateTemperature').value),
+        max_tokens: parseInt(document.getElementById('templateMaxTokens').value),
+        alignment_prompt: document.getElementById('templateAlignmentPrompt').value,
+        system_prompt: document.getElementById('templateSystemPrompt').value,
+        is_default: document.getElementById('templateIsDefault').checked
+    };
+
+    const url = isNew ? '/api/bilingual/templates' : `/api/bilingual/templates/${templateId}`;
+    const method = isNew ? 'POST' : 'PUT';
+
+    fetch(url, {
+        method: method,
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(data)
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Bootstrap 5 (без jQuery)
+            bootstrap.Modal.getInstance(document.getElementById('templateModal')).hide();
+            showNotification(data.message || 'Шаблон успешно сохранён', 'success');
+            loadTemplates();
+            loadStats();
+        } else {
+            showNotification(data.error || 'Ошибка при сохранении', 'error');
+        }
+    })
+    .catch(error => {
+        console.error('Ошибка:', error);
+        showNotification('Ошибка при сохранении шаблона', 'error');
+    });
+}
+
+// Копирование шаблона
+function copyTemplate(templateId) {
+    document.getElementById('templateIdToCopy').value = templateId;
+    document.getElementById('newTemplateName').value = '';
+    // Bootstrap 5 (без jQuery)
+    const modal = new bootstrap.Modal(document.getElementById('copyModal'));
+    modal.show();
+}
+
+// Подтверждение копирования
+function confirmCopy() {
+    const templateId = document.getElementById('templateIdToCopy').value;
+    const newName = document.getElementById('newTemplateName').value;
+
+    const requestData = {};
+    if (newName) requestData.new_name = newName;
+
+    fetch(`/api/bilingual/templates/${templateId}/copy`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(requestData)
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Bootstrap 5 (без jQuery)
+            bootstrap.Modal.getInstance(document.getElementById('copyModal')).hide();
+            showNotification(data.message || 'Шаблон успешно скопирован', 'success');
+            loadTemplates();
+            loadStats();
+        } else {
+            showNotification(data.error || 'Ошибка при копировании', 'error');
+        }
+    })
+    .catch(error => {
+        console.error('Ошибка:', error);
+        showNotification('Ошибка при копировании шаблона', 'error');
+    });
+}
+
+// Установка шаблона по умолчанию
+function setDefault(templateId) {
+    fetch(`/api/bilingual/templates/${templateId}/set-default`, {
+        method: 'POST'
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            showNotification(data.message || 'Шаблон установлен по умолчанию', 'success');
+            loadTemplates();
+        } else {
+            showNotification(data.error || 'Ошибка', 'error');
+        }
+    })
+    .catch(error => {
+        console.error('Ошибка:', error);
+        showNotification('Ошибка при установке шаблона', 'error');
+    });
+}
+
+// Удаление шаблона
+function deleteTemplate(templateId, templateName) {
+    if (confirm(`Вы уверены, что хотите удалить шаблон "${templateName}"?`)) {
+        fetch(`/api/bilingual/templates/${templateId}`, {
+            method: 'DELETE'
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showNotification('Шаблон успешно удалён', 'success');
+                loadTemplates();
+                loadStats();
+            } else {
+                showNotification(data.error || 'Ошибка при удалении', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Ошибка:', error);
+            showNotification('Ошибка при удалении шаблона', 'error');
+        });
+    }
+}
+
+// Функция показа уведомлений
+function showNotification(message, type) {
+    const alertClass = type === 'error' ? 'alert-danger' :
+                      type === 'success' ? 'alert-success' : 'alert-info';
+
+    const alertDiv = document.createElement('div');
+    alertDiv.className = `alert ${alertClass} alert-dismissible fade show position-fixed`;
+    alertDiv.style.top = '20px';
+    alertDiv.style.right = '20px';
+    alertDiv.style.zIndex = '9999';
+    alertDiv.innerHTML = `
+        ${message}
+        <button type="button" class="close" data-bs-dismiss="alert">
+            <span>&times;</span>
+        </button>
+    `;
+
+    document.body.appendChild(alertDiv);
+
+    setTimeout(() => {
+        alertDiv.remove();
+    }, 5000);
+}
+
+// Загрузка при открытии страницы
+document.addEventListener('DOMContentLoaded', function() {
+    loadTemplates();
+    loadStats();
+});
+</script>
+
+<style>
+.badge-purple {
+    background-color: #6f42c1;
+    color: white;
+}
+
+.btn-group-sm .btn {
+    padding: 0.25rem 0.5rem;
+}
+
+.table td {
+    vertical-align: middle;
+}
+</style>
+{% endblock %}
