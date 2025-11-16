@@ -448,6 +448,18 @@
                                 <div class="form-text">По умолчанию: 3 потока. Больше потоков = быстрее, но выше нагрузка на сервер</div>
                             </div>
                         </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="alignment_threads" class="form-label">
+                                    Количество параллельных потоков выравнивания
+                                    <i class="bi bi-info-circle" data-bs-toggle="tooltip" title="Сколько глав обрабатывать одновременно при билингвальном выравнивании (рекомендуется 2-5)"></i>
+                                </label>
+                                <input type="number" class="form-control" id="alignment_threads" name="alignment_threads"
+                                       min="1" max="10" step="1"
+                                       value="{{ novel.config.alignment_threads if novel.config and novel.config.alignment_threads else 3 }}">
+                                <div class="form-text">По умолчанию: 3 потока. Больше потоков = быстрее, но выше нагрузка на сервер</div>
+                            </div>
+                        </div>
                     </div>
 
                     <div class="d-flex justify-content-between">

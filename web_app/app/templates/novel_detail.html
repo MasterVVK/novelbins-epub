@@ -92,6 +92,20 @@
                         </div>
                         <small class="text-muted">{{ novel.editing_progress_percentage }}%</small>
                     </div>
+
+                    <!-- Выравнивание -->
+                    <div class="mb-3">
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <small class="text-muted">
+                                <i class="bi bi-diagram-3 text-info"></i> Выравнивание
+                            </small>
+                            <small class="text-muted">{{ novel.aligned_chapters or 0 }}/{{ novel.total_chapters }} глав</small>
+                        </div>
+                        <div class="progress" style="height: 8px;">
+                            <div class="progress-bar bg-info" style="width: {{ novel.alignment_progress_percentage }}%"></div>
+                        </div>
+                        <small class="text-muted">{{ novel.alignment_progress_percentage }}%</small>
+                    </div>
                 </div>
                 
                 {% if novel.config %}
@@ -171,9 +185,22 @@
                     </div>
                 </div>
 
-                <!-- Вторая строка: дополнительные опции EPUB -->
+                <!-- Вторая строка: билингвальные функции -->
                 <div class="row mt-2">
-                    <div class="col-md-12 mb-2">
+                    <div class="col-md-6 mb-2">
+                        {% if novel.alignment_task_id %}
+                            <button type="button" class="btn btn-outline-danger w-100" onclick="cancelAlignment({{ novel.id }})">
+                                <i class="bi bi-x-circle"></i> Отменить выравнивание
+                            </button>
+                        {% else %}
+                            <form method="POST" action="{{ url_for('main.start_alignment', novel_id=novel.id) }}" style="display: inline; width: 100%;">
+                                <button type="submit" class="btn btn-outline-info w-100">
+                                    <i class="bi bi-diagram-3"></i> Билингвальное выравнивание
+                                </button>
+                            </form>
+                        {% endif %}
+                    </div>
+                    <div class="col-md-6 mb-2">
                         <form method="POST" action="{{ url_for('main.generate_bilingual_epub', novel_id=novel.id) }}" style="display: inline;">
                             <button type="submit" class="btn btn-outline-secondary w-100">
                                 <i class="bi bi-book"></i> Двуязычный EPUB (RU + 中文)
@@ -690,6 +717,32 @@ async function cancelEditing(novelId) {
         }
     } catch (error) {
         alert('❌ Ошибка при отмене редактуры: ' + error.message);
+    }
+}
+
+async function cancelAlignment(novelId) {
+    if (!confirm('Вы уверены, что хотите отменить выравнивание? Текущий прогресс будет сохранён, но незавершённые главы не будут выровнены.')) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/novels/${novelId}/alignment/cancel`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            alert('✅ Выравнивание успешно отменено');
+            location.reload(); // Перезагружаем страницу
+        } else {
+            alert('❌ Ошибка: ' + (data.error || 'Неизвестная ошибка'));
+        }
+    } catch (error) {
+        alert('❌ Ошибка при отмене выравнивания: ' + error.message);
     }
 }
 

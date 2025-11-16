@@ -380,6 +380,7 @@ def edit_novel(novel_id):
         translation_temperature = request.form.get('translation_temperature')
         editing_quality_mode = request.form.get('editing_quality_mode', 'balanced')
         editing_threads = request.form.get('editing_threads')
+        alignment_threads = request.form.get('alignment_threads')
 
         # Определяем температуру редактирования
         if editing_quality_mode == 'custom':
@@ -429,6 +430,7 @@ def edit_novel(novel_id):
             'editing_temperature': float(editing_temperature) if editing_temperature else 0.7,
             'editing_quality_mode': editing_quality_mode or 'balanced',
             'editing_threads': int(editing_threads) if editing_threads else 3,
+            'alignment_threads': int(alignment_threads) if alignment_threads else 3,
             'filter_text': request.form.get('filter_text', '').strip()
         }
         
@@ -874,6 +876,93 @@ def start_editing(novel_id):
     except Exception as e:
         logger.error(f"❌ Ошибка запуска задачи редактуры: {e}")
         flash(f'Ошибка запуска редактуры: {str(e)}', 'error')
+
+    return redirect(url_for('main.novel_detail', novel_id=novel_id))
+
+
+@main_bp.route('/novels/<int:novel_id>/start-alignment', methods=['POST'])
+def start_alignment(novel_id):
+    """Запуск билингвального выравнивания новеллы через Celery"""
+    logger.info(f"🚀 Запрос на выравнивание новеллы {novel_id}")
+    novel = Novel.query.get_or_404(novel_id)
+    logger.info(f"📖 Найдена новелла: {novel.title}")
+
+    # IDEMPOTENCY CHECK: Проверяем, не запущено ли уже выравнивание
+    if novel.alignment_task_id:
+        from celery.result import AsyncResult
+        from app import celery
+
+        # Проверяем статус существующей задачи
+        task_result = AsyncResult(novel.alignment_task_id, app=celery)
+
+        # Если задача активна (PENDING, STARTED, PROGRESS), не запускаем новую
+        if task_result.state in ['PENDING', 'STARTED', 'PROGRESS']:
+            logger.warning(f"⚠️ Выравнивание уже запущено (task_id: {novel.alignment_task_id}, state: {task_result.state})")
+            flash(f'Выравнивание уже запущено (задача: {novel.alignment_task_id[:8]}...)', 'warning')
+            return redirect(url_for('main.novel_detail', novel_id=novel_id))
+        else:
+            # Задача завершена/отменена, можно запустить новую
+            logger.info(f"✅ Предыдущая задача завершена (state: {task_result.state}), запускаем новую")
+            novel.alignment_task_id = None
+            db.session.commit()
+
+    # Получаем главы для выравнивания
+    # ВАЖНО: Только отредактированные (status='edited'), но еще НЕ выровненные
+    chapters = Chapter.query.filter_by(
+        novel_id=novel_id,
+        status='edited'  # Только отредактированные, еще не выровненные
+    ).filter(
+        Chapter.original_text.isnot(None),  # Есть китайский оригинал
+        Chapter.original_text != ''
+    ).order_by(Chapter.chapter_number).all()
+
+    logger.info(f"🔍 Найдено глав для выравнивания: {len(chapters)}")
+    for ch in chapters[:5]:  # Логируем первые 5
+        logger.info(f"  - Глава {ch.chapter_number}: {ch.original_title} (оригинал: {bool(ch.original_text)})")
+
+    if not chapters:
+        logger.warning("❌ Нет глав для выравнивания (нужны отредактированные главы с оригиналом)")
+        flash('Нет глав для выравнивания. Требуются отредактированные главы (status=edited) с китайским оригиналом.', 'warning')
+        return redirect(url_for('main.novel_detail', novel_id=novel_id))
+
+    # Получаем настройку количества потоков из конфига новеллы
+    parallel_threads = 3  # По умолчанию
+    if novel.config:
+        parallel_threads = novel.config.get('alignment_threads', 3)
+
+    # Запускаем Celery задачу выравнивания
+    try:
+        from app.celery_tasks import align_novel_chapters_task
+        from app import celery
+
+        # Отладка: выводим конфигурацию Celery
+        logger.info(f"🔍 Celery broker: {celery.conf.broker_url}")
+        logger.info(f"🔍 Celery backend: {celery.conf.result_backend}")
+
+        chapter_ids = [ch.id for ch in chapters]
+        task = align_novel_chapters_task.apply_async(
+            kwargs={
+                'novel_id': novel_id,
+                'chapter_ids': chapter_ids,
+                'parallel_threads': parallel_threads
+            },
+            queue='czbooks_queue'
+        )
+
+        # Сохраняем ID задачи в новелле
+        novel.alignment_task_id = task.id
+        db.session.commit()
+
+        logger.info(f"✅ Task ID: {task.id}, State: {task.state}")
+        LogService.log_info(
+            f"🎯 Выравнивание запущено через Celery для {len(chapters)} глав (потоков: {parallel_threads})",
+            novel_id=novel_id
+        )
+        flash(f'Выравнивание запущено для {len(chapters)} глав (параллельных потоков: {parallel_threads})', 'success')
+
+    except Exception as e:
+        logger.error(f"❌ Ошибка запуска задачи выравнивания: {e}")
+        flash(f'Ошибка запуска выравнивания: {str(e)}', 'error')
 
     return redirect(url_for('main.novel_detail', novel_id=novel_id))
 

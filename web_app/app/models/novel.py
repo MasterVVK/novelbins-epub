@@ -21,6 +21,7 @@ class Novel(db.Model):
     parsed_chapters = Column(Integer, default=0)
     translated_chapters = Column(Integer, default=0)
     edited_chapters = Column(Integer, default=0)
+    aligned_chapters = Column(Integer, default=0)
 
     # Статус
     status = Column(String(50), default='pending')  # pending, parsing, translating, editing, completed
@@ -48,6 +49,7 @@ class Novel(db.Model):
     # Celery task ID для отслеживания фоновых задач
     parsing_task_id = Column(String(255))  # ID задачи Celery для парсинга
     editing_task_id = Column(String(255))  # ID задачи Celery для редактуры
+    alignment_task_id = Column(String(255))  # ID задачи Celery для выравнивания
 
     # Связь с шаблоном промпта
     prompt_template_id = Column(Integer, ForeignKey('prompt_templates.id'), nullable=True)
@@ -90,11 +92,20 @@ class Novel(db.Model):
             return 0
         return round((self.edited_chapters / self.translated_chapters) * 100, 1)
 
+    @property
+    def alignment_progress_percentage(self):
+        """Процент завершения выравнивания"""
+        if self.total_chapters == 0:
+            return 0
+        aligned = self.aligned_chapters or 0  # Защита от None
+        return round((aligned / self.total_chapters) * 100, 1)
+
     def update_stats(self):
         """Обновление статистики"""
         self.parsed_chapters = len([c for c in self.chapters if c.status == 'parsed'])
         self.translated_chapters = len([c for c in self.chapters if c.status == 'translated'])
         self.edited_chapters = len([c for c in self.chapters if c.status == 'edited'])
+        self.aligned_chapters = len([c for c in self.chapters if c.status == 'aligned'])
         self.total_chapters = len(self.chapters)
 
         # Обновление статуса

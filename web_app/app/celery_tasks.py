@@ -856,3 +856,255 @@ def cancel_editing_task(self, task_id):
             'status': 'error',
             'message': str(e)
         }
+
+
+@celery.task(bind=True, base=CallbackTask, soft_time_limit=172800, time_limit=172800)  # 48 часов
+def align_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
+    """
+    Фоновая задача билингвального выравнивания глав новеллы
+
+    Args:
+        novel_id: ID новеллы
+        chapter_ids: Список ID глав для выравнивания
+        parallel_threads: Количество параллельных потоков (из конфига новеллы)
+    """
+    from app.services.bilingual_alignment_service import BilingualAlignmentService
+    from app.services.log_service import LogService
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from threading import Lock
+
+    # Флаг для отслеживания отмены
+    global _cancel_requested
+    _cancel_requested = False
+
+    # Устанавливаем обработчик сигнала SIGTERM
+    old_handler = signal.signal(signal.SIGTERM, signal_handler)
+
+    # Блокировка для thread-safe доступа к счётчикам
+    counter_lock = Lock()
+
+    try:
+        # Получаем новеллу
+        novel = Novel.query.get(novel_id)
+        if not novel:
+            raise ValueError(f"Novel {novel_id} not found")
+
+        # Обновляем статус
+        novel.status = 'aligning'
+        novel.alignment_task_id = self.request.id
+        db.session.commit()
+
+        # Получаем настройку потоков из конфига новеллы
+        if novel.config:
+            parallel_threads = novel.config.get('alignment_threads', parallel_threads)
+
+        # Получаем главы
+        from app.models import Chapter
+        chapters = Chapter.query.filter(Chapter.id.in_(chapter_ids)).order_by(Chapter.chapter_number).all()
+
+        if not chapters:
+            raise ValueError("Главы не найдены")
+
+        total_chapters = len(chapters)
+        success_count = 0
+        processed_count = 0
+
+        self.update_state(state='PROGRESS', meta={'status': 'Начинаем выравнивание', 'progress': 0})
+        LogService.log_info(
+            f"🔗 [Novel:{novel_id}] Начинаем билингвальное выравнивание {total_chapters} глав(ы) в {parallel_threads} потоков",
+            novel_id=novel_id
+        )
+
+        # Функция для выравнивания одной главы в отдельном потоке
+        def align_single_chapter(chapter_id):
+            nonlocal success_count, processed_count
+
+            # Каждый поток создает свою Flask app context и сессию БД
+            from app import create_app
+            app = create_app()
+
+            with app.app_context():
+                # Загружаем главу и новеллу в контексте текущего потока
+                from app.models import Chapter, Novel
+                from app.models.bilingual_alignment import BilingualAlignment
+
+                chapter = Chapter.query.get(chapter_id)
+                if not chapter:
+                    return False
+
+                # ЗАЩИТА ОТ ДУБЛИРОВАНИЯ: Проверяем, не выровнена ли уже глава
+                existing_alignment = BilingualAlignment.query.filter_by(chapter_id=chapter_id).first()
+                if existing_alignment:
+                    LogService.log_info(
+                        f"✅ [Novel:{novel_id}, Ch:{chapter.chapter_number}] Выравнивание уже существует (пропускаем)",
+                        novel_id=novel_id,
+                        chapter_id=chapter_id
+                    )
+                    with counter_lock:
+                        processed_count += 1
+                        success_count += 1
+                    return True
+
+                # Проверка отмены задачи
+                novel_fresh = Novel.query.get(novel_id)
+                if _cancel_requested or novel_fresh.status == 'alignment_cancelled':
+                    LogService.log_warning(
+                        f"🛑 [Novel:{novel_id}, Ch:{chapter.chapter_number}] Выравнивание отменено",
+                        novel_id=novel_id,
+                        chapter_id=chapter_id
+                    )
+                    return False
+
+                try:
+                    # Создаём сервис в контексте потока
+                    service = BilingualAlignmentService(
+                        template_id=novel_fresh.bilingual_template_id,
+                        model_id=None
+                    )
+
+                    LogService.log_info(
+                        f"🔗 [Novel:{novel_id}, Ch:{chapter.chapter_number}] Начинаем выравнивание",
+                        novel_id=novel_id,
+                        chapter_id=chapter_id
+                    )
+
+                    start_time = datetime.now()
+
+                    # ВЫРАВНИВАНИЕ ГЛАВЫ
+                    alignments = service.align_chapter(
+                        chapter=chapter,
+                        force_refresh=False,  # Не пересоздавать если есть
+                        save_to_cache=True
+                    )
+
+                    duration = (datetime.now() - start_time).total_seconds()
+
+                    if alignments:
+                        # Обновляем статус главы на 'aligned'
+                        chapter.status = 'aligned'
+
+                        # Обновляем счётчик в новелле (thread-safe)
+                        with counter_lock:
+                            novel_fresh.aligned_chapters = Novel.query.get(novel_id).aligned_chapters or 0
+                            novel_fresh.aligned_chapters += 1
+                            db.session.commit()
+                            processed_count += 1
+                            success_count += 1
+
+                        LogService.log_info(
+                            f"✅ [Novel:{novel_id}, Ch:{chapter.chapter_number}] Выравнивание завершено за {duration:.1f}с ({len(alignments)} пар) → status='aligned'",
+                            novel_id=novel_id,
+                            chapter_id=chapter_id
+                        )
+                        return True
+                    else:
+                        LogService.log_error(
+                            f"❌ [Novel:{novel_id}, Ch:{chapter.chapter_number}] Выравнивание вернуло пустой результат",
+                            novel_id=novel_id,
+                            chapter_id=chapter_id
+                        )
+                        with counter_lock:
+                            processed_count += 1
+                        return False
+
+                except Exception as e:
+                    LogService.log_error(
+                        f"❌ [Novel:{novel_id}, Ch:{chapter.chapter_number}] Ошибка выравнивания: {e}",
+                        novel_id=novel_id,
+                        chapter_id=chapter_id
+                    )
+                    with counter_lock:
+                        processed_count += 1
+                    return False
+
+        # Параллельное выравнивание глав
+        LogService.log_info(
+            f"🚀 [Novel:{novel_id}] Запускаем {parallel_threads} потоков для выравнивания {total_chapters} глав",
+            novel_id=novel_id
+        )
+
+        with ThreadPoolExecutor(max_workers=parallel_threads) as executor:
+            # Запускаем задачи
+            futures = {executor.submit(align_single_chapter, ch_id): ch_id
+                      for ch_id in chapter_ids}
+
+            # Обрабатываем результаты по мере выполнения
+            for future in as_completed(futures):
+                chapter_id = futures[future]
+
+                try:
+                    result = future.result()
+
+                    # Обновляем прогресс
+                    progress = int((processed_count / total_chapters) * 100)
+                    self.update_state(
+                        state='PROGRESS',
+                        meta={
+                            'status': f'Обработано {processed_count}/{total_chapters} глав',
+                            'progress': progress,
+                            'success_count': success_count,
+                            'processed_count': processed_count
+                        }
+                    )
+
+                    # Логируем прогресс каждые 10%
+                    if processed_count % max(1, total_chapters // 10) == 0:
+                        LogService.log_info(
+                            f"📊 [Novel:{novel_id}] Прогресс выравнивания: {processed_count}/{total_chapters} ({progress}%) | Успешно: {success_count}",
+                            novel_id=novel_id
+                        )
+
+                except Exception as e:
+                    LogService.log_error(
+                        f"❌ [Novel:{novel_id}] Ошибка в потоке выравнивания: {e}",
+                        novel_id=novel_id
+                    )
+
+        # Финальный статус
+        if success_count == total_chapters:
+            novel.status = 'completed'
+            LogService.log_info(
+                f"✅ [Novel:{novel_id}] Выравнивание завершено успешно: {success_count}/{total_chapters} глав",
+                novel_id=novel_id
+            )
+        else:
+            novel.status = 'partial_alignment'
+            LogService.log_warning(
+                f"⚠️ [Novel:{novel_id}] Выравнивание завершено частично: {success_count}/{total_chapters} глав",
+                novel_id=novel_id
+            )
+
+        novel.alignment_task_id = None
+        db.session.commit()
+
+        return {
+            'status': 'completed',
+            'total': total_chapters,
+            'success': success_count,
+            'failed': total_chapters - success_count
+        }
+
+    except Exception as e:
+        LogService.log_error(f"❌ [Novel:{novel_id}] Критическая ошибка выравнивания: {e}", novel_id=novel_id)
+
+        # Обновляем статус на ошибку
+        novel = Novel.query.get(novel_id)
+        if novel:
+            novel.status = 'alignment_error'
+            novel.alignment_task_id = None
+            db.session.commit()
+
+        raise
+
+    finally:
+        # Восстанавливаем старый обработчик сигнала
+        signal.signal(signal.SIGTERM, old_handler)
+
+        # Гарантированно очищаем alignment_task_id даже если что-то пошло не так
+        try:
+            novel = Novel.query.get(novel_id)
+            if novel and novel.alignment_task_id == self.request.id:
+                novel.alignment_task_id = None
+                db.session.commit()
+        except:
+            pass  # Игнорируем ошибки при очистке
