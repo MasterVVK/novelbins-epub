@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import List, Optional, Dict
 import sqlite3
 import logging
+import re
 
 # Добавляем путь к корневой папке проекта для импорта модулей
 project_root = Path(__file__).parent.parent.parent.parent
@@ -40,6 +41,33 @@ class EPUBService:
         # Создаем папку для EPUB файлов
         self.epub_dir = Path(app.instance_path) / 'epub_output'
         self.epub_dir.mkdir(exist_ok=True)
+
+    @staticmethod
+    def clean_markdown(text: str) -> str:
+        """
+        Очистка текста от базовой Markdown разметки для использования в EPUB заголовках
+
+        Args:
+            text: Текст с возможной Markdown разметкой
+
+        Returns:
+            Текст без Markdown разметки
+        """
+        if not text:
+            return text
+
+        # Удаляем жирный текст: **текст** или __текст__
+        text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
+        text = re.sub(r'__(.+?)__', r'\1', text)
+
+        # Удаляем курсив: *текст* или _текст_
+        text = re.sub(r'\*(.+?)\*', r'\1', text)
+        text = re.sub(r'_(.+?)_', r'\1', text)
+
+        # Удаляем зачеркнутый текст: ~~текст~~
+        text = re.sub(r'~~(.+?)~~', r'\1', text)
+
+        return text
 
     def get_edited_chapters_from_db(self, novel_id: int, chapter_numbers: Optional[List[int]] = None) -> List[Dict]:
         """Получение отредактированных глав из базы данных web_app"""
@@ -81,9 +109,12 @@ class EPUBService:
             if is_edited:
                 edited_count += 1
 
+            # Очищаем Markdown разметку из заголовка для EPUB
+            clean_title = self.clean_markdown(final_title) if final_title else f"Глава {chapter.chapter_number}"
+
             result.append({
                 'number': chapter.chapter_number,
-                'title': final_title or f"Глава {chapter.chapter_number}",
+                'title': clean_title,
                 'content': final_text,
                 'summary': current_translation.summary if current_translation else None,
                 'is_edited': is_edited,
