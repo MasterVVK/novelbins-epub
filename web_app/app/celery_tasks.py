@@ -933,9 +933,11 @@ def align_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
                 if not chapter:
                     return False
 
-                # ЗАЩИТА ОТ ДУБЛИРОВАНИЯ: Проверяем, не выровнена ли уже глава
+                # ЗАЩИТА ОТ ДУБЛИРОВАНИЯ: Проверяем alignment и статус главы
                 existing_alignment = BilingualAlignment.query.filter_by(chapter_id=chapter_id).first()
-                if existing_alignment:
+
+                # Пропускаем только если alignment существует И статус = 'aligned'
+                if existing_alignment and chapter.status == 'aligned':
                     LogService.log_info(
                         f"✅ [Novel:{novel_id}, Ch:{chapter.chapter_number}] Выравнивание уже существует (пропускаем)",
                         novel_id=novel_id,
@@ -945,6 +947,16 @@ def align_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
                         processed_count += 1
                         success_count += 1
                     return True
+
+                # Если alignment существует, но статус изменен - пересоздаем
+                if existing_alignment and chapter.status != 'aligned':
+                    BilingualAlignment.query.filter_by(chapter_id=chapter_id).delete()
+                    db.session.commit()
+                    LogService.log_info(
+                        f"🔄 [Novel:{novel_id}, Ch:{chapter.chapter_number}] Статус изменен на '{chapter.status}', пересоздаем сопоставление",
+                        novel_id=novel_id,
+                        chapter_id=chapter_id
+                    )
 
                 # Проверка отмены задачи
                 novel_fresh = Novel.query.get(novel_id)

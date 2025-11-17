@@ -123,79 +123,153 @@ class BilingualAlignmentService:
 
         prompt = self._build_alignment_prompt(template, russian_text, chinese_text)
 
-        # 6. Запрос к LLM
-        try:
-            ai_adapter = AIAdapterService(
-                model_id=model_id_to_use,
-                chapter_id=chapter.id
-            )
+        # 6. Запрос к LLM с повторными попытками при потере текста
+        max_attempts = 3
+        # Прогрессивное снижение порога покрытия:
+        # Попытка 1: 98% (строго)
+        # Попытка 2: 96% (менее строго)
+        # Попытка 3: 95% (минимально приемлемо)
+        coverage_thresholds = {
+            1: 0.98,
+            2: 0.96,
+            3: 0.95
+        }
 
-            start_time = datetime.now()
-
-            # Вызываем асинхронный метод через asyncio.run()
-            result = asyncio.run(ai_adapter.generate_content(
-                system_prompt=template.system_prompt if template.system_prompt else "",
-                user_prompt=prompt,
-                temperature=template.temperature,
-                max_tokens=template.max_tokens
-            ))
-
-            duration = (datetime.now() - start_time).total_seconds()
-
-            # Проверяем успешность
-            if not result.get('success'):
-                raise Exception(result.get('error', 'Unknown error from AI adapter'))
-
-            response = result['content']
-
-            LogService.log_info(
-                f"{log_prefix} LLM выравнивание завершено за {duration:.1f}с (модель: {ai_adapter.model.name})",
-                novel_id=chapter.novel_id,
-                chapter_id=chapter.id
-            )
-
-        except Exception as e:
-            LogService.log_error(
-                f"{log_prefix} Ошибка LLM выравнивания: {e}",
-                novel_id=chapter.novel_id,
-                chapter_id=chapter.id
-            )
-            # Fallback на regex-выравнивание
-            return self._fallback_regex_alignment(russian_text, chinese_text, chapter)
-
-        # 6. Парсинг JSON ответа
-        try:
-            alignment_result = self._parse_llm_response(response)
-        except Exception as e:
-            LogService.log_error(
-                f"{log_prefix} Ошибка парсинга JSON: {e}",
-                novel_id=chapter.novel_id,
-                chapter_id=chapter.id
-            )
-            return self._fallback_regex_alignment(russian_text, chinese_text, chapter)
-
-        # 7. Валидация
-        is_valid, quality_score, coverage_ru, coverage_zh, avg_confidence = self._validate_alignment(
-            alignment_result.get('alignments', []),
-            russian_text,
-            chinese_text
-        )
-
-        if not is_valid:
-            LogService.log_warning(
-                f"{log_prefix} Низкое качество выравнивания (score={quality_score:.2f}), используем fallback",
-                novel_id=chapter.novel_id,
-                chapter_id=chapter.id
-            )
-            return self._fallback_regex_alignment(russian_text, chinese_text, chapter)
-
-        LogService.log_info(
-            f"{log_prefix} ✅ Выравнивание успешно: {len(alignment_result['alignments'])} пар, качество {quality_score:.2f}",
-            novel_id=chapter.novel_id,
+        ai_adapter = AIAdapterService(
+            model_id=model_id_to_use,
             chapter_id=chapter.id
         )
 
-        # 8. Сохранение в кэш
+        alignment_result = None
+        quality_score = 0.0
+        coverage_ru = 0.0
+        coverage_zh = 0.0
+        avg_confidence = 0.0
+
+        for attempt in range(1, max_attempts + 1):
+            # Порог для текущей попытки
+            min_volume_coverage = coverage_thresholds[attempt]
+            try:
+                LogService.log_info(
+                    f"{log_prefix} Попытка {attempt}/{max_attempts} LLM выравнивания (порог покрытия: {min_volume_coverage * 100:.0f}%)",
+                    novel_id=chapter.novel_id,
+                    chapter_id=chapter.id
+                )
+
+                start_time = datetime.now()
+
+                # Вызываем асинхронный метод через asyncio.run()
+                result = asyncio.run(ai_adapter.generate_content(
+                    system_prompt=template.system_prompt if template.system_prompt else "",
+                    user_prompt=prompt,
+                    temperature=template.temperature,
+                    max_tokens=template.max_tokens
+                ))
+
+                duration = (datetime.now() - start_time).total_seconds()
+
+                # Проверяем успешность
+                if not result.get('success'):
+                    raise Exception(result.get('error', 'Unknown error from AI adapter'))
+
+                response = result['content']
+
+                LogService.log_info(
+                    f"{log_prefix} LLM запрос завершен за {duration:.1f}с (модель: {ai_adapter.model.name})",
+                    novel_id=chapter.novel_id,
+                    chapter_id=chapter.id
+                )
+
+                # Парсинг JSON ответа
+                try:
+                    alignment_result = self._parse_llm_response(response)
+                except Exception as e:
+                    LogService.log_error(
+                        f"{log_prefix} Ошибка парсинга JSON (попытка {attempt}): {e}",
+                        novel_id=chapter.novel_id,
+                        chapter_id=chapter.id
+                    )
+                    if attempt == max_attempts:
+                        return self._fallback_regex_alignment(russian_text, chinese_text, chapter)
+                    continue
+
+                # Валидация качества
+                is_valid, quality_score, coverage_ru, coverage_zh, avg_confidence = self._validate_alignment(
+                    alignment_result.get('alignments', []),
+                    russian_text,
+                    chinese_text
+                )
+
+                if not is_valid:
+                    LogService.log_warning(
+                        f"{log_prefix} Низкое качество выравнивания (score={quality_score:.2f}, попытка {attempt})",
+                        novel_id=chapter.novel_id,
+                        chapter_id=chapter.id
+                    )
+                    if attempt == max_attempts:
+                        return self._fallback_regex_alignment(russian_text, chinese_text, chapter)
+                    continue
+
+                # ПРОВЕРКА ОБЪЕМА ТЕКСТА
+                volume_valid, volume_stats = self._check_volume_integrity(
+                    alignment_result.get('alignments', []),
+                    russian_text,
+                    chinese_text,
+                    min_coverage=min_volume_coverage
+                )
+
+                LogService.log_info(
+                    f"{log_prefix} Проверка объема (попытка {attempt}, порог {min_volume_coverage * 100:.0f}%): RU {volume_stats['coverage_ru_percent']}, ZH {volume_stats['coverage_zh_percent']}",
+                    novel_id=chapter.novel_id,
+                    chapter_id=chapter.id
+                )
+
+                if not volume_valid:
+                    LogService.log_warning(
+                        f"{log_prefix} ⚠️ Потеря текста при сопоставлении! RU: {volume_stats['coverage_ru_percent']} (нужно ≥{min_volume_coverage * 100:.0f}%), ZH: {volume_stats['coverage_zh_percent']} (нужно ≥{min_volume_coverage * 100:.0f}%)",
+                        novel_id=chapter.novel_id,
+                        chapter_id=chapter.id
+                    )
+
+                    if attempt < max_attempts:
+                        next_threshold = coverage_thresholds[attempt + 1]
+                        LogService.log_info(
+                            f"{log_prefix} 🔄 Повторяем запрос к LLM для восстановления текста (следующий порог: {next_threshold * 100:.0f}%)...",
+                            novel_id=chapter.novel_id,
+                            chapter_id=chapter.id
+                        )
+                        continue
+                    else:
+                        LogService.log_error(
+                            f"{log_prefix} ❌ Не удалось достичь минимального покрытия ({coverage_thresholds[3] * 100:.0f}%) за {max_attempts} попыток, используем fallback",
+                            novel_id=chapter.novel_id,
+                            chapter_id=chapter.id
+                        )
+                        return self._fallback_regex_alignment(russian_text, chinese_text, chapter)
+
+                # Все проверки пройдены!
+                LogService.log_info(
+                    f"{log_prefix} ✅ Выравнивание успешно (попытка {attempt}): {len(alignment_result['alignments'])} пар, качество {quality_score:.2f}, покрытие RU {volume_stats['coverage_ru_percent']}, ZH {volume_stats['coverage_zh_percent']}",
+                    novel_id=chapter.novel_id,
+                    chapter_id=chapter.id
+                )
+                break  # Успешно, выходим из цикла
+
+            except Exception as e:
+                LogService.log_error(
+                    f"{log_prefix} Ошибка LLM выравнивания (попытка {attempt}): {e}",
+                    novel_id=chapter.novel_id,
+                    chapter_id=chapter.id
+                )
+                if attempt == max_attempts:
+                    return self._fallback_regex_alignment(russian_text, chinese_text, chapter)
+                continue
+
+        # Если все попытки не дали результата
+        if not alignment_result:
+            return self._fallback_regex_alignment(russian_text, chinese_text, chapter)
+
+        # 7. Сохранение в кэш
         if save_to_cache:
             self._save_to_cache(
                 chapter=chapter,
@@ -239,17 +313,38 @@ class BilingualAlignmentService:
         russian_text: str,
         chinese_text: str
     ) -> str:
-        """Построение промпта для LLM"""
-        # Заполняем шаблон
-        prompt = template.alignment_prompt.format(
-            chinese_text=chinese_text,
-            russian_text=russian_text
-        )
+        """Построение промпта для LLM с экранированием фигурных скобок"""
+        try:
+            # Шаг 1: Экранируем все фигурные скобки в шаблоне
+            # { → {{ и } → }}
+            escaped_template = template.alignment_prompt.replace('{', '{{').replace('}', '}}')
 
-        return prompt
+            # Шаг 2: Возвращаем обратно наши плейсхолдеры
+            # {{chinese_text}} → {chinese_text}
+            # {{russian_text}} → {russian_text}
+            escaped_template = escaped_template.replace('{{chinese_text}}', '{chinese_text}')
+            escaped_template = escaped_template.replace('{{russian_text}}', '{russian_text}')
+
+            # Шаг 3: Теперь безопасно вызываем format()
+            prompt = escaped_template.format(
+                chinese_text=chinese_text,
+                russian_text=russian_text
+            )
+
+            logger.info(f"Промпт успешно сформирован (длина: {len(prompt)} символов)")
+            return prompt
+
+        except Exception as e:
+            logger.error(f"Ошибка при форматировании промпта: {e}")
+            logger.error(f"Шаблон промпта (первые 500 символов): {template.alignment_prompt[:500]}")
+            raise
 
     def _parse_llm_response(self, response: str) -> Dict:
-        """Парсинг JSON ответа от LLM"""
+        """Парсинг JSON ответа от LLM с улучшенной обработкой ошибок"""
+        import re
+
+        original_response = response  # Сохраняем для логирования
+
         # Удаляем markdown блоки если есть
         response = response.strip()
         if response.startswith('```json'):
@@ -260,14 +355,47 @@ class BilingualAlignmentService:
             response = response[:-3]
         response = response.strip()
 
-        # Парсим JSON
-        result = json.loads(response)
+        # Попытка 1: Прямой парсинг JSON
+        try:
+            result = json.loads(response)
 
-        # Проверяем структуру
-        if 'alignments' not in result:
-            raise ValueError("Отсутствует поле 'alignments' в JSON ответе")
+            # Проверяем структуру
+            if 'alignments' not in result:
+                raise ValueError("Отсутствует поле 'alignments' в JSON ответе")
 
-        return result
+            return result
+
+        except json.JSONDecodeError as e:
+            logger.warning(f"Прямой парсинг JSON не удался: {e}")
+
+            # Попытка 2: Ищем JSON блок через regex
+            # Паттерн: ищем { ... "alignments": [ ... ] ... }
+            json_pattern = r'\{[\s\S]*?"alignments"[\s\S]*?\][\s\S]*?\}'
+            matches = re.findall(json_pattern, response)
+
+            if matches:
+                # Берем самое длинное совпадение (скорее всего полный JSON)
+                json_candidate = max(matches, key=len)
+
+                try:
+                    result = json.loads(json_candidate)
+
+                    if 'alignments' not in result:
+                        raise ValueError("Отсутствует поле 'alignments' в найденном JSON")
+
+                    logger.info(f"JSON успешно извлечен через regex (длина: {len(json_candidate)} символов)")
+                    return result
+
+                except json.JSONDecodeError as e2:
+                    logger.error(f"Regex извлечение также не удалось: {e2}")
+                    logger.error(f"Найденный кандидат JSON (первые 500 символов): {json_candidate[:500]}")
+
+            # Попытка 3: Логируем исходный ответ и выбрасываем исключение
+            logger.error(f"Не удалось распарсить JSON ответ от LLM")
+            logger.error(f"Исходный ответ (первые 1000 символов):\n{original_response[:1000]}")
+            logger.error(f"После очистки (первые 1000 символов):\n{response[:1000]}")
+
+            raise ValueError(f"Не удалось распарсить JSON: {e}")
 
     def _validate_alignment(
         self,
@@ -302,6 +430,82 @@ class BilingualAlignmentService:
         is_valid = coverage_ru > 0.8 and coverage_zh > 0.8 and avg_confidence > 0.6
 
         return is_valid, quality_score, coverage_ru, coverage_zh, avg_confidence
+
+    def _check_volume_integrity(
+        self,
+        alignments: List[Dict],
+        russian_text: str,
+        chinese_text: str,
+        min_coverage: float = 0.95
+    ) -> Tuple[bool, Dict]:
+        """
+        Проверка целостности объема текста при сопоставлении
+        Игнорирует переносы строк, проверяет только текстовый контент
+
+        Args:
+            alignments: Список пар сопоставления
+            russian_text: Исходный русский текст
+            chinese_text: Исходный китайский текст
+            min_coverage: Минимальное покрытие (по умолчанию 95%)
+
+        Returns:
+            (is_valid, stats): Флаг валидности и статистика
+        """
+        if not alignments:
+            return False, {'error': 'Empty alignments'}
+
+        # Складываем все пары
+        aligned_ru_text = ''.join(pair.get('ru', '') for pair in alignments)
+        aligned_zh_text = ''.join(pair.get('zh', '') for pair in alignments)
+
+        # УБИРАЕМ ПЕРЕНОСЫ СТРОК для проверки чистого текстового контента
+        # Исходные тексты
+        original_ru_clean = russian_text.replace('\n', '')
+        original_zh_clean = chinese_text.replace('\n', '')
+
+        # Сопоставленные тексты
+        aligned_ru_clean = aligned_ru_text.replace('\n', '')
+        aligned_zh_clean = aligned_zh_text.replace('\n', '')
+
+        # Длины с переносами (для информации)
+        original_ru_length = len(russian_text)
+        original_zh_length = len(chinese_text)
+        aligned_ru_length = len(aligned_ru_text)
+        aligned_zh_length = len(aligned_zh_text)
+
+        # Длины без переносов (для реальной проверки)
+        original_ru_clean_length = len(original_ru_clean)
+        original_zh_clean_length = len(original_zh_clean)
+        aligned_ru_clean_length = len(aligned_ru_clean)
+        aligned_zh_clean_length = len(aligned_zh_clean)
+
+        # Вычисляем покрытие БЕЗ переносов строк
+        coverage_ru = aligned_ru_clean_length / original_ru_clean_length if original_ru_clean_length > 0 else 0
+        coverage_zh = aligned_zh_clean_length / original_zh_clean_length if original_zh_clean_length > 0 else 0
+
+        # Проверяем: покрытие должно быть >= min_coverage
+        is_valid = coverage_ru >= min_coverage and coverage_zh >= min_coverage
+
+        stats = {
+            # С переносами (для информации)
+            'original_ru_length': original_ru_length,
+            'original_zh_length': original_zh_length,
+            'aligned_ru_length': aligned_ru_length,
+            'aligned_zh_length': aligned_zh_length,
+            # БЕЗ переносов (реальная проверка)
+            'original_ru_clean_length': original_ru_clean_length,
+            'original_zh_clean_length': original_zh_clean_length,
+            'aligned_ru_clean_length': aligned_ru_clean_length,
+            'aligned_zh_clean_length': aligned_zh_clean_length,
+            # Покрытие
+            'coverage_ru': coverage_ru,
+            'coverage_zh': coverage_zh,
+            'coverage_ru_percent': f'{coverage_ru * 100:.2f}%',
+            'coverage_zh_percent': f'{coverage_zh * 100:.2f}%',
+            'is_valid': is_valid
+        }
+
+        return is_valid, stats
 
     def _save_to_cache(
         self,
