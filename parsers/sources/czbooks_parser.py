@@ -591,7 +591,7 @@ class CZBooksParser(BaseParser):
                 print(f"   📊 Китайских символов: {chinese_chars}")
                 return True
 
-    def _get_page_with_selenium(self, url: str, wait_selector: str = None, wait_time: int = 15) -> str:
+    def _get_page_with_selenium(self, url: str, wait_selector: str = None, wait_time: int = 15, _retry_count: int = 0) -> str:
         """
         Загрузка страницы через Selenium с обходом Cloudflare
 
@@ -599,11 +599,23 @@ class CZBooksParser(BaseParser):
             url: URL страницы
             wait_selector: CSS селектор для ожидания (опционально)
             wait_time: Максимальное время ожидания в секундах
+            _retry_count: Внутренний счетчик попыток retry (по умолчанию 0)
 
         Returns:
             HTML содержимое страницы
         """
-        # Проверяем, нужен ли перезапуск браузера
+        # Защита от бесконечного retry
+        MAX_RETRIES = 3
+        if _retry_count >= MAX_RETRIES:
+            print(f"   ❌ Достигнут лимит retry ({MAX_RETRIES}), возвращаем текущее состояние")
+            return self.driver.page_source if self.driver else ""
+
+        # Проактивная проверка: если накоплено много ошибок - профилактический перезапуск
+        if self.consecutive_errors >= 5:
+            print(f"   🔥 Накоплено {self.consecutive_errors} последовательных ошибок - профилактический перезапуск")
+            self.restart_driver(force_kill_chrome=True)
+
+        # Проверяем, нужен ли перезапуск браузера по счетчику запросов
         self.request_count += 1
         if self.request_count >= self.max_requests_before_restart:
             print(f"   📊 Достигнут лимит запросов ({self.request_count}/{self.max_requests_before_restart}), перезапускаем браузер...")
@@ -632,7 +644,72 @@ class CZBooksParser(BaseParser):
                     print(f"   ✅ Элемент найден")
                 except Exception as e:
                     print(f"   ⚠️ Таймаут ожидания селектора: {e}")
-                    # Продолжаем даже если селектор не найден
+
+                    # ДИАГНОСТИКА: Проверяем состояние страницы
+                    page_source = self.driver.page_source
+                    page_size = len(page_source)
+                    chinese_chars = len([c for c in page_source if '\u4e00' <= c <= '\u9fff'])
+
+                    print(f"   📊 Размер страницы: {page_size}, Китайских символов: {chinese_chars}")
+
+                    # ВАЖНАЯ ПРОВЕРКА: Если много китайского текста - страница загружена корректно
+                    # Таймаут селектора означает что селектор не подходит, а НЕ что браузер сломан
+                    if chinese_chars > 1000:
+                        print(f"   ✅ Страница содержит много китайского текста ({chinese_chars} символов)")
+                        print(f"   ℹ️ Селектор '{wait_selector}' не найден - возможно czbooks изменил структуру HTML")
+                        print(f"   ✅ Браузер работает корректно, продолжаем парсинг (парсер сам найдет контент)")
+                        self.consecutive_errors = 0  # Сбрасываем - это НЕ ошибка браузера!
+                        # НЕ делаем retry - продолжаем с текущей страницей
+                        # get_chapter_content() сам разберется с извлечением через _extract_chapter_content()
+
+                    # Инкрементируем счетчик ошибок ТОЛЬКО если мало контента
+                    else:
+                        self.consecutive_errors += 1
+
+                    # КРИТИЧЕСКАЯ ПРОВЕРКА: Если 3+ последовательных ошибки селектора И мало контента
+                    if self.consecutive_errors >= 3:
+                        print(f"\n{'='*60}")
+                        print(f"   🔥 КРИТИЧЕСКАЯ СИТУАЦИЯ")
+                        print(f"   Последовательных ошибок: {self.consecutive_errors}")
+                        print(f"   Причина: Таймаут ожидания селектора контента")
+                        print(f"   Действие: Принудительный перезапуск Chrome")
+                        print(f"{'='*60}\n")
+
+                        # Сохраняем HTML для диагностики
+                        try:
+                            debug_file = f"/tmp/czbooks_selector_timeout_{int(time.time())}.html"
+                            with open(debug_file, 'w', encoding='utf-8') as f:
+                                f.write(page_source)
+                            print(f"   💾 HTML сохранен для анализа: {debug_file}")
+                        except Exception as save_err:
+                            print(f"   ⚠️ Не удалось сохранить HTML: {save_err}")
+
+                        # Перезапуск с force_kill (убиваем зависшие процессы)
+                        self.restart_driver(force_kill_chrome=True)
+
+                        # Retry ТЕКУЩЕЙ страницы после перезапуска
+                        print(f"   🔄 Повторная попытка загрузки после перезапуска...")
+                        return self._get_page_with_selenium(url, wait_selector, wait_time, _retry_count + 1)
+
+                    # Если страница пустая или сильно поврежденная - немедленный restart
+                    if page_size < 5000 or chinese_chars < 100:
+                        print(f"   ❌ Страница пустая или поврежденная (размер: {page_size}, китайских: {chinese_chars})")
+                        print(f"   🔄 Немедленный перезапуск браузера и retry...")
+
+                        # Сохраняем HTML для диагностики
+                        try:
+                            debug_file = f"/tmp/czbooks_empty_page_{int(time.time())}.html"
+                            with open(debug_file, 'w', encoding='utf-8') as f:
+                                f.write(page_source[:10000])  # Первые 10KB
+                            print(f"   💾 HTML сохранен: {debug_file}")
+                        except:
+                            pass
+
+                        self.restart_driver(force_kill_chrome=True)
+                        return self._get_page_with_selenium(url, wait_selector, wait_time, _retry_count + 1)
+
+                    # Иначе: селектор не найден, но страница не пустая - продолжаем с предупреждением
+                    print(f"   ⚠️ Селектор не найден, но страница не пустая (ошибка {self.consecutive_errors}/3) - продолжаем...")
 
             # Дополнительная проверка на Cloudflare challenge
             page_source = self.driver.page_source
@@ -784,17 +861,52 @@ class CZBooksParser(BaseParser):
                 self.consecutive_errors = 0
                 return page_source
             elif page_size > 5000:
-                # Большая страница БЕЗ реального контента - вероятно Cloudflare
+                # Большая страница БЕЗ реального контента
                 print(f"   ⚠️ Страница загружена ({page_size} символов), но НЕТ реального контента")
                 print(f"   📊 Китайских символов: {chinese_chars}")
-                print(f"   ⚠️ Возможно это Cloudflare challenge страница!")
+                print(f"   ⚠️ Возможно это Cloudflare challenge страница или битое состояние браузера")
+
+                # Сохраняем HTML для диагностики
+                try:
+                    debug_file = f"/tmp/czbooks_no_content_{int(time.time())}.html"
+                    with open(debug_file, 'w', encoding='utf-8') as f:
+                        f.write(page_source[:20000])  # Первые 20KB
+                    print(f"   💾 HTML сохранен для анализа: {debug_file}")
+                except:
+                    pass
+
                 self.consecutive_errors += 1
-                # Пробуем вернуть как есть - может парсер справится
-                return page_source
+
+                # КРИТИЧЕСКАЯ ПРОВЕРКА: Если 3+ ошибок подряд - перезапуск и retry
+                if self.consecutive_errors >= 3:
+                    print(f"   🔥 Критическое состояние ({self.consecutive_errors} ошибок) - перезапуск Chrome и retry")
+                    self.restart_driver(force_kill_chrome=True)
+                    return self._get_page_with_selenium(url, wait_selector, wait_time, _retry_count + 1)
+
+                # Если <3 ошибок - retry с задержкой БЕЗ перезапуска
+                print(f"   🔄 Retry через 5 секунд (попытка {_retry_count + 1}/{MAX_RETRIES})...")
+                time.sleep(5)
+                return self._get_page_with_selenium(url, wait_selector, wait_time, _retry_count + 1)
+
             else:
+                # Подозрительно малый размер страницы
                 print(f"   ⚠️ Подозрительно малый размер страницы: {page_size}")
+
+                # Сохраняем для диагностики
+                try:
+                    debug_file = f"/tmp/czbooks_small_page_{int(time.time())}.html"
+                    with open(debug_file, 'w', encoding='utf-8') as f:
+                        f.write(page_source)
+                    print(f"   💾 HTML сохранен: {debug_file}")
+                except:
+                    pass
+
                 self.consecutive_errors += 1
-                return page_source
+
+                # Малая страница - немедленный перезапуск и retry
+                print(f"   🔄 Перезапуск браузера и retry...")
+                self.restart_driver(force_kill_chrome=True)
+                return self._get_page_with_selenium(url, wait_selector, wait_time, _retry_count + 1)
 
         except Exception as e:
             print(f"   ❌ Ошибка загрузки страницы: {e}")
