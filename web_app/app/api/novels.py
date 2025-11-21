@@ -462,4 +462,70 @@ def get_extension_version():
         return jsonify({
             'success': False,
             'error': str(e)
+        }), 500
+
+
+@novels_bp.route('/novels/<int:novel_id>/status', methods=['GET'])
+def get_novel_status(novel_id):
+    """
+    Получение текущего статуса новеллы для real-time polling
+    Используется для обновления UI без перезагрузки страницы
+    """
+    try:
+        novel = Novel.query.get(novel_id)
+        if not novel:
+            return jsonify({
+                'success': False,
+                'error': 'Новелла не найдена'
+            }), 404
+
+        # Проверяем наличие активных задач
+        has_active_tasks = bool(
+            novel.parsing_task_id or
+            novel.editing_task_id or
+            novel.alignment_task_id or
+            novel.epub_generation_task_id
+        )
+
+        # Формируем ответ с полной информацией о статусе
+        response = {
+            'success': True,
+            'novel_id': novel.id,
+            'status': novel.status or 'unknown',
+            'has_active_tasks': has_active_tasks,
+
+            # Активные задачи
+            'tasks': {
+                'parsing': novel.parsing_task_id,
+                'editing': novel.editing_task_id,
+                'alignment': novel.alignment_task_id,
+                'epub_generation': novel.epub_generation_task_id
+            },
+
+            # Прогресс
+            'progress': {
+                'total_chapters': novel.total_chapters or 0,
+                'parsed_chapters': novel.parsed_chapters or 0,
+                'translated_chapters': novel.translated_chapters or 0,
+                'edited_chapters': novel.edited_chapters or 0,
+                'aligned_chapters': novel.aligned_chapters or 0,
+
+                # Проценты
+                'parsing_percentage': novel.parsing_progress_percentage,
+                'translation_percentage': novel.progress_percentage,
+                'editing_percentage': novel.editing_progress_percentage,
+                'alignment_percentage': novel.alignment_progress_percentage
+            },
+
+            # Дополнительная информация
+            'epub_path': novel.epub_path,
+            'updated_at': novel.updated_at.isoformat() if novel.updated_at else None
+        }
+
+        return jsonify(response)
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
         }), 500 

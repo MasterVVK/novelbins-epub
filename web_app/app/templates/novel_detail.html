@@ -907,5 +907,330 @@ document.addEventListener('DOMContentLoaded', function() {
     }, 500);
 });
 {% endif %}
+
+// ============================================================================
+// Real-time UI Updates через AJAX Polling
+// ============================================================================
+
+let pollingInterval = null;
+let previousStatus = null;
+
+/**
+ * Опрашивает API для получения актуального статуса новеллы
+ */
+async function pollNovelStatus(novelId) {
+    try {
+        const response = await fetch(`/api/novels/${novelId}/status`);
+        const data = await response.json();
+
+        if (data.success) {
+            updateUIFromStatus(data);
+
+            // Останавливаем polling если нет активных задач
+            if (!data.has_active_tasks && pollingInterval) {
+                console.log('✅ Все задачи завершены, останавливаем polling');
+                stopPolling();
+
+                // Показываем уведомление
+                showNotification('Все задачи завершены!', 'success');
+            }
+        }
+    } catch (error) {
+        console.error('Ошибка при опросе статуса:', error);
+    }
+}
+
+/**
+ * Обновляет UI на основе полученного статуса
+ */
+function updateUIFromStatus(data) {
+    const novelId = data.novel_id;
+
+    // 1. Обновляем счетчики глав
+    updateChapterCounts(data.progress);
+
+    // 2. Обновляем прогресс-бары
+    updateProgressBars(data.progress);
+
+    // 3. Обновляем кнопки действий
+    updateActionButtons(novelId, data.tasks);
+
+    // 4. Обновляем статус EPUB
+    updateEpubStatus(novelId, data.status, data.tasks.epub_generation, data.epub_path);
+
+    // Сохраняем текущий статус для следующей итерации
+    previousStatus = data;
+}
+
+/**
+ * Обновляет счетчики глав в информационной карточке
+ */
+function updateChapterCounts(progress) {
+    // Находим элементы с текстом через селекторы
+    const rows = document.querySelectorAll('.card-body .row .col-md-6 p');
+
+    rows.forEach(p => {
+        const text = p.textContent;
+
+        if (text.includes('Всего глав:')) {
+            p.innerHTML = `<strong>Всего глав:</strong> ${progress.total_chapters}`;
+        } else if (text.includes('Переведено:')) {
+            p.innerHTML = `<strong>Переведено:</strong> ${progress.translated_chapters}`;
+        } else if (text.includes('Отредактировано:')) {
+            p.innerHTML = `<strong>Отредактировано:</strong> ${progress.edited_chapters}`;
+        }
+    });
+}
+
+/**
+ * Обновляет все прогресс-бары
+ */
+function updateProgressBars(progress) {
+    // Парсинг
+    updateProgressBar('parsing', progress.parsed_chapters, progress.total_chapters, progress.parsing_percentage);
+
+    // Перевод
+    updateProgressBar('translation', progress.translated_chapters, progress.total_chapters, progress.translation_percentage);
+
+    // Редактура
+    const editingTotal = progress.translated_chapters > 0 ? progress.translated_chapters : progress.total_chapters;
+    updateProgressBar('editing', progress.edited_chapters, editingTotal, progress.editing_percentage);
+
+    // Сопоставление
+    updateProgressBar('alignment', progress.aligned_chapters, progress.total_chapters, progress.alignment_percentage);
+}
+
+/**
+ * Обновляет один прогресс-бар
+ */
+function updateProgressBar(type, current, total, percentage) {
+    // Ищем прогресс-бар по содержимому (иконки)
+    const icons = {
+        'parsing': 'bi-download',
+        'translation': 'bi-translate',
+        'editing': 'bi-pencil-square',
+        'alignment': 'bi-diagram-3'
+    };
+
+    const icon = document.querySelector(`.${icons[type]}`);
+    if (!icon) return;
+
+    // Находим родительский контейнер с прогресс-баром
+    const container = icon.closest('.mb-3');
+    if (!container) return;
+
+    // Обновляем текст счетчика
+    const counterText = container.querySelector('.d-flex .text-muted:last-child');
+    if (counterText) {
+        counterText.textContent = `${current}/${total} глав`;
+    }
+
+    // Обновляем прогресс-бар
+    const progressBar = container.querySelector('.progress-bar');
+    if (progressBar) {
+        progressBar.style.width = `${percentage}%`;
+    }
+
+    // Обновляем процент
+    const percentText = container.querySelector('small.text-muted:last-child');
+    if (percentText) {
+        percentText.textContent = `${percentage}%`;
+    }
+}
+
+/**
+ * Обновляет кнопки действий (показывает/скрывает кнопки отмены, disabled состояния)
+ */
+function updateActionButtons(novelId, tasks) {
+    // Парсинг
+    updateTaskButton('parsing', tasks.parsing, novelId, 'парсинг', 'Парсинг', 'download');
+
+    // Редактура
+    updateTaskButton('editing', tasks.editing, novelId, 'редактуру', 'Редактура', 'pencil-square');
+
+    // Сопоставление
+    updateTaskButton('alignment', tasks.alignment, novelId, 'сопоставление', 'Сопоставление с оригиналом', 'diagram-3');
+}
+
+/**
+ * Обновляет одну кнопку задачи (парсинг/редактура/сопоставление)
+ */
+function updateTaskButton(taskType, taskId, novelId, cancelText, buttonText, iconName) {
+    const cancelFunctions = {
+        'parsing': 'cancelParsing',
+        'editing': 'cancelEditing',
+        'alignment': 'cancelAlignment'
+    };
+
+    // Находим контейнер кнопки (col-md-3 или col-md-6)
+    const buttons = document.querySelectorAll('button, form');
+    let targetContainer = null;
+
+    buttons.forEach(el => {
+        const text = el.textContent || el.querySelector('button')?.textContent || '';
+        if (text.includes(buttonText) || text.includes(`Отменить ${cancelText}`)) {
+            targetContainer = el.closest('.col-md-3, .col-md-6');
+        }
+    });
+
+    if (!targetContainer) return;
+
+    // Если есть активная задача - показываем кнопку отмены
+    if (taskId) {
+        targetContainer.innerHTML = `
+            <button type="button" class="btn btn-outline-danger w-100" onclick="${cancelFunctions[taskType]}(${novelId})">
+                <i class="bi bi-x-circle"></i> Отменить ${cancelText}
+            </button>
+        `;
+    } else {
+        // Если задачи нет - показываем кнопку запуска
+        const routes = {
+            'parsing': `/novels/${novelId}/parse`,
+            'editing': `/novels/${novelId}/edit`,
+            'alignment': `/novels/${novelId}/alignment`
+        };
+
+        const colors = {
+            'parsing': 'primary',
+            'editing': 'warning',
+            'alignment': 'info'
+        };
+
+        targetContainer.innerHTML = `
+            <form method="POST" action="${routes[taskType]}" style="display: inline; width: 100%;">
+                <button type="submit" class="btn btn-outline-${colors[taskType]} w-100">
+                    <i class="bi bi-${iconName}"></i> ${buttonText}
+                </button>
+            </form>
+        `;
+    }
+}
+
+/**
+ * Обновляет статус генерации двуязычного EPUB
+ */
+function updateEpubStatus(novelId, novelStatus, epubTaskId, epubPath) {
+    // Обновляем кнопку генерации EPUB
+    const epubButton = document.querySelector('button[type="submit"]:has(.bi-book)') ||
+                       document.querySelector('form button:has(.bi-book)');
+
+    if (epubButton) {
+        const isGenerating = epubTaskId || novelStatus === 'generating_epub';
+
+        epubButton.disabled = isGenerating;
+
+        if (isGenerating) {
+            epubButton.innerHTML = `
+                <i class="bi bi-book"></i>
+                <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+                Генерируется...
+            `;
+        } else {
+            epubButton.innerHTML = `
+                <i class="bi bi-book"></i>
+                Двуязычный EPUB (RU + 中文)
+            `;
+        }
+    }
+
+    // Обновляем блок статуса EPUB (если существует)
+    // Находим alert с текстом "Двуязычный EPUB"
+    const alerts = document.querySelectorAll('.alert');
+    let epubAlert = null;
+
+    alerts.forEach(alert => {
+        if (alert.textContent.includes('Двуязычный EPUB')) {
+            epubAlert = alert;
+        }
+    });
+
+    if (epubAlert) {
+        // Обновляем существующий alert
+        if (novelStatus === 'epub_generated') {
+            epubAlert.className = 'alert alert-success';
+            epubAlert.innerHTML = `
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <i class="bi bi-book"></i>
+                        <strong>Двуязычный EPUB:</strong>
+                        Готов к скачиванию
+                    </div>
+                    <div>
+                        <a href="/novels/${novelId}/download-bilingual-epub" class="btn btn-success btn-sm">
+                            <i class="bi bi-download"></i> Скачать
+                        </a>
+                    </div>
+                </div>
+            `;
+        } else if (novelStatus === 'generating_epub') {
+            epubAlert.className = 'alert alert-warning';
+            epubAlert.innerHTML = `
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <i class="bi bi-book"></i>
+                        <strong>Двуязычный EPUB:</strong>
+                        <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+                        Создается... (смотрите логи в <a href="/console-test" target="_blank">консоли</a>)
+                    </div>
+                    <div>
+                        <button class="btn btn-danger btn-sm" onclick="cancelEpubGeneration(${novelId})">
+                            <i class="bi bi-x-circle"></i> Отменить
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+    }
+}
+
+/**
+ * Запускает polling
+ */
+function startPolling(novelId, intervalMs = 2000) {
+    if (pollingInterval) {
+        console.log('⚠️ Polling уже запущен');
+        return;
+    }
+
+    console.log(`🔄 Запускаем polling для новеллы ${novelId} (интервал: ${intervalMs}ms)`);
+
+    // Первый запрос сразу
+    pollNovelStatus(novelId);
+
+    // Затем каждые intervalMs миллисекунд
+    pollingInterval = setInterval(() => {
+        pollNovelStatus(novelId);
+    }, intervalMs);
+}
+
+/**
+ * Останавливает polling
+ */
+function stopPolling() {
+    if (pollingInterval) {
+        clearInterval(pollingInterval);
+        pollingInterval = null;
+        console.log('🛑 Polling остановлен');
+    }
+}
+
+// Автоматически запускаем polling при загрузке страницы если есть активные задачи
+document.addEventListener('DOMContentLoaded', function() {
+    const novelId = {{ novel.id }};
+    const hasActiveTasks = {{ 'true' if (novel.parsing_task_id or novel.editing_task_id or novel.alignment_task_id or novel.epub_generation_task_id) else 'false' }};
+
+    if (hasActiveTasks) {
+        console.log('✅ Обнаружены активные задачи, запускаем polling');
+        startPolling(novelId, 2000); // Опрашиваем каждые 2 секунды
+    } else {
+        console.log('ℹ️ Активных задач нет, polling не требуется');
+    }
+});
+
+// Останавливаем polling при уходе со страницы
+window.addEventListener('beforeunload', function() {
+    stopPolling();
+});
+
 </script>
 {% endblock %} 
