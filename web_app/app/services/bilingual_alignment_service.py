@@ -74,11 +74,7 @@ class BilingualAlignmentService:
         if not force_refresh:
             cached = BilingualAlignment.query.filter_by(chapter_id=chapter.id).first()
             if cached:
-                LogService.log_info(
-                    f"{log_prefix} Использован кэш выравнивания (quality={cached.quality_score:.2f}, метод={cached.alignment_method})",
-                    novel_id=chapter.novel_id,
-                    chapter_id=chapter.id
-                )
+                # Убран лог для уменьшения шума - кэш используется автоматически
                 return cached.alignment_data.get('alignments', [])
 
         # 2. Проверяем наличие данных

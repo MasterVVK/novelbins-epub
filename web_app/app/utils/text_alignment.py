@@ -2,7 +2,7 @@
 Модуль для выравнивания русского и китайского текста на уровне предложений
 """
 import re
-from typing import List, Tuple
+from typing import List, Tuple, Dict, Set, Optional
 
 
 class BilingualTextAligner:
@@ -144,18 +144,32 @@ class BilingualTextAligner:
     @staticmethod
     def format_for_epub(aligned_pairs: List[Tuple[str, str]],
                        mode: str = 'sentence',
-                       style: str = 'alternating') -> str:
+                       style: str = 'alternating',
+                       glossary_dict: Optional[Dict[str, Dict]] = None,
+                       include_glossary_section: bool = True) -> Tuple[str, Set[str]]:
         """
-        Форматирует выравненные пары для EPUB
+        Форматирует выравненные пары для EPUB с выделением терминов глоссария
 
         Args:
             aligned_pairs: Список пар (русский, китайский)
             mode: 'sentence' или 'paragraph'
             style: 'alternating' (чередование) или 'parallel' (параллельно)
+            glossary_dict: Словарь терминов глоссария {chinese_term: {russian, description, category}}
+            include_glossary_section: Включать ли секцию терминов в конце
 
         Returns:
-            HTML-строка для EPUB
+            (html_content, used_terms_set) - кортеж из HTML контента и множества использованных терминов
         """
+        from app.utils.glossary_highlighter import GlossaryHighlighter
+
+        # Если есть глоссарий, обрабатываем термины
+        if glossary_dict:
+            aligned_pairs, used_terms = GlossaryHighlighter.process_aligned_pairs(
+                aligned_pairs, glossary_dict
+            )
+        else:
+            used_terms = set()
+
         if style == 'alternating':
             # Чередование: сначала русский, потом китайский
             html_parts = []
@@ -163,8 +177,19 @@ class BilingualTextAligner:
                 if ru:
                     html_parts.append(f'<p class="russian-sentence">{ru}</p>')
                 if zh:
+                    # zh уже содержит <strong> теги, если были термины!
                     html_parts.append(f'<p class="chinese-sentence">{zh}</p>')
-            return '\n'.join(html_parts)
+
+            content_html = '\n'.join(html_parts)
+
+            # Добавляем секцию терминов в конец
+            if include_glossary_section and used_terms and glossary_dict:
+                glossary_section = GlossaryHighlighter.format_glossary_section(
+                    used_terms, glossary_dict
+                )
+                content_html += '\n' + glossary_section
+
+            return content_html, used_terms
 
         elif style == 'parallel':
             # Параллельный текст: русский и китайский в одной строке
@@ -176,7 +201,17 @@ class BilingualTextAligner:
                     <div class="chinese-column">{zh if zh else ''}</div>
                 </div>
                 ''')
-            return '\n'.join(html_parts)
+
+            content_html = '\n'.join(html_parts)
+
+            # Добавляем секцию терминов в конец
+            if include_glossary_section and used_terms and glossary_dict:
+                glossary_section = GlossaryHighlighter.format_glossary_section(
+                    used_terms, glossary_dict
+                )
+                content_html += '\n' + glossary_section
+
+            return content_html, used_terms
 
         else:
             raise ValueError(f"Unknown style: {style}")

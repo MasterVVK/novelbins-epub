@@ -59,18 +59,20 @@ def get_console_stats() -> Dict[str, Any]:
     """Возвращает статистику консольного буфера"""
     levels = {}
     sources = {}
-    
-    for log in console_buffer:
+
+    buffer = get_console_buffer()
+
+    for log in buffer:
         level = log['level']
         source = log['source']
-        
+
         levels[level] = levels.get(level, 0) + 1
         sources[source] = sources.get(source, 0) + 1
-    
+
     return {
-        'total': len(console_buffer),
+        'total': len(buffer),
         'levels': levels,
         'sources': sources,
-        'buffer_size': len(console_buffer),
+        'buffer_size': len(buffer),
         'max_buffer_size': MAX_BUFFER_SIZE
     } 

@@ -26,6 +26,9 @@ DatabaseManager = None
 
 logger = logging.getLogger(__name__)
 
+# Импортируем LogService для вывода в консоль
+from app.services.log_service import LogService
+
 
 class EPUBService:
     """Сервис для генерации EPUB файлов"""
@@ -594,12 +597,54 @@ class EPUBService:
         toc_list = []
         spine_list = ['nav', title_page, info_page, toc_page]
 
-        # Добавляем главы
-        for chapter in chapters:
-            ch = self._create_bilingual_chapter_page(chapter, nav_css, novel_id)
-            book.add_item(ch)
-            spine_list.append(ch)
-            toc_list.append(ch)
+        # Проверка что EPUBService инициализирован с Flask app
+        if not self.app:
+            raise RuntimeError(
+                "EPUBService не инициализирован с Flask приложением. "
+                "Используйте: EPUBService(current_app)"
+            )
+
+        # Загружаем глоссарий ОДИН РАЗ для всей новеллы (оптимизация)
+        from app.models import GlossaryItem
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        from flask import has_app_context
+        import time
+        import threading
+
+        logger.info(f"🔍 Основной поток: has_app_context = {has_app_context()}")
+
+        # Загружаем глоссарий с app_context (если его нет в основном потоке)
+        if has_app_context():
+            glossary_dict = GlossaryItem.get_chinese_terms_dict(novel_id)
+        else:
+            with self.app.app_context():
+                glossary_dict = GlossaryItem.get_chinese_terms_dict(novel_id)
+
+        LogService.log_info(f"📖 Загружен глоссарий для EPUB: {len(glossary_dict)} терминов", novel_id=novel_id)
+
+        # Последовательная обработка глав (без ThreadPoolExecutor)
+        LogService.log_info(f"🔨 Последовательная обработка {len(chapters)} глав", novel_id=novel_id)
+
+        start_time = time.time()
+
+        # Обрабатываем главы последовательно в основном потоке
+        for i, chapter in enumerate(chapters, 1):
+            try:
+                ch = self._create_bilingual_chapter_page(chapter, nav_css, novel_id, glossary_dict, chapter_index=i)
+                book.add_item(ch)
+                spine_list.append(ch)
+                toc_list.append(ch)
+
+                # Логируем прогресс каждую 100-ю главу
+                if i % 100 == 0:
+                    LogService.log_info(f"   Обработано {i}/{len(chapters)} глав", novel_id=novel_id)
+
+            except Exception as e:
+                logger.error(f"❌ Ошибка при обработке главы {chapter['number']}: {e}")
+                raise
+
+        elapsed = time.time() - start_time
+        LogService.log_info(f"✅ Все главы обработаны за {elapsed:.1f}с (скорость: {len(chapters)/elapsed:.1f} глав/сек)", novel_id=novel_id)
 
         # Настройка навигации
         toc_sections = [
@@ -720,6 +765,66 @@ class EPUBService:
             flex: 1;
             padding-left: 1em;
             font-family: "Noto Serif CJK SC", "Source Han Serif SC", "SimSun", serif;
+        }
+
+        /* Стили для секции глоссария */
+        .glossary-section {
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            padding: 1.5em;
+            margin: 2em 0;
+            font-size: 0.95em;
+        }
+
+        .glossary-section h3 {
+            font-size: 1.2em;
+            color: #2c3e50;
+            margin: 0 0 1em 0;
+            text-align: center;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 0.5em;
+        }
+
+        .glossary-category {
+            font-size: 1.05em;
+            color: #34495e;
+            margin: 1.2em 0 0.5em 0;
+            font-weight: bold;
+        }
+
+        .glossary-list {
+            margin: 0.5em 0 1em 2em;
+        }
+
+        .glossary-term-zh {
+            font-family: "Noto Serif CJK SC", "Source Han Serif SC", "SimSun", serif;
+            font-size: 1.1em;
+            font-weight: bold;
+            color: #2c3e50;
+            margin-top: 0.8em;
+        }
+
+        .glossary-term-ru {
+            font-family: "Times New Roman", "Georgia", serif;
+            color: #555;
+            margin: 0.2em 0 0.2em 1.5em;
+        }
+
+        .glossary-term-desc {
+            font-size: 0.9em;
+            font-style: italic;
+            color: #666;
+            margin: 0.2em 0 0.5em 1.5em;
+        }
+
+        /* Выделение терминов в китайском тексте */
+        .chinese-sentence strong {
+            color: #c0392b;
+            font-weight: bold;
+            background-color: #ffe6e6;
+            padding: 0 0.2em;
+            border-radius: 2px;
         }
         """
 
@@ -850,59 +955,87 @@ class EPUBService:
 
         return toc_page
 
-    def _create_bilingual_chapter_page(self, chapter: Dict, nav_css: epub.EpubItem, novel_id: int) -> epub.EpubHtml:
+    def _create_bilingual_chapter_page(self, chapter: Dict, nav_css: epub.EpubItem, novel_id: int, glossary_dict: Optional[Dict] = None, chapter_index: int = 0) -> epub.EpubHtml:
         """Создание страницы главы с двуязычным содержимым (с LLM выравниванием)"""
         from app.utils.text_alignment import BilingualTextAligner
         from app.models import Chapter, Novel
         from app.services.bilingual_alignment_service import BilingualAlignmentService
         from app import db
+        import time
 
-        # Получаем объект новеллы для настроек префикса
+        # Замер времени обработки главы
+        chapter_start_time = time.time()
+        timings = {}  # Словарь для хранения времени каждого этапа
+
+        # Этап 1: Загрузка Novel из БД
+        t1 = time.time()
         novel = Novel.query.get(novel_id)
+        timings['load_novel'] = time.time() - t1
 
-        # Получаем полный объект главы из базы данных (по novel_id И chapter_number!)
+        # Глоссарий передаётся извне (загружен один раз для всей новеллы)
+        if glossary_dict is None:
+            glossary_dict = {}
+
+        # Этап 2: Загрузка Chapter из БД
+        t2 = time.time()
         db_chapter = Chapter.query.filter_by(
             novel_id=novel_id,
             chapter_number=chapter['number']
         ).first()
-
-        logger.info(f"📖 Создание двуязычной главы {chapter['number']}: novel_id={novel_id}")
+        timings['load_chapter'] = time.time() - t2
 
         if not db_chapter:
             logger.warning(f"⚠️  Глава {chapter['number']} не найдена в БД для novel_id={novel_id}")
             content_html = f'<p class="russian-sentence">{chapter["content"]}</p>'
+            used_terms = set()
         elif not db_chapter.original_text:
             logger.warning(f"⚠️  Глава {chapter['number']}: нет оригинального текста (original_text пуст)")
             logger.info(f"   Заголовок главы: {db_chapter.original_title}")
             content_html = f'<p class="russian-sentence">{chapter["content"]}</p>'
+            used_terms = set()
         else:
             # Используем LLM выравнивание
-            logger.info(f"✅ Глава {chapter['number']}: начинаем LLM выравнивание")
-            logger.info(f"   Заголовок: {db_chapter.original_title}")
+            # Логи только каждую 100-ю главу для уменьшения шума
+            verbose = (chapter_index % 100 == 0)
 
-            # Создаем сервис LLM выравнивания
+            if verbose:
+                LogService.log_info(f"✅ Глава {chapter['number']}: начинаем LLM выравнивание", novel_id=novel_id)
+                LogService.log_info(f"   Заголовок: {db_chapter.original_title}", novel_id=novel_id)
+
+            # Этап 3: Получение выравнивания
+            t3 = time.time()
             alignment_service = BilingualAlignmentService()
-
-            # Получаем выравнивание (из кэша или создаем новое)
             alignments = alignment_service.align_chapter(
                 chapter=db_chapter,
                 force_refresh=False,  # Используем кэш если есть
                 save_to_cache=True    # Сохраняем результат
             )
+            timings['alignment'] = time.time() - t3
 
-            logger.info(f"   Получено выравнивание: {len(alignments)} пар")
+            if verbose:
+                LogService.log_info(f"   Получено выравнивание: {len(alignments)} пар", novel_id=novel_id)
 
-            # Конвертируем формат LLM [{ru, zh, type, confidence}] в формат для EPUB [(ru, zh)]
+            # Этап 4: Конвертация формата
+            t4 = time.time()
             aligned_pairs = [(pair['ru'], pair['zh']) for pair in alignments]
+            timings['convert_format'] = time.time() - t4
 
-            # Форматируем для EPUB (чередование)
-            content_html = BilingualTextAligner.format_for_epub(
+            # Этап 5: Форматирование для EPUB с глоссарием
+            t5 = time.time()
+            content_html, used_terms = BilingualTextAligner.format_for_epub(
                 aligned_pairs,
                 mode='sentence',
-                style='alternating'
+                style='alternating',
+                glossary_dict=glossary_dict,
+                include_glossary_section=True
             )
+            timings['format_epub'] = time.time() - t5
 
-        # Форматируем заголовок главы с учетом настроек новеллы
+            if verbose:
+                LogService.log_info(f"   Использовано терминов глоссария: {len(used_terms)}", novel_id=novel_id)
+
+        # Этап 6: Форматирование заголовка
+        t6 = time.time()
         if novel:
             # Если префикс пустой, то не добавляем префикс вообще (согласно подсказке в форме)
             if novel.epub_chapter_prefix_text == '':
@@ -926,7 +1059,10 @@ class EPUBService:
                 prefix_mode='auto',
                 prefix_text='Глава'
             )
+        timings['format_title'] = time.time() - t6
 
+        # Этап 7: Создание HTML контента
+        t7 = time.time()
         chapter_content = f"""
         <!DOCTYPE html>
         <html>
@@ -940,12 +1076,26 @@ class EPUBService:
         </body>
         </html>
         """
+        timings['create_html'] = time.time() - t7
 
+        # Этап 8: Создание EPUB страницы
+        t8 = time.time()
         chapter_page = epub.EpubHtml(
             title=formatted_title,
             file_name=f'chapter_{chapter["number"]:03d}.xhtml',
             content=chapter_content
         )
         chapter_page.add_item(nav_css)
+        timings['create_epub_page'] = time.time() - t8
+
+        # Логируем детальное время обработки главы (только каждую 100-ю)
+        if chapter_index % 100 == 0:
+            chapter_elapsed = time.time() - chapter_start_time
+
+            # Формируем строку с топ-3 самых медленных этапов
+            sorted_timings = sorted(timings.items(), key=lambda x: x[1], reverse=True)
+            top3 = ', '.join([f"{name}={val*1000:.0f}ms" for name, val in sorted_timings[:3]])
+
+            LogService.log_info(f"   ⏱️  Глава обработана за {chapter_elapsed:.2f}с | Топ-3: {top3}", novel_id=novel_id)
 
         return chapter_page 

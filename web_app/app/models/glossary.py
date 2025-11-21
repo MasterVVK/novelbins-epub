@@ -48,7 +48,7 @@ class GlossaryItem(db.Model):
     def get_glossary_dict(cls, novel_id):
         """Получение глоссария в виде словаря для промптов"""
         items = cls.query.filter_by(novel_id=novel_id, is_active=True).all()
-        
+
         glossary = {
             'characters': {},
             'locations': {},
@@ -56,12 +56,42 @@ class GlossaryItem(db.Model):
             'techniques': {},
             'artifacts': {}
         }
-        
+
         for item in items:
             if item.category in glossary:
                 glossary[item.category][item.english_term] = item.russian_term
-        
+
         return glossary
+
+    @classmethod
+    def get_chinese_terms_dict(cls, novel_id):
+        """
+        Получить словарь: китайский_термин → (русский, описание, категория)
+
+        Примечание: В поле english_term фактически хранятся китайские иероглифы
+
+        Returns:
+            {
+                "李楊": {
+                    "russian": "Ли Ян",
+                    "description": "...",
+                    "category": "characters"
+                },
+                ...
+            }
+        """
+        items = cls.query.filter_by(novel_id=novel_id, is_active=True).all()
+        result = {}
+
+        for item in items:
+            if item.english_term:  # Фактически это китайский термин
+                result[item.english_term] = {
+                    'russian': item.russian_term,
+                    'description': item.description or '',
+                    'category': item.category
+                }
+
+        return result
     
     def increment_usage(self):
         """Увеличение счетчика использования"""
