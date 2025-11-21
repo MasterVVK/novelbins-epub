@@ -4,6 +4,7 @@
 import json
 import logging
 import asyncio
+import time
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime
 
@@ -22,14 +23,24 @@ class BilingualAlignmentService:
     Аналог OriginalAwareEditorService, но для выравнивания, а не редактуры.
     """
 
-    def __init__(self, model_id: Optional[int] = None, template_id: Optional[int] = None):
+    def __init__(
+        self,
+        model_id: Optional[int] = None,
+        template_id: Optional[int] = None,
+        max_parse_retries: int = 2,
+        parse_retry_delay: int = 20
+    ):
         """
         Args:
             model_id: ID AI модели для выравнивания (если None - используется дефолтная)
             template_id: ID шаблона промпта (если None - используется дефолтный или из новеллы)
+            max_parse_retries: Количество повторных попыток при ошибке парсинга JSON (по умолчанию 2)
+            parse_retry_delay: Задержка в секундах между retry попытками парсинга (по умолчанию 20)
         """
         self.model_id = model_id
         self.template_id = template_id
+        self.max_parse_retries = max_parse_retries
+        self.parse_retry_delay = parse_retry_delay
 
     def align_chapter(
         self,
@@ -149,121 +160,197 @@ class BilingualAlignmentService:
         for attempt in range(1, max_attempts + 1):
             # Порог для текущей попытки
             min_volume_coverage = coverage_thresholds[attempt]
-            try:
-                LogService.log_info(
-                    f"{log_prefix} Попытка {attempt}/{max_attempts} LLM выравнивания (порог покрытия: {min_volume_coverage * 100:.0f}%)",
+
+            # ПРОВЕРКА ОТМЕНЫ: Перед каждой попыткой проверяем статус новеллы
+            from app.models import Novel
+            novel_check = Novel.query.get(chapter.novel_id)
+            if novel_check and novel_check.status == 'alignment_cancelled':
+                LogService.log_warning(
+                    f"{log_prefix} 🛑 Выравнивание отменено пользователем (статус: alignment_cancelled)",
                     novel_id=chapter.novel_id,
                     chapter_id=chapter.id
                 )
+                return []  # Прерываем выравнивание
 
-                start_time = datetime.now()
+            # НОВОЕ: Вложенный цикл retry для парсинга JSON
+            parse_success = False
 
-                # Вызываем асинхронный метод через asyncio.run()
-                result = asyncio.run(ai_adapter.generate_content(
-                    system_prompt=template.system_prompt if template.system_prompt else "",
-                    user_prompt=prompt,
-                    temperature=template.temperature,
-                    max_tokens=template.max_tokens
-                ))
+            for parse_retry in range(1, self.max_parse_retries + 1):
+                # ПРОВЕРКА ОТМЕНЫ: Перед каждым retry также проверяем
+                novel_check = Novel.query.get(chapter.novel_id)
+                if novel_check and novel_check.status == 'alignment_cancelled':
+                    LogService.log_warning(
+                        f"{log_prefix} 🛑 Выравнивание отменено (retry {parse_retry})",
+                        novel_id=chapter.novel_id,
+                        chapter_id=chapter.id
+                    )
+                    return []
 
-                duration = (datetime.now() - start_time).total_seconds()
-
-                # Проверяем успешность
-                if not result.get('success'):
-                    raise Exception(result.get('error', 'Unknown error from AI adapter'))
-
-                response = result['content']
-
-                LogService.log_info(
-                    f"{log_prefix} LLM запрос завершен за {duration:.1f}с (модель: {ai_adapter.model.name})",
-                    novel_id=chapter.novel_id,
-                    chapter_id=chapter.id
-                )
-
-                # Парсинг JSON ответа
                 try:
-                    alignment_result = self._parse_llm_response(response)
-                except Exception as e:
-                    LogService.log_error(
-                        f"{log_prefix} Ошибка парсинга JSON (попытка {attempt}): {e}",
-                        novel_id=chapter.novel_id,
-                        chapter_id=chapter.id
-                    )
-                    if attempt == max_attempts:
-                        return self._fallback_regex_alignment(russian_text, chinese_text, chapter)
-                    continue
-
-                # Валидация качества
-                is_valid, quality_score, coverage_ru, coverage_zh, avg_confidence = self._validate_alignment(
-                    alignment_result.get('alignments', []),
-                    russian_text,
-                    chinese_text
-                )
-
-                if not is_valid:
-                    LogService.log_warning(
-                        f"{log_prefix} Низкое качество выравнивания (score={quality_score:.2f}, попытка {attempt})",
-                        novel_id=chapter.novel_id,
-                        chapter_id=chapter.id
-                    )
-                    if attempt == max_attempts:
-                        return self._fallback_regex_alignment(russian_text, chinese_text, chapter)
-                    continue
-
-                # ПРОВЕРКА ОБЪЕМА ТЕКСТА
-                volume_valid, volume_stats = self._check_volume_integrity(
-                    alignment_result.get('alignments', []),
-                    russian_text,
-                    chinese_text,
-                    min_coverage=min_volume_coverage
-                )
-
-                LogService.log_info(
-                    f"{log_prefix} Проверка объема (попытка {attempt}, порог {min_volume_coverage * 100:.0f}%): RU {volume_stats['coverage_ru_percent']}, ZH {volume_stats['coverage_zh_percent']}",
-                    novel_id=chapter.novel_id,
-                    chapter_id=chapter.id
-                )
-
-                if not volume_valid:
-                    LogService.log_warning(
-                        f"{log_prefix} ⚠️ Потеря текста при сопоставлении! RU: {volume_stats['coverage_ru_percent']} (нужно ≥{min_volume_coverage * 100:.0f}%), ZH: {volume_stats['coverage_zh_percent']} (нужно ≥{min_volume_coverage * 100:.0f}%)",
+                    LogService.log_info(
+                        f"{log_prefix} Попытка {attempt}/{max_attempts} (порог покрытия: {min_volume_coverage * 100:.0f}%), retry парсинга {parse_retry}/{self.max_parse_retries}",
                         novel_id=chapter.novel_id,
                         chapter_id=chapter.id
                     )
 
-                    if attempt < max_attempts:
-                        next_threshold = coverage_thresholds[attempt + 1]
+                    start_time = datetime.now()
+
+                    # Вызываем асинхронный метод через asyncio.run()
+                    result = asyncio.run(ai_adapter.generate_content(
+                        system_prompt=template.system_prompt if template.system_prompt else "",
+                        user_prompt=prompt,
+                        temperature=template.temperature,
+                        max_tokens=template.max_tokens
+                    ))
+
+                    duration = (datetime.now() - start_time).total_seconds()
+
+                    # Проверяем успешность
+                    if not result.get('success'):
+                        raise Exception(result.get('error', 'Unknown error from AI adapter'))
+
+                    response = result['content']
+
+                    LogService.log_info(
+                        f"{log_prefix} LLM запрос завершен за {duration:.1f}с (модель: {ai_adapter.model.name})",
+                        novel_id=chapter.novel_id,
+                        chapter_id=chapter.id
+                    )
+
+                    # Парсинг JSON ответа с обработкой ошибок
+                    try:
+                        alignment_result = self._parse_llm_response(response)
+                        parse_success = True
                         LogService.log_info(
-                            f"{log_prefix} 🔄 Повторяем запрос к LLM для восстановления текста (следующий порог: {next_threshold * 100:.0f}%)...",
+                            f"{log_prefix} ✅ JSON успешно распарсен",
                             novel_id=chapter.novel_id,
                             chapter_id=chapter.id
                         )
+                        break  # Парсинг успешен - выход из retry цикла
+
+                    except Exception as parse_error:
+                        LogService.log_error(
+                            f"{log_prefix} ❌ Ошибка парсинга JSON (попытка {attempt}/{max_attempts}, retry {parse_retry}/{self.max_parse_retries}): {parse_error}",
+                            novel_id=chapter.novel_id,
+                            chapter_id=chapter.id
+                        )
+
+                        if parse_retry < self.max_parse_retries:
+                            # Задержка перед повторным запросом к LLM
+                            LogService.log_info(
+                                f"{log_prefix} ⏳ Задержка {self.parse_retry_delay} сек перед повторным запросом к LLM...",
+                                novel_id=chapter.novel_id,
+                                chapter_id=chapter.id
+                            )
+                            time.sleep(self.parse_retry_delay)
+                            continue  # Повторяем LLM запрос с ТЕМ ЖЕ порогом покрытия
+                        else:
+                            # Все retry парсинга исчерпаны
+                            LogService.log_error(
+                                f"{log_prefix} ❌ Не удалось распарсить JSON за {self.max_parse_retries} попыток (попытка {attempt}/{max_attempts})",
+                                novel_id=chapter.novel_id,
+                                chapter_id=chapter.id
+                            )
+                            break  # Выход из retry цикла, переход к следующему attempt
+
+                except Exception as e:
+                    # Обработка сетевых и других ошибок LLM
+                    LogService.log_error(
+                        f"{log_prefix} ❌ Ошибка LLM запроса (попытка {attempt}/{max_attempts}, retry {parse_retry}/{self.max_parse_retries}): {e}",
+                        novel_id=chapter.novel_id,
+                        chapter_id=chapter.id
+                    )
+                    if parse_retry < self.max_parse_retries:
+                        LogService.log_info(
+                            f"{log_prefix} ⏳ Задержка {self.parse_retry_delay} сек перед повторным запросом...",
+                            novel_id=chapter.novel_id,
+                            chapter_id=chapter.id
+                        )
+                        time.sleep(self.parse_retry_delay)
                         continue
                     else:
-                        LogService.log_error(
-                            f"{log_prefix} ❌ Не удалось достичь минимального покрытия ({coverage_thresholds[3] * 100:.0f}%) за {max_attempts} попыток, используем fallback",
-                            novel_id=chapter.novel_id,
-                            chapter_id=chapter.id
-                        )
-                        return self._fallback_regex_alignment(russian_text, chinese_text, chapter)
+                        break
 
-                # Все проверки пройдены!
-                LogService.log_info(
-                    f"{log_prefix} ✅ Выравнивание успешно (попытка {attempt}): {len(alignment_result['alignments'])} пар, качество {quality_score:.2f}, покрытие RU {volume_stats['coverage_ru_percent']}, ZH {volume_stats['coverage_zh_percent']}",
-                    novel_id=chapter.novel_id,
-                    chapter_id=chapter.id
-                )
-                break  # Успешно, выходим из цикла
+            # Проверяем успешность парсинга после всех retry
+            if not parse_success:
+                if attempt == max_attempts:
+                    # Последняя попытка - используем fallback
+                    LogService.log_error(
+                        f"{log_prefix} ❌ Все попытки LLM выравнивания ({max_attempts}) с retry парсинга ({self.max_parse_retries}) исчерпаны, используем fallback",
+                        novel_id=chapter.novel_id,
+                        chapter_id=chapter.id
+                    )
+                    return self._fallback_regex_alignment(russian_text, chinese_text, chapter)
+                else:
+                    # Переходим к следующему attempt с другим порогом покрытия
+                    LogService.log_warning(
+                        f"{log_prefix} ⚠️ Парсинг не удался, переходим к следующей попытке с порогом {coverage_thresholds[attempt + 1] * 100:.0f}%",
+                        novel_id=chapter.novel_id,
+                        chapter_id=chapter.id
+                    )
+                    continue
 
-            except Exception as e:
-                LogService.log_error(
-                    f"{log_prefix} Ошибка LLM выравнивания (попытка {attempt}): {e}",
+            # Валидация качества (только если парсинг успешен)
+            is_valid, quality_score, coverage_ru, coverage_zh, avg_confidence = self._validate_alignment(
+                alignment_result.get('alignments', []),
+                russian_text,
+                chinese_text
+            )
+
+            if not is_valid:
+                LogService.log_warning(
+                    f"{log_prefix} Низкое качество выравнивания (score={quality_score:.2f}, попытка {attempt})",
                     novel_id=chapter.novel_id,
                     chapter_id=chapter.id
                 )
                 if attempt == max_attempts:
                     return self._fallback_regex_alignment(russian_text, chinese_text, chapter)
                 continue
+
+            # ПРОВЕРКА ОБЪЕМА ТЕКСТА
+            volume_valid, volume_stats = self._check_volume_integrity(
+                alignment_result.get('alignments', []),
+                russian_text,
+                chinese_text,
+                min_coverage=min_volume_coverage
+            )
+
+            LogService.log_info(
+                f"{log_prefix} Проверка объема (попытка {attempt}, порог {min_volume_coverage * 100:.0f}%): RU {volume_stats['coverage_ru_percent']}, ZH {volume_stats['coverage_zh_percent']}",
+                novel_id=chapter.novel_id,
+                chapter_id=chapter.id
+            )
+
+            if not volume_valid:
+                LogService.log_warning(
+                    f"{log_prefix} ⚠️ Потеря текста при сопоставлении! RU: {volume_stats['coverage_ru_percent']} (нужно ≥{min_volume_coverage * 100:.0f}%), ZH: {volume_stats['coverage_zh_percent']} (нужно ≥{min_volume_coverage * 100:.0f}%)",
+                    novel_id=chapter.novel_id,
+                    chapter_id=chapter.id
+                )
+
+                if attempt < max_attempts:
+                    next_threshold = coverage_thresholds[attempt + 1]
+                    LogService.log_info(
+                        f"{log_prefix} 🔄 Повторяем запрос к LLM для восстановления текста (следующий порог: {next_threshold * 100:.0f}%)...",
+                        novel_id=chapter.novel_id,
+                        chapter_id=chapter.id
+                    )
+                    continue
+                else:
+                    LogService.log_error(
+                        f"{log_prefix} ❌ Не удалось достичь минимального покрытия ({coverage_thresholds[3] * 100:.0f}%) за {max_attempts} попыток, используем fallback",
+                        novel_id=chapter.novel_id,
+                        chapter_id=chapter.id
+                    )
+                    return self._fallback_regex_alignment(russian_text, chinese_text, chapter)
+
+            # Все проверки пройдены!
+            LogService.log_info(
+                f"{log_prefix} ✅ Выравнивание успешно (попытка {attempt}): {len(alignment_result['alignments'])} пар, качество {quality_score:.2f}, покрытие RU {volume_stats['coverage_ru_percent']}, ZH {volume_stats['coverage_zh_percent']}",
+                novel_id=chapter.novel_id,
+                chapter_id=chapter.id
+            )
+            break  # Успешно, выходим из цикла
 
         # Если все попытки не дали результата
         if not alignment_result:

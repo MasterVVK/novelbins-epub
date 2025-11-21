@@ -1043,6 +1043,20 @@ def align_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
 
             # Обрабатываем результаты по мере выполнения
             for future in as_completed(futures):
+                # ПРОВЕРКА ОТМЕНЫ: Останавливаем обработку новых результатов
+                if _cancel_requested:
+                    LogService.log_warning(
+                        f"🛑 [Novel:{novel_id}] Обнаружен запрос отмены, останавливаем обработку",
+                        novel_id=novel_id
+                    )
+                    # Отменяем оставшиеся задачи
+                    for f in futures:
+                        if not f.done():
+                            f.cancel()
+                    # Даем 5 секунд на graceful shutdown
+                    executor.shutdown(wait=True, cancel_futures=True)
+                    break
+
                 chapter_id = futures[future]
 
                 try:
@@ -1074,7 +1088,14 @@ def align_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
                     )
 
         # Финальный статус
-        if success_count == total_chapters:
+        if _cancel_requested:
+            # Если была отмена - оставляем статус alignment_cancelled
+            LogService.log_warning(
+                f"🛑 [Novel:{novel_id}] Выравнивание отменено. Обработано: {success_count}/{total_chapters} глав",
+                novel_id=novel_id
+            )
+            # Статус уже установлен в alignment_cancelled через API
+        elif success_count == total_chapters:
             novel.status = 'completed'
             LogService.log_info(
                 f"✅ [Novel:{novel_id}] Выравнивание завершено успешно: {success_count}/{total_chapters} глав",

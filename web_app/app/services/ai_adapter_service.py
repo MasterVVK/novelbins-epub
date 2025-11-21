@@ -285,7 +285,7 @@ class AIAdapterService:
         """Вызов Ollama API с динамическим расчетом размера контекста на основе параметров модели"""
         # Увеличенный таймаут для Ollama (большие модели требуют времени на загрузку и обработку)
         try:
-            async with httpx.AsyncClient(timeout=1200.0) as client:  # 20 минут
+            async with httpx.AsyncClient(timeout=1800.0) as client:  # 30 минут
                 # Сначала проверяем доступность модели
                 try:
                     models_response = await client.get(f"{self.model.api_endpoint.rstrip('/api')}/api/tags")
@@ -510,7 +510,7 @@ class AIAdapterService:
                     }
 
         except httpx.TimeoutException as e:
-            error_msg = f'Таймаут при обращении к Ollama (>1200s / 20 минут). Модель: {self.model.model_id}'
+            error_msg = f'Таймаут при обращении к Ollama (>1800s / 30 минут). Модель: {self.model.model_id}'
             logger.error(error_msg)
             logger.error(f"Размер контекста был: {num_ctx if 'num_ctx' in locals() else 'unknown'}")
             return {
