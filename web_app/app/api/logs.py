@@ -4,6 +4,9 @@ API endpoints для работы с логами
 from flask import Blueprint, request, jsonify
 from app.services.log_service import LogService
 from app.models import Task, Novel, Chapter
+from app.models.log_entry import LogEntry
+from datetime import datetime, timedelta
+from sqlalchemy import desc
 
 logs_bp = Blueprint('logs', __name__)
 
@@ -48,20 +51,36 @@ def get_logs():
 
 @logs_bp.route('/logs/recent', methods=['GET'])
 def get_recent_logs():
-    """Получение недавних логов"""
+    """Получение недавних логов с фильтрацией"""
     try:
         hours = request.args.get('hours', 24, type=int)
         limit = request.args.get('limit', 100, type=int)
-        
-        logs = LogService.get_recent_logs(hours=hours, limit=limit)
+        level = request.args.get('level')
+        task_id = request.args.get('task_id', type=int)
+        novel_id = request.args.get('novel_id', type=int)
+
+        # Строим SQL запрос с фильтрами
+        since = datetime.utcnow() - timedelta(hours=hours)
+        query = LogEntry.query.filter(LogEntry.created_at >= since)
+
+        # Применяем фильтры на уровне SQL (ДО лимита)
+        if level:
+            query = query.filter(LogEntry.level == level)
+        if task_id:
+            query = query.filter(LogEntry.task_id == task_id)
+        if novel_id:
+            query = query.filter(LogEntry.novel_id == novel_id)
+
+        # Применяем сортировку и лимит ПОСЛЕ фильтрации
+        logs = query.order_by(desc(LogEntry.created_at)).limit(limit).all()
         logs_data = [log.to_dict() for log in logs]
-        
+
         return jsonify({
             'success': True,
             'logs': logs_data,
             'count': len(logs_data)
         })
-        
+
     except Exception as e:
         return jsonify({
             'success': False,

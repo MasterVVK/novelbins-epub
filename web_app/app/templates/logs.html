@@ -13,7 +13,7 @@
     <div class="col-md-12 mb-4">
         <div class="row">
             <div class="col-md-2">
-                <div class="card stat-card">
+                <div class="card stat-card clickable-card" onclick="applyQuickFilter('all')" style="cursor: pointer;" title="Показать все логи">
                     <div class="card-body text-center">
                         <h5 class="card-title" id="total-logs">-</h5>
                         <p class="card-text">Всего логов</p>
@@ -21,7 +21,7 @@
                 </div>
             </div>
             <div class="col-md-2">
-                <div class="card stat-card">
+                <div class="card stat-card clickable-card" onclick="applyQuickFilter('error')" style="cursor: pointer;" title="Показать только ошибки">
                     <div class="card-body text-center">
                         <h5 class="card-title text-danger" id="error-logs">-</h5>
                         <p class="card-text">Ошибки</p>
@@ -29,7 +29,7 @@
                 </div>
             </div>
             <div class="col-md-2">
-                <div class="card stat-card">
+                <div class="card stat-card clickable-card" onclick="applyQuickFilter('warning')" style="cursor: pointer;" title="Показать только предупреждения">
                     <div class="card-body text-center">
                         <h5 class="card-title text-warning" id="warning-logs">-</h5>
                         <p class="card-text">Предупреждения</p>
@@ -37,7 +37,7 @@
                 </div>
             </div>
             <div class="col-md-2">
-                <div class="card stat-card">
+                <div class="card stat-card clickable-card" onclick="applyQuickFilter('info')" style="cursor: pointer;" title="Показать только информационные логи">
                     <div class="card-body text-center">
                         <h5 class="card-title text-info" id="info-logs">-</h5>
                         <p class="card-text">Информация</p>
@@ -45,7 +45,7 @@
                 </div>
             </div>
             <div class="col-md-2">
-                <div class="card stat-card">
+                <div class="card stat-card clickable-card" onclick="applyQuickFilter('recent')" style="cursor: pointer;" title="Показать логи за последние 24 часа">
                     <div class="card-body text-center">
                         <h5 class="card-title text-success" id="recent-logs">-</h5>
                         <p class="card-text">За 24 часа</p>
@@ -329,6 +329,55 @@ function resetFilters() {
     loadLogs();
 }
 
+// Быстрая фильтрация по клику на плашку статистики
+function applyQuickFilter(filterType) {
+    // Сбрасываем все фильтры
+    document.getElementById('task-filter').value = '';
+    document.getElementById('novel-filter').value = '';
+
+    switch(filterType) {
+        case 'all':
+            // Показать все логи (сброс фильтров)
+            document.getElementById('level-filter').value = '';
+            document.getElementById('hours-filter').value = '720'; // 30 дней
+            document.getElementById('limit-filter').value = '500';
+            break;
+        case 'error':
+            // Только ошибки
+            document.getElementById('level-filter').value = 'ERROR';
+            document.getElementById('hours-filter').value = '720'; // 30 дней (чтобы найти ошибки)
+            document.getElementById('limit-filter').value = '200';
+            break;
+        case 'warning':
+            // Только предупреждения
+            document.getElementById('level-filter').value = 'WARNING';
+            document.getElementById('hours-filter').value = '720'; // 30 дней
+            document.getElementById('limit-filter').value = '200';
+            break;
+        case 'info':
+            // Только информационные
+            document.getElementById('level-filter').value = 'INFO';
+            document.getElementById('hours-filter').value = '168'; // 7 дней
+            document.getElementById('limit-filter').value = '200';
+            break;
+        case 'recent':
+            // Последние 24 часа
+            document.getElementById('level-filter').value = '';
+            document.getElementById('hours-filter').value = '24';
+            document.getElementById('limit-filter').value = '100';
+            break;
+    }
+
+    // Применяем фильтр
+    loadLogs();
+
+    // Плавная прокрутка к логам
+    document.getElementById('logs-container').scrollIntoView({
+        behavior: 'smooth',
+        block: 'start'
+    });
+}
+
 // Переключение автообновления
 function toggleAutoRefresh() {
     if (isAutoRefreshEnabled) {
@@ -440,6 +489,35 @@ function escapeHtml(text) {
 
 .log-entry:hover {
     background-color: rgba(0,0,0,0.05);
+}
+
+/* Стили для кликабельных карточек статистики */
+.clickable-card {
+    transition: all 0.3s ease;
+    position: relative;
+}
+
+.clickable-card:hover {
+    transform: translateY(-5px) scale(1.02);
+    box-shadow: 0 8px 16px rgba(0,0,0,0.2) !important;
+}
+
+.clickable-card:active {
+    transform: translateY(-2px) scale(1.01);
+}
+
+.clickable-card::after {
+    content: '👆';
+    position: absolute;
+    top: 5px;
+    right: 10px;
+    font-size: 16px;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.clickable-card:hover::after {
+    opacity: 0.7;
 }
 
 @keyframes fadeIn {
