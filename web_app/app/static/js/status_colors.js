@@ -222,4 +222,9 @@ const StatusColors = {
 // Экспорт для использования в других модулях
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = StatusColors;
+}
+
+// Экспорт для браузера (делаем глобальной переменной)
+if (typeof window !== 'undefined') {
+    window.StatusColors = StatusColors;
 } 
