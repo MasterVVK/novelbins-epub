@@ -1142,3 +1142,173 @@ def align_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
                 db.session.commit()
         except:
             pass  # Игнорируем ошибки при очистке
+
+
+@celery.task(bind=True, base=CallbackTask, soft_time_limit=86400, time_limit=86400)  # 24 часа
+def generate_bilingual_epub_task(self, novel_id):
+    """
+    Фоновая задача генерации двуязычного EPUB
+
+    Args:
+        novel_id: ID новеллы
+    """
+    from app.services.epub_service import EPUBService
+    from app.services.log_service import LogService
+    from flask import current_app
+
+    # Флаг для отслеживания отмены
+    global _cancel_requested
+    _cancel_requested = False
+
+    # Устанавливаем обработчик сигнала SIGTERM для отмены
+    old_handler = signal.signal(signal.SIGTERM, signal_handler)
+
+    try:
+        # Получаем новеллу
+        novel = Novel.query.get(novel_id)
+        if not novel:
+            raise ValueError(f"Novel {novel_id} not found")
+
+        # Обновляем статус
+        novel.status = 'generating_epub'
+        novel.epub_generation_task_id = self.request.id
+        db.session.commit()
+
+        self.update_state(state='PROGRESS', meta={'status': 'Начинаем генерацию EPUB', 'progress': 0})
+        LogService.log_info(f"📚 [Novel:{novel_id}] Начинаем генерацию двуязычного EPUB для '{novel.title}'", novel_id=novel_id)
+
+        # Получаем главы для EPUB
+        from app.models import Chapter
+        chapters = Chapter.query.filter_by(novel_id=novel_id).order_by(Chapter.chapter_number).all()
+
+        if not chapters:
+            raise ValueError("Нет глав для генерации EPUB")
+
+        # Подготовка данных для EPUB
+        chapters_data = []
+        for chapter in chapters:
+            # Используем отредактированный текст, если есть, иначе переведенный
+            edited_trans = chapter.edited_translation
+            current_trans = chapter.current_translation
+
+            content = None
+            title = None
+
+            if edited_trans:
+                content = edited_trans.translated_text
+                title = edited_trans.translated_title
+            elif current_trans:
+                content = current_trans.translated_text
+                title = current_trans.translated_title
+
+            if content:  # Только главы с контентом
+                chapters_data.append({
+                    'number': chapter.chapter_number,
+                    'title': title or chapter.original_title or f'Глава {chapter.chapter_number}',
+                    'content': content
+                })
+
+        if not chapters_data:
+            raise ValueError("Нет переведенных глав для генерации EPUB")
+
+        LogService.log_info(
+            f"📖 [Novel:{novel_id}] Подготовлено {len(chapters_data)} глав для EPUB",
+            novel_id=novel_id
+        )
+
+        # Проверка отмены
+        if _cancel_requested or novel.status == 'epub_generation_cancelled':
+            LogService.log_info(f"⏹️ [Novel:{novel_id}] Генерация EPUB отменена пользователем", novel_id=novel_id)
+            novel.status = 'epub_generation_cancelled'
+            db.session.commit()
+            return {'status': 'cancelled'}
+
+        # Конфигурация EPUB
+        epub_config = {
+            'language': 'ru',
+            'mode': 'bilingual',  # Двуязычный режим
+            'include_toc': True,
+            'include_cover': True
+        }
+
+        # Создаем EPUBService с Flask app
+        from app import create_app
+        app = create_app()
+        epub_service = EPUBService(app)
+
+        # Генерируем EPUB
+        self.update_state(state='PROGRESS', meta={'status': 'Генерируем EPUB файл', 'progress': 50})
+
+        epub_path = epub_service.create_bilingual_epub(
+            novel_id=novel_id,
+            chapters=chapters_data,
+            config=epub_config
+        )
+
+        if not epub_path or not os.path.exists(epub_path):
+            raise ValueError("EPUB файл не был создан")
+
+        # Проверка отмены после генерации
+        novel = Novel.query.get(novel_id)
+        if _cancel_requested or novel.status == 'epub_generation_cancelled':
+            LogService.log_info(f"⏹️ [Novel:{novel_id}] Генерация EPUB отменена после создания файла", novel_id=novel_id)
+            # Удаляем созданный файл
+            if os.path.exists(epub_path):
+                os.remove(epub_path)
+            novel.status = 'epub_generation_cancelled'
+            db.session.commit()
+            return {'status': 'cancelled'}
+
+        # Успешное завершение
+        file_size = os.path.getsize(epub_path) / (1024 * 1024)  # MB
+        LogService.log_info(
+            f"✅ [Novel:{novel_id}] Двуязычный EPUB успешно создан: {os.path.basename(epub_path)} ({file_size:.2f} MB)",
+            novel_id=novel_id
+        )
+
+        novel.status = 'epub_generated'
+        novel.epub_path = epub_path
+        db.session.commit()
+
+        self.update_state(state='SUCCESS', meta={
+            'status': 'EPUB успешно создан',
+            'progress': 100,
+            'epub_path': epub_path,
+            'file_size_mb': round(file_size, 2)
+        })
+
+        return {
+            'status': 'success',
+            'epub_path': epub_path,
+            'file_size_mb': round(file_size, 2),
+            'chapters_count': len(chapters_data)
+        }
+
+    except Terminated:
+        LogService.log_info(f"⏹️ [Novel:{novel_id}] Генерация EPUB прервана (SIGTERM)", novel_id=novel_id)
+        novel = Novel.query.get(novel_id)
+        if novel:
+            novel.status = 'epub_generation_cancelled'
+            db.session.commit()
+        raise
+
+    except Exception as e:
+        LogService.log_error(f"❌ [Novel:{novel_id}] Ошибка генерации EPUB: {e}", novel_id=novel_id)
+        novel = Novel.query.get(novel_id)
+        if novel:
+            novel.status = 'epub_generation_error'
+            db.session.commit()
+        raise
+
+    finally:
+        # Восстанавливаем старый обработчик сигнала
+        signal.signal(signal.SIGTERM, old_handler)
+
+        # Гарантированно очищаем epub_generation_task_id даже если что-то пошло не так
+        try:
+            novel = Novel.query.get(novel_id)
+            if novel and novel.epub_generation_task_id == self.request.id:
+                novel.epub_generation_task_id = None
+                db.session.commit()
+        except:
+            pass  # Игнорируем ошибки при очистке

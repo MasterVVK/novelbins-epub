@@ -148,6 +148,7 @@ def create_app(config_name=None):
     from .api.alignment import alignment_bp
     from .api.celery_monitor import celery_monitor_bp
     from .api.bilingual_api import bilingual_api
+    from .api.epub_generation import epub_generation_bp
     from .views import main_bp
 
     app.register_blueprint(api_bp, url_prefix='/api')
@@ -156,6 +157,7 @@ def create_app(config_name=None):
     app.register_blueprint(alignment_bp, url_prefix='/api')
     app.register_blueprint(celery_monitor_bp, url_prefix='/api')
     app.register_blueprint(bilingual_api)  # уже имеет url_prefix='/api/bilingual'
+    app.register_blueprint(epub_generation_bp, url_prefix='/api')
     app.register_blueprint(main_bp)
 
     # Регистрация фильтров для шаблонов

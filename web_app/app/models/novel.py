@@ -15,6 +15,7 @@ class Novel(db.Model):
     source_url = Column(String(500))
     source_type = Column(String(50), default='novelbins')  # novelbins, webnovel, epub, etc.
     epub_file_path = Column(String(500))  # Путь к EPUB файлу для source_type='epub'
+    epub_path = Column(String(500))  # Путь к сгенерированному двуязычному EPUB
 
     # Статистика
     total_chapters = Column(Integer, default=0)
@@ -50,6 +51,7 @@ class Novel(db.Model):
     parsing_task_id = Column(String(255))  # ID задачи Celery для парсинга
     editing_task_id = Column(String(255))  # ID задачи Celery для редактуры
     alignment_task_id = Column(String(255))  # ID задачи Celery для выравнивания
+    epub_generation_task_id = Column(String(255))  # ID задачи Celery для генерации EPUB
 
     # Связь с шаблоном промпта
     prompt_template_id = Column(Integer, ForeignKey('prompt_templates.id'), nullable=True)
