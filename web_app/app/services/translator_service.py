@@ -998,9 +998,88 @@ class TranslatorService:
             LogService.log_info(f"Извлекаем заголовок и основной текст главы {chapter.chapter_number}", 
                               novel_id=chapter.novel_id, chapter_id=chapter.id)
             title, content = self.extract_title_and_content(full_translation)
-            LogService.log_info(f"Заголовок: '{title}', длина контента: {len(content)} символов", 
+            LogService.log_info(f"Заголовок: '{title}', длина контента: {len(content)} символов",
                               novel_id=chapter.novel_id, chapter_id=chapter.id)
-            
+
+            # ========== НОВАЯ ЛОГИКА: Проверка и коррекция названия ==========
+            # Проверяем настройку в конфиге новеллы
+            novel_config = chapter.novel.config or {}
+            validate_title_glossary = novel_config.get('validate_title_glossary', True)
+            translate_title_separately = novel_config.get('translate_title_separately', False)
+
+            if title and validate_title_glossary:
+                # Проверяем соответствие названия глоссарию
+                glossary_dict = context.glossary if hasattr(context, 'glossary') else {}
+
+                if glossary_dict and chapter.original_title:
+                    is_valid = self.validate_title_with_glossary(
+                        title=title,
+                        original_title=chapter.original_title,
+                        glossary=glossary_dict,
+                        chapter_id=chapter.id
+                    )
+
+                    if not is_valid or translate_title_separately:
+                        # Название некорректно или требуется отдельный перевод
+                        reason = "не соответствует глоссарию" if not is_valid else "настроен отдельный перевод"
+                        LogService.log_info(
+                            f"Название '{title}' {reason}. Переводим отдельно с глоссарием.",
+                            novel_id=chapter.novel_id,
+                            chapter_id=chapter.id
+                        )
+                        print(f"   🔄 Название {reason}, переводим отдельно...")
+
+                        corrected_title = self.translate_title_with_glossary(
+                            original_title=chapter.original_title,
+                            glossary=glossary_dict,
+                            chapter_id=chapter.id
+                        )
+
+                        if corrected_title:
+                            LogService.log_info(
+                                f"Название скорректировано: '{title}' → '{corrected_title}'",
+                                novel_id=chapter.novel_id,
+                                chapter_id=chapter.id
+                            )
+                            print(f"   ✅ Название скорректировано: '{corrected_title}'")
+                            title = corrected_title
+                        else:
+                            LogService.log_warning(
+                                f"Не удалось скорректировать название, оставляем оригинал: '{title}'",
+                                novel_id=chapter.novel_id,
+                                chapter_id=chapter.id
+                            )
+                    else:
+                        LogService.log_info(
+                            f"Название '{title}' корректно, соответствует глоссарию",
+                            novel_id=chapter.novel_id,
+                            chapter_id=chapter.id
+                        )
+            elif not title and chapter.original_title and translate_title_separately:
+                # Название не извлечено, но есть оригинал - переводим отдельно
+                LogService.log_info(
+                    f"Название не извлечено из перевода. Переводим '{chapter.original_title}' отдельно.",
+                    novel_id=chapter.novel_id,
+                    chapter_id=chapter.id
+                )
+                print(f"   🔄 Название не извлечено, переводим отдельно...")
+
+                glossary_dict = context.glossary if hasattr(context, 'glossary') else {}
+                title = self.translate_title_with_glossary(
+                    original_title=chapter.original_title,
+                    glossary=glossary_dict,
+                    chapter_id=chapter.id
+                )
+
+                if title:
+                    LogService.log_info(
+                        f"Название переведено отдельно: '{title}'",
+                        novel_id=chapter.novel_id,
+                        chapter_id=chapter.id
+                    )
+                    print(f"   ✅ Название переведено: '{title}'")
+            # ========== КОНЕЦ НОВОЙ ЛОГИКИ ==========
+
             # Валидируем перевод с возможностью повторной попытки
             LogService.log_info(f"Валидируем перевод главы {chapter.chapter_number}", 
                               novel_id=chapter.novel_id, chapter_id=chapter.id)
@@ -1452,6 +1531,160 @@ class TranslatorService:
             LogService.log_info(f"Заголовок не обнаружен, первая строка является частью текста: '{first_line[:50]}...'")
 
         return title, content
+
+    def translate_title_with_glossary(self, original_title: str, glossary: Dict, chapter_id: int) -> str:
+        """
+        Перевод названия главы с использованием глоссария
+
+        Args:
+            original_title: Оригинальное название (например: "第一章 白小纯")
+            glossary: Глоссарий терминов
+            chapter_id: ID главы для логирования
+
+        Returns:
+            Переведенное название (например: "Глава 1: Бай Сяочунь")
+        """
+        LogService.log_info(f"Отдельный перевод названия: '{original_title}'", chapter_id=chapter_id)
+
+        # Формируем специальный промпт для названия с глоссарием
+        glossary_text = self._format_glossary_for_prompt(glossary)
+
+        title_prompt = f"""Ты профессиональный переводчик китайских веб-новелл жанра сянься.
+
+ЗАДАЧА: Переведи название главы с китайского на русский.
+
+ВАЖНЫЕ ТРЕБОВАНИЯ:
+1. Используй ТОЧНЫЕ термины из глоссария (имена, локации, техники)
+2. Сохрани формат: "Глава N: Название" (если есть номер)
+3. Если в названии только номер главы - переведи как "Глава N"
+4. Название должно быть кратким и емким
+5. НЕ добавляй точку в конце
+6. Переводи ТОЛЬКО название, без дополнительного текста
+
+ГЛОССАРИЙ:
+{glossary_text}
+
+ПЕРЕВЕДЕННОЕ НАЗВАНИЕ:"""
+
+        try:
+            # Запрос к LLM с температурой 0.0 для максимальной точности
+            translated_title = self.translator.translate_text(
+                text=original_title,
+                system_prompt=title_prompt,
+                context="",
+                chapter_id=chapter_id,
+                temperature=0.0
+            )
+
+            if not translated_title:
+                LogService.log_error(f"Не удалось перевести название: '{original_title}'", chapter_id=chapter_id)
+                return ""
+
+            # Постобработка: очистка результата
+            translated_title = translated_title.strip()
+
+            # Удаляем markdown блоки если есть
+            if translated_title.startswith('```'):
+                lines = translated_title.split('\n')
+                translated_title = '\n'.join(lines[1:-1]) if len(lines) > 2 else translated_title
+
+            # Берем только первую строку (на случай если LLM добавил объяснения)
+            translated_title = translated_title.split('\n')[0].strip()
+
+            # Удаляем лишние символы
+            translated_title = translated_title.rstrip('.')  # Удаляем точку в конце
+            translated_title = translated_title.strip('"\'«»')  # Удаляем кавычки
+
+            # Проверка корректности длины
+            if not translated_title or len(translated_title) > 200:
+                LogService.log_warning(
+                    f"Некорректный перевод названия: '{translated_title}' (длина: {len(translated_title)}). "
+                    f"Оригинал: '{original_title}'",
+                    chapter_id=chapter_id
+                )
+                return ""
+
+            LogService.log_info(f"Название переведено: '{original_title}' → '{translated_title}'", chapter_id=chapter_id)
+            return translated_title
+
+        except Exception as e:
+            LogService.log_error(f"Ошибка перевода названия '{original_title}': {e}", chapter_id=chapter_id)
+            return ""
+
+    def validate_title_with_glossary(self, title: str, original_title: str, glossary: Dict, chapter_id: int) -> bool:
+        """
+        Проверка соответствия переведенного названия глоссарию
+
+        Args:
+            title: Переведенное название
+            original_title: Оригинальное название
+            glossary: Глоссарий терминов
+            chapter_id: ID главы
+
+        Returns:
+            True - если название корректно, False - если нужна коррекция
+        """
+        if not title or not original_title:
+            return True  # Нечего проверять
+
+        # Проверяем только критические категории (имена персонажей, локации)
+        critical_categories = ['characters', 'locations']
+
+        issues_found = []
+
+        for category in critical_categories:
+            if category not in glossary:
+                continue
+
+            terms = glossary[category]
+            for english_term, russian_term in terms.items():
+                # Приводим к нижнему регистру для сравнения
+                original_lower = original_title.lower()
+                english_lower = english_term.lower()
+
+                # Проверяем, есть ли английский/пиньинь термин в оригинальном названии
+                # (для китайских имен может быть китайский текст, поэтому проверяем гибко)
+                if english_lower in original_lower or len(english_term) > 2:
+                    # Проверяем, есть ли правильный русский термин в переводе
+                    if russian_term and russian_term not in title:
+                        issues_found.append({
+                            'category': category,
+                            'english': english_term,
+                            'expected_russian': russian_term,
+                            'current_title': title
+                        })
+
+        if issues_found:
+            LogService.log_warning(
+                f"Название не соответствует глоссарию. "
+                f"Найдено несоответствий: {len(issues_found)}. "
+                f"Первое: ожидается '{issues_found[0]['expected_russian']}' в названии '{title}'",
+                chapter_id=chapter_id
+            )
+            return False
+
+        return True
+
+    def _format_glossary_for_prompt(self, glossary: Dict) -> str:
+        """Форматирование глоссария для промпта"""
+        lines = []
+
+        categories_ru = {
+            'characters': 'ПЕРСОНАЖИ',
+            'locations': 'ЛОКАЦИИ',
+            'terms': 'ТЕРМИНЫ',
+            'techniques': 'ТЕХНИКИ',
+            'artifacts': 'АРТЕФАКТЫ'
+        }
+
+        for category, title in categories_ru.items():
+            if category in glossary and glossary[category]:
+                lines.append(f"{title}:")
+                for english_term, russian_term in sorted(glossary[category].items()):
+                    lines.append(f"  {english_term} = {russian_term}")
+                lines.append("")
+
+        return "\n".join(lines) if lines else "Глоссарий пуст"
 
     def validate_translation(self, original: str, translated: str, chapter_num: int) -> Dict:
         """Валидация качества перевода (как в рабочем скрипте)"""
