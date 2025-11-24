@@ -420,6 +420,14 @@
                                 <td>
                                     {% if chapter.original_title %}
                                         {{ chapter.original_title }}
+                                        <br>
+                                        <small class="text-muted">
+                                            {% if chapter.is_translated and chapter.translated_title %}
+                                                ({{ chapter.translated_title }})
+                                            {% else %}
+                                                (не переведено)
+                                            {% endif %}
+                                        </small>
                                     {% else %}
                                         Глава {{ chapter.chapter_number }}
                                     {% endif %}

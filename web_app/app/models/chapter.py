@@ -61,4 +61,17 @@ class Chapter(db.Model):
     @property
     def is_edited(self):
         """Проверка наличия редактуры"""
-        return self.status == 'edited' 
+        return self.status == 'edited'
+
+    @property
+    def translated_title(self):
+        """Переведённое название главы
+
+        Возвращает название из наиболее актуальной версии перевода:
+        - Приоритет 1: Отредактированный перевод (если есть)
+        - Приоритет 2: Текущий перевод
+        - Приоритет 3: None (если переводов нет)
+        """
+        # Приоритет: отредактированный перевод → текущий перевод
+        translation = self.edited_translation or self.current_translation
+        return translation.translated_title if translation else None 
