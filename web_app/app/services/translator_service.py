@@ -1642,9 +1642,9 @@ class TranslatorService:
                 original_lower = original_title.lower()
                 english_lower = english_term.lower()
 
-                # Проверяем, есть ли английский/пиньинь термин в оригинальном названии
-                # (для китайских имен может быть китайский текст, поэтому проверяем гибко)
-                if english_lower in original_lower or len(english_term) > 2:
+                # Проверяем, есть ли китайский термин в оригинальном названии
+                # (колонка english содержит китайские символы, не пиньинь)
+                if english_lower in original_lower:
                     # Проверяем, есть ли правильный русский термин в переводе
                     if russian_term and russian_term not in title:
                         issues_found.append({
