@@ -1153,36 +1153,104 @@ class TranslatorService:
                                                novel_id=chapter.novel_id, chapter_id=chapter.id)
                             print(f"   ❌ Критические проблемы остались после повторной попытки: {validation['critical_issues']}")
 
-                            # Выводим текст для диагностики
-                            print("\n" + "="*80)
-                            print("🔍 ДИАГНОСТИКА ПРОБЛЕМЫ С ПЕРЕВОДОМ")
-                            print("="*80)
+                            # ========== ТРЕТЬЯ ПОПЫТКА: Ожидание 5 минут ==========
+                            LogService.log_warning(f"⏳ Глава {chapter.chapter_number}: ожидание 5 минут перед третьей попыткой перевода...",
+                                                 novel_id=chapter.novel_id, chapter_id=chapter.id)
+                            print(f"   ⏳ Ожидание 5 минут (300 секунд) перед третьей попыткой...")
 
-                            print(f"\n📊 СТАТИСТИКА:")
-                            print(f"   Оригинал: {validation['stats']['original_words']} слов, {validation['stats']['orig_paragraphs']} абзацев")
-                            print(f"   Перевод:  {validation['stats']['translated_words']} слов, {validation['stats']['trans_paragraphs']} абзацев")
-                            print(f"   Проблема: {validation['critical_issues']}")
+                            # Ожидание 5 минут с логированием каждую минуту
+                            long_retry_delay = 300
+                            remaining = long_retry_delay
+                            while remaining > 0:
+                                wait_chunk = min(60, remaining)
+                                time.sleep(wait_chunk)
+                                remaining -= wait_chunk
+                                if remaining > 0:
+                                    LogService.log_info(f"⏱️ Осталось: {remaining // 60} мин {remaining % 60} сек до третьей попытки",
+                                                      novel_id=chapter.novel_id, chapter_id=chapter.id)
+                                    print(f"   ⏱️ Осталось: {remaining // 60} мин {remaining % 60} сек")
 
-                            print(f"\n📄 ОРИГИНАЛЬНЫЙ ТЕКСТ (полностью):")
-                            print("-"*80)
-                            print(chapter.original_text)
-                            print("-"*80)
+                            # Ещё увеличиваем temperature для третьей попытки
+                            third_retry_temperature = min(retry_temperature + 0.2, 1.0)
+                            LogService.log_info(f"🌡️ Третья попытка: temperature {retry_temperature} → {third_retry_temperature}",
+                                              novel_id=chapter.novel_id, chapter_id=chapter.id)
+                            print(f"   🌡️ Temperature для третьей попытки: {third_retry_temperature}")
 
-                            print(f"\n📄 ТЕКСТ ПЕРЕВОДА (полностью):")
-                            print("-"*80)
-                            print(content)
-                            print("-"*80)
+                            # Третья попытка перевода
+                            translated_parts_third = []
+                            for i, part in enumerate(text_parts):
+                                LogService.log_info(f"Третья попытка перевода части {i+1}/{len(text_parts)} главы {chapter.chapter_number}",
+                                                  novel_id=chapter.novel_id, chapter_id=chapter.id)
+                                print(f"   📝 Третья попытка перевода части {i+1}/{len(text_parts)}")
 
-                            print("\n💡 Для копирования текста откройте страницу 'Логи системы'")
-                            print("   и нажмите кнопку 'Включить автообновление' чтобы остановить обновления")
+                                translated_part = self.translator.translate_text(
+                                    part,
+                                    prompt_template.translation_prompt,
+                                    context_prompt,
+                                    chapter.id,
+                                    temperature=third_retry_temperature
+                                )
 
-                            # Также логируем в файл для истории
-                            LogService.log_error(f"📄 Оригинал ({len(chapter.original_text)} символов): {chapter.original_text[:500]}...",
-                                               novel_id=chapter.novel_id, chapter_id=chapter.id)
-                            LogService.log_error(f"📄 Перевод ({len(content)} символов): {content[:500]}...",
-                                               novel_id=chapter.novel_id, chapter_id=chapter.id)
+                                if not translated_part:
+                                    LogService.log_error(f"Ошибка третьей попытки перевода части {i+1} главы {chapter.chapter_number}",
+                                                       novel_id=chapter.novel_id, chapter_id=chapter.id)
+                                    break
 
-                            return False
+                                translated_parts_third.append(translated_part)
+
+                            if len(translated_parts_third) == len(text_parts):
+                                # Объединяем части третьего перевода
+                                full_translation = '\n\n'.join(translated_parts_third)
+                                title, content = self.extract_title_and_content(full_translation)
+
+                                # Финальная валидация
+                                validation = self.validate_translation(chapter.original_text, content, chapter.chapter_number)
+
+                                if not validation['critical']:
+                                    LogService.log_info(f"✅ Третья попытка успешна! Качество: {self.calculate_quality_score(validation)}",
+                                                      novel_id=chapter.novel_id, chapter_id=chapter.id)
+                                    print(f"   ✅ Третья попытка успешна!")
+                                else:
+                                    # Если и третья попытка не помогла - выводим диагностику и возвращаем ошибку
+                                    LogService.log_error(f"❌ Критические проблемы после ТРЁХ попыток главы {chapter.chapter_number}: {validation['critical_issues']}",
+                                                       novel_id=chapter.novel_id, chapter_id=chapter.id)
+                                    print(f"   ❌ Критические проблемы после ТРЁХ попыток: {validation['critical_issues']}")
+
+                                    # Выводим текст для диагностики
+                                    print("\n" + "="*80)
+                                    print("🔍 ДИАГНОСТИКА ПРОБЛЕМЫ С ПЕРЕВОДОМ (после 3 попыток)")
+                                    print("="*80)
+
+                                    print(f"\n📊 СТАТИСТИКА:")
+                                    print(f"   Оригинал: {validation['stats']['original_words']} слов, {validation['stats']['orig_paragraphs']} абзацев")
+                                    print(f"   Перевод:  {validation['stats']['translated_words']} слов, {validation['stats']['trans_paragraphs']} абзацев")
+                                    print(f"   Проблема: {validation['critical_issues']}")
+
+                                    print(f"\n📄 ОРИГИНАЛЬНЫЙ ТЕКСТ (полностью):")
+                                    print("-"*80)
+                                    print(chapter.original_text)
+                                    print("-"*80)
+
+                                    print(f"\n📄 ТЕКСТ ПЕРЕВОДА (полностью):")
+                                    print("-"*80)
+                                    print(content)
+                                    print("-"*80)
+
+                                    print("\n💡 Для копирования текста откройте страницу 'Логи системы'")
+                                    print("   и нажмите кнопку 'Включить автообновление' чтобы остановить обновления")
+
+                                    # Также логируем в файл для истории
+                                    LogService.log_error(f"📄 Оригинал ({len(chapter.original_text)} символов): {chapter.original_text[:500]}...",
+                                                       novel_id=chapter.novel_id, chapter_id=chapter.id)
+                                    LogService.log_error(f"📄 Перевод ({len(content)} символов): {content[:500]}...",
+                                                       novel_id=chapter.novel_id, chapter_id=chapter.id)
+
+                                    return False
+                            else:
+                                # Не удалось перевести все части в третьей попытке
+                                LogService.log_error(f"❌ Третья попытка не удалась: переведено {len(translated_parts_third)}/{len(text_parts)} частей",
+                                                   novel_id=chapter.novel_id, chapter_id=chapter.id)
+                                return False
                         else:
                             LogService.log_info(f"Повторный перевод успешен, качество: {self.calculate_quality_score(validation)}", 
                                               novel_id=chapter.novel_id, chapter_id=chapter.id)
