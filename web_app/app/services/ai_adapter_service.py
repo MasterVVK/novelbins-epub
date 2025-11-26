@@ -355,9 +355,10 @@ class AIAdapterService:
                 logger.debug(f"Ollama endpoint: {self.model.api_endpoint}")
                 logger.debug(f"Context size: {num_ctx}")
 
-                # Объединяем system и user промпты в один
-                # Ollama лучше работает с единым промптом
-                full_prompt = f"{system_prompt}\n\n{user_prompt}"
+                # Объединяем user и system промпты в один
+                # ВАЖНО: Для kimi-k2 инструкции должны быть В КОНЦЕ, иначе модель ломается
+                # на больших промптах (95k+). Тесты: инструкции в начале → 34 симв, в конце → 6000+ симв
+                full_prompt = f"{user_prompt}\n\n{system_prompt}"
 
                 # Подготавливаем JSON для запроса
                 request_json = {
