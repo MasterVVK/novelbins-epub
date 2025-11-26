@@ -674,7 +674,7 @@ def edit_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
                                         translated_text=initial_translation.translated_text,  # Копируем переведенный текст
                                         translation_type='edited',
                                         api_used='ollama',
-                                        model_used=config.get('ai_model', {}).get('name', 'unknown'),
+                                        model_used=config.get('model_name', 'unknown'),
                                         quality_score=5,  # Средняя оценка для неизмененного текста
                                         translation_time=0.0
                                     )

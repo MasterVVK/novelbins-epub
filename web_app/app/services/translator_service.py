@@ -1302,18 +1302,16 @@ class TranslatorService:
             
             # Определяем модель, используемую для перевода
             model_used = None
-            if hasattr(self.translator, 'ai_model') and hasattr(self.translator.ai_model, 'model_id'):
-                # UniversalLLMTranslator с заполненными данными
-                model_used = self.translator.ai_model.model_id
+            if hasattr(self.translator, 'model') and hasattr(self.translator.model, 'model_id'):
+                # UniversalLLMTranslator с AIModel
+                model_used = self.translator.model.model_id
             elif hasattr(self.translator, 'config') and hasattr(self.translator.config, 'model_name'):
                 # LLMTranslator - легаси режим
                 model_used = self.translator.config.model_name
-            elif hasattr(self.translator, 'translator') and hasattr(self.translator.translator.config, 'model_name'):
-                # Это может быть через адаптер
-                model_used = self.translator.translator.config.model_name
             else:
-                # Запасной вариант
-                model_used = 'gemini-2.5-flash-estimated'
+                # Запасной вариант - берём из конфига новеллы
+                novel_config = chapter.novel.config or {}
+                model_used = novel_config.get('translation_model', 'unknown')
             
             LogService.log_info(f"Используется модель: {model_used}", novel_id=chapter.novel_id, chapter_id=chapter.id)
             
