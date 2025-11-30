@@ -44,8 +44,8 @@ def fix_missing_titles(novel_id=None, dry_run=False, limit=None, yes=False):
         # Создаём TranslatorService для использования extract_title_and_content
         translator_service = TranslatorService()
 
-        # Находим все переводы без названий
-        query = db.session.query(Translation).join(Chapter)
+        # Находим главы без названий (через chapter.translated_title property)
+        query = db.session.query(Chapter)
 
         if novel_id:
             query = query.filter(Chapter.novel_id == novel_id)
@@ -53,28 +53,44 @@ def fix_missing_titles(novel_id=None, dry_run=False, limit=None, yes=False):
         else:
             print("📚 Обрабатываются все новеллы")
 
-        # Фильтруем переводы без названий
-        query = query.filter(
-            db.or_(
-                Translation.translated_title == None,
-                Translation.translated_title == ''
-            )
-        )
+        # Фильтруем только переведённые/отредактированные главы
+        query = query.filter(Chapter.status.in_(['translated', 'edited']))
+
+        all_chapters = query.all()
+
+        # Отбираем главы, у которых translated_title пустой или неправильный
+        # (проверяем через property, который учитывает приоритет edited > initial)
+        def is_invalid_title(title):
+            """Проверяет, является ли название некорректным"""
+            if not title:
+                return True
+            # Название слишком длинное и не начинается с "Глава" - скорее всего это текст
+            title_lower = title.lower().strip()
+            valid_prefixes = ('глава', 'chapter', '**глава', 'пролог', 'эпилог', 'интерлюдия')
+            if len(title) > 80 and not title_lower.startswith(valid_prefixes):
+                return True
+            return False
+
+        chapters_without_titles = []
+        for chapter in all_chapters:
+            if is_invalid_title(chapter.translated_title):
+                chapters_without_titles.append(chapter)
+
+        # Сортируем по номеру главы
+        chapters_without_titles.sort(key=lambda x: x.chapter_number)
 
         # Применяем лимит, если указан
         if limit:
-            query = query.limit(limit)
+            chapters_without_titles = chapters_without_titles[:limit]
             print(f"⚠️  ОГРАНИЧЕНИЕ: обрабатываются только первые {limit} глав")
 
-        translations = query.all()
-
-        total = len(translations)
+        total = len(chapters_without_titles)
 
         if total == 0:
             print("✅ Все переводы уже имеют названия!")
             return
 
-        print(f"📊 Найдено переводов без названий: {total}")
+        print(f"📊 Найдено глав без названий: {total}")
         print()
 
         if not dry_run and not yes:
@@ -92,11 +108,19 @@ def fix_missing_titles(novel_id=None, dry_run=False, limit=None, yes=False):
         print("🚀 Начинаем обработку...")
         print("-" * 80)
 
-        for i, translation in enumerate(translations, 1):
-            chapter = translation.chapter
+        for i, chapter in enumerate(chapters_without_titles, 1):
             novel_title = chapter.novel.title
 
+            # Получаем translation запись, которую показывает страница
+            # (приоритет: edited_translation > current_translation)
+            translation = chapter.edited_translation or chapter.current_translation
+
             try:
+                if not translation:
+                    print(f"⚠️  [{i}/{total}] Глава {chapter.chapter_number} ({novel_title}): Нет записи translation")
+                    error_count += 1
+                    continue
+
                 # Извлекаем название из переведённого текста
                 if not translation.translated_text:
                     print(f"⚠️  [{i}/{total}] Глава {chapter.chapter_number} ({novel_title}): Нет translated_text")
