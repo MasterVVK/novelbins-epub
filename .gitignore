@@ -173,3 +173,4 @@ glossary_state.json
 /logs
 **/logs/
 test_pro.py
+/web_app/data/bkrs/
