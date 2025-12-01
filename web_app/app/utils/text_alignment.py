@@ -146,7 +146,8 @@ class BilingualTextAligner:
                        mode: str = 'sentence',
                        style: str = 'alternating',
                        glossary_dict: Optional[Dict[str, Dict]] = None,
-                       include_glossary_section: bool = True) -> Tuple[str, Set[str]]:
+                       include_glossary_section: bool = True,
+                       chapter_stats: Optional[Dict] = None) -> Tuple[str, Set[str]]:
         """
         Форматирует выравненные пары для EPUB с выделением терминов глоссария
 
@@ -156,11 +157,13 @@ class BilingualTextAligner:
             style: 'alternating' (чередование) или 'parallel' (параллельно)
             glossary_dict: Словарь терминов глоссария {chinese_term: {russian, description, category}}
             include_glossary_section: Включать ли секцию терминов в конце
+            chapter_stats: Статистика главы от CharacterStatsTracker.process_chapter()
 
         Returns:
             (html_content, used_terms_set) - кортеж из HTML контента и множества использованных терминов
         """
         from app.utils.glossary_highlighter import GlossaryHighlighter
+        from app.utils.character_stats import format_chapter_stats_html
 
         # Если есть глоссарий, обрабатываем термины
         if glossary_dict:
@@ -182,10 +185,15 @@ class BilingualTextAligner:
 
             content_html = '\n'.join(html_parts)
 
+            # Добавляем статистику главы (если есть)
+            if chapter_stats:
+                stats_section = format_chapter_stats_html(chapter_stats)
+                content_html += '\n' + stats_section
+
             # Добавляем секцию терминов в конец
             if include_glossary_section and used_terms and glossary_dict:
                 glossary_section = GlossaryHighlighter.format_glossary_section(
-                    used_terms, glossary_dict
+                    used_terms, glossary_dict, include_pinyin=True
                 )
                 content_html += '\n' + glossary_section
 
@@ -204,10 +212,15 @@ class BilingualTextAligner:
 
             content_html = '\n'.join(html_parts)
 
+            # Добавляем статистику главы (если есть)
+            if chapter_stats:
+                stats_section = format_chapter_stats_html(chapter_stats)
+                content_html += '\n' + stats_section
+
             # Добавляем секцию терминов в конец
             if include_glossary_section and used_terms and glossary_dict:
                 glossary_section = GlossaryHighlighter.format_glossary_section(
-                    used_terms, glossary_dict
+                    used_terms, glossary_dict, include_pinyin=True
                 )
                 content_html += '\n' + glossary_section
 

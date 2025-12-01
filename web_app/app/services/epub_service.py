@@ -608,6 +608,7 @@ class EPUBService:
         from app.models import GlossaryItem
         from concurrent.futures import ThreadPoolExecutor, as_completed
         from flask import has_app_context
+        from app.utils.character_stats import CharacterStatsTracker
         import time
         import threading
 
@@ -622,6 +623,10 @@ class EPUBService:
 
         LogService.log_info(f"📖 Загружен глоссарий для EPUB: {len(glossary_dict)} терминов", novel_id=novel_id)
 
+        # Создаём трекер статистики иероглифов для всей книги
+        character_tracker = CharacterStatsTracker()
+        LogService.log_info(f"📊 Создан трекер статистики иероглифов", novel_id=novel_id)
+
         # Последовательная обработка глав (без ThreadPoolExecutor)
         LogService.log_info(f"🔨 Последовательная обработка {len(chapters)} глав", novel_id=novel_id)
 
@@ -630,7 +635,10 @@ class EPUBService:
         # Обрабатываем главы последовательно в основном потоке
         for i, chapter in enumerate(chapters, 1):
             try:
-                ch = self._create_bilingual_chapter_page(chapter, nav_css, novel_id, glossary_dict, chapter_index=i)
+                ch = self._create_bilingual_chapter_page(
+                    chapter, nav_css, novel_id, glossary_dict,
+                    chapter_index=i, character_tracker=character_tracker
+                )
                 book.add_item(ch)
                 spine_list.append(ch)
                 toc_list.append(ch)
@@ -818,13 +826,50 @@ class EPUBService:
             margin: 0.2em 0 0.5em 1.5em;
         }
 
-        /* Выделение терминов в китайском тексте */
+        /* Выделение терминов в китайском тексте (оптимизировано для e-ink) */
         .chinese-sentence strong {
-            color: #c0392b;
             font-weight: bold;
-            background-color: #ffe6e6;
-            padding: 0 0.2em;
-            border-radius: 2px;
+            /* Убраны цвета - не работают на e-ink */
+        }
+
+        /* Pinyin в глоссарии */
+        .glossary-pinyin {
+            font-size: 0.9em;
+            font-style: italic;
+        }
+
+        /* Статистика главы */
+        .chapter-stats {
+            margin-top: 3em;
+            padding: 1em;
+            border-top: 2px solid #333;
+            font-size: 0.95em;
+        }
+
+        .stats-title {
+            font-size: 1.1em;
+            font-weight: bold;
+            margin-bottom: 0.8em;
+        }
+
+        .stats-list {
+            margin: 0.5em 0;
+        }
+
+        .stats-item {
+            margin: 0.3em 0;
+            text-indent: 0;
+        }
+
+        /* Ruby теги для pinyin (поддержка e-ink) */
+        ruby {
+            ruby-position: over;
+        }
+
+        rt {
+            font-size: 0.5em;
+            font-family: sans-serif;
+            font-weight: normal;
         }
         """
 
@@ -955,7 +1000,7 @@ class EPUBService:
 
         return toc_page
 
-    def _create_bilingual_chapter_page(self, chapter: Dict, nav_css: epub.EpubItem, novel_id: int, glossary_dict: Optional[Dict] = None, chapter_index: int = 0) -> epub.EpubHtml:
+    def _create_bilingual_chapter_page(self, chapter: Dict, nav_css: epub.EpubItem, novel_id: int, glossary_dict: Optional[Dict] = None, chapter_index: int = 0, character_tracker=None) -> epub.EpubHtml:
         """Создание страницы главы с двуязычным содержимым (с LLM выравниванием)"""
         from app.utils.text_alignment import BilingualTextAligner
         from app.models import Chapter, Novel
@@ -1020,14 +1065,33 @@ class EPUBService:
             aligned_pairs = [(pair['ru'], pair['zh']) for pair in alignments]
             timings['convert_format'] = time.time() - t4
 
-            # Этап 5: Форматирование для EPUB с глоссарием
+            # Этап 4.5: Подсчёт статистики иероглифов (если есть трекер)
+            chapter_stats = None
+            if character_tracker and db_chapter.original_text:
+                t_stats = time.time()
+                chapter_stats = character_tracker.process_chapter(
+                    chapter_num=chapter['number'],
+                    chinese_text=db_chapter.original_text
+                )
+                timings['char_stats'] = time.time() - t_stats
+
+                if verbose:
+                    LogService.log_info(
+                        f"   📊 Статистика: {chapter_stats['total_chars']} иероглифов, "
+                        f"{len(chapter_stats['new_chars'])} новых, "
+                        f"всего изучено: {chapter_stats['total_unique_so_far']}",
+                        novel_id=novel_id
+                    )
+
+            # Этап 5: Форматирование для EPUB с глоссарием и статистикой
             t5 = time.time()
             content_html, used_terms = BilingualTextAligner.format_for_epub(
                 aligned_pairs,
                 mode='sentence',
                 style='alternating',
                 glossary_dict=glossary_dict,
-                include_glossary_section=True
+                include_glossary_section=True,
+                chapter_stats=chapter_stats
             )
             timings['format_epub'] = time.time() - t5
 
