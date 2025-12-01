@@ -56,7 +56,7 @@ class Chapter(db.Model):
     @property
     def is_translated(self):
         """Проверка наличия перевода"""
-        return self.status in ['translated', 'edited']
+        return self.status in ['translated', 'edited', 'aligned']
 
     @property
     def is_edited(self):
