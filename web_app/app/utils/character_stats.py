@@ -1,6 +1,7 @@
 """
 Утилиты для подсчёта статистики иероглифов и добавления pinyin
 """
+import re
 from collections import Counter
 from typing import List, Dict, Set, Tuple, Optional
 from pypinyin import pinyin, Style
@@ -75,6 +76,44 @@ class PinyinHelper:
         return ''.join(result)
 
 
+def split_into_sentences_zh(text: str, max_length: int = 50) -> List[str]:
+    """
+    Разбивает китайский текст на предложения
+
+    Args:
+        text: Китайский текст
+        max_length: Максимальная длина предложения (обрезается если длиннее)
+
+    Returns:
+        Список предложений
+    """
+    if not text:
+        return []
+
+    # Разбиваем по китайским знакам препинания: 。！？；
+    sentences = re.split(r'([。！？；])', text)
+
+    result = []
+    for i in range(0, len(sentences) - 1, 2):
+        sentence = sentences[i].strip()
+        punctuation = sentences[i + 1] if i + 1 < len(sentences) else ''
+        if sentence:
+            full_sentence = sentence + punctuation
+            # Обрезаем если слишком длинное
+            if len(full_sentence) > max_length:
+                full_sentence = full_sentence[:max_length] + '…'
+            result.append(full_sentence)
+
+    # Добавляем последнее предложение, если есть
+    if len(sentences) % 2 == 1 and sentences[-1].strip():
+        last = sentences[-1].strip()
+        if len(last) > max_length:
+            last = last[:max_length] + '…'
+        result.append(last)
+
+    return result
+
+
 class CharacterStatsTracker:
     """
     Отслеживание статистики иероглифов по главам
@@ -85,6 +124,22 @@ class CharacterStatsTracker:
         self.global_counter = Counter()  # Общий счётчик по всей книге
         self.seen_chars: Set[str] = set()  # Все встреченные иероглифы
         self.chapter_first_seen: Dict[str, int] = {}  # char → номер главы где впервые
+
+    def _find_example_sentence(self, char: str, sentences: List[str]) -> Optional[str]:
+        """
+        Находит первое предложение, содержащее указанный иероглиф
+
+        Args:
+            char: Искомый иероглиф
+            sentences: Список предложений
+
+        Returns:
+            Первое предложение с иероглифом или None
+        """
+        for sentence in sentences:
+            if char in sentence:
+                return sentence
+        return None
 
     def process_chapter(self, chapter_num: int, chinese_text: str) -> Dict:
         """
@@ -98,7 +153,7 @@ class CharacterStatsTracker:
             Словарь со статистикой главы:
             {
                 'chapter_counts': Counter,  # Счётчик по этой главе
-                'top_10': [...],  # Топ-10 с pinyin
+                'top_20': [...],  # Топ-20 с pinyin и примером
                 'new_chars': [...],  # Новые иероглифы (впервые в книге)
                 'total_chars': int,  # Всего иероглифов в главе
                 'unique_chars': int,  # Уникальных в главе
@@ -108,6 +163,9 @@ class CharacterStatsTracker:
         # Извлекаем только китайские иероглифы
         chars = [c for c in chinese_text if '\u4e00' <= c <= '\u9fff']
         chapter_counter = Counter(chars)
+
+        # Разбиваем текст на предложения для примеров
+        sentences = split_into_sentences_zh(chinese_text)
 
         # Находим новые иероглифы (впервые встретились в книге)
         current_chars = set(chars)
@@ -121,13 +179,15 @@ class CharacterStatsTracker:
         self.seen_chars.update(current_chars)
         self.global_counter.update(chars)
 
-        # Формируем топ-20 с pinyin
+        # Формируем топ-20 с pinyin и примером предложения
         top_20 = []
         for char, count in chapter_counter.most_common(20):
+            example = self._find_example_sentence(char, sentences)
             top_20.append({
                 'char': char,
                 'pinyin': PinyinHelper.get_pinyin(char),
-                'count': count
+                'count': count,
+                'example': example  # Пример предложения
             })
 
         # Новые иероглифы с pinyin
@@ -199,22 +259,29 @@ def format_chapter_stats_html(stats: Dict, dictionary=None) -> str:
     html_parts.append('<div class="stats-list">')
     for item in stats['top_20']:
         char = item["char"]
-        pinyin = item["pinyin"]
+        pinyin_str = item["pinyin"]
         count = item["count"]
+        example = item.get("example")  # Пример предложения
 
         # Получаем перевод из словаря
         translation = None
         if dictionary and dictionary.is_loaded:
             translation = dictionary.lookup(char)
 
+        # Основная строка: иероглиф (pinyin) — перевод [count×]
         if translation:
-            html_parts.append(
-                f'<p class="stats-item">{char} ({pinyin}) — {translation} [{count}×]</p>'
-            )
+            main_line = f'{char} ({pinyin_str}) — {translation} [{count}×]'
         else:
-            html_parts.append(
-                f'<p class="stats-item">{char} ({pinyin}) — {count}×</p>'
-            )
+            main_line = f'{char} ({pinyin_str}) — {count}×'
+
+        html_parts.append(f'<p class="stats-item">{main_line}</p>')
+
+        # Пример предложения (если есть)
+        if example:
+            # Выделяем иероглиф жирным в примере
+            highlighted_example = example.replace(char, f'<strong>{char}</strong>')
+            html_parts.append(f'<p class="stats-example">「{highlighted_example}」</p>')
+
     html_parts.append('</div>')
 
     html_parts.append('</div>')
