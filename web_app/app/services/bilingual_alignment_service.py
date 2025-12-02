@@ -27,20 +27,20 @@ class BilingualAlignmentService:
         self,
         model_id: Optional[int] = None,
         template_id: Optional[int] = None,
-        max_parse_retries: int = 2,
-        parse_retry_delay: int = 20
+        max_technical_retries: int = 5,
+        technical_retry_delay: int = 30
     ):
         """
         Args:
             model_id: ID AI модели для выравнивания (если None - используется дефолтная)
             template_id: ID шаблона промпта (если None - используется дефолтный или из новеллы)
-            max_parse_retries: Количество повторных попыток при ошибке парсинга JSON (по умолчанию 2)
-            parse_retry_delay: Задержка в секундах между retry попытками парсинга (по умолчанию 20)
+            max_technical_retries: Количество повторных попыток при технических ошибках (LLM error, JSON parsing) - по умолчанию 3
+            technical_retry_delay: Задержка в секундах между retry при технических ошибках (по умолчанию 20)
         """
         self.model_id = model_id
         self.template_id = template_id
-        self.max_parse_retries = max_parse_retries
-        self.parse_retry_delay = parse_retry_delay
+        self.max_technical_retries = max_technical_retries
+        self.technical_retry_delay = technical_retry_delay
 
     def align_chapter(
         self,
@@ -130,16 +130,18 @@ class BilingualAlignmentService:
 
         prompt = self._build_alignment_prompt(template, russian_text, chinese_text)
 
-        # 6. Запрос к LLM с повторными попытками при потере текста
-        max_attempts = 3
-        # Прогрессивное снижение порога покрытия:
-        # Попытка 1: 98% (строго)
-        # Попытка 2: 96% (менее строго)
-        # Попытка 3: 95% (минимально приемлемо)
+        # 6. Запрос к LLM с разделением технических ошибок и проблем с покрытием
+        #
+        # ЛОГИКА RETRY:
+        # - Технические ошибки (LLM error, JSON parsing) → повторяем с ТЕМ ЖЕ порогом покрытия
+        # - Низкое покрытие текста → переходим к следующему порогу (98% → 96% → 95%)
+        #
+        max_coverage_attempts = 3
+        # Прогрессивное снижение порога покрытия (только при проблемах с покрытием, не при ошибках):
         coverage_thresholds = {
-            1: 0.98,
-            2: 0.96,
-            3: 0.95
+            1: 0.98,  # Строго
+            2: 0.96,  # Менее строго
+            3: 0.95   # Минимально приемлемо
         }
 
         ai_adapter = AIAdapterService(
@@ -153,9 +155,9 @@ class BilingualAlignmentService:
         coverage_zh = 0.0
         avg_confidence = 0.0
 
-        for attempt in range(1, max_attempts + 1):
-            # Порог для текущей попытки
-            min_volume_coverage = coverage_thresholds[attempt]
+        for coverage_attempt in range(1, max_coverage_attempts + 1):
+            # Порог для текущей попытки (снижается только при проблемах с покрытием)
+            min_volume_coverage = coverage_thresholds[coverage_attempt]
 
             # ПРОВЕРКА ОТМЕНЫ: Перед каждой попыткой проверяем статус новеллы
             from app.models import Novel
@@ -168,15 +170,17 @@ class BilingualAlignmentService:
                 )
                 return []  # Прерываем выравнивание
 
-            # НОВОЕ: Вложенный цикл retry для парсинга JSON
-            parse_success = False
+            # Цикл retry для технических ошибок (LLM error, JSON parsing)
+            # НЕ меняет порог покрытия!
+            technical_success = False
+            alignment_result = None
 
-            for parse_retry in range(1, self.max_parse_retries + 1):
+            for tech_retry in range(1, self.max_technical_retries + 1):
                 # ПРОВЕРКА ОТМЕНЫ: Перед каждым retry также проверяем
                 novel_check = Novel.query.get(chapter.novel_id)
                 if novel_check and novel_check.status == 'alignment_cancelled':
                     LogService.log_warning(
-                        f"{log_prefix} 🛑 Выравнивание отменено (retry {parse_retry})",
+                        f"{log_prefix} 🛑 Выравнивание отменено (tech retry {tech_retry})",
                         novel_id=chapter.novel_id,
                         chapter_id=chapter.id
                     )
@@ -184,7 +188,7 @@ class BilingualAlignmentService:
 
                 try:
                     LogService.log_info(
-                        f"{log_prefix} Попытка {attempt}/{max_attempts} (порог покрытия: {min_volume_coverage * 100:.0f}%), retry парсинга {parse_retry}/{self.max_parse_retries}",
+                        f"{log_prefix} Порог покрытия: {min_volume_coverage * 100:.0f}% (попытка {coverage_attempt}/{max_coverage_attempts}), tech retry {tech_retry}/{self.max_technical_retries}",
                         novel_id=chapter.novel_id,
                         chapter_id=chapter.id
                     )
@@ -201,9 +205,9 @@ class BilingualAlignmentService:
 
                     duration = (datetime.now() - start_time).total_seconds()
 
-                    # Проверяем успешность
+                    # Проверяем успешность LLM запроса
                     if not result.get('success'):
-                        raise Exception(result.get('error', 'Unknown error from AI adapter'))
+                        raise Exception(f"Ошибка Ollama: {result.get('error', 'Unknown error')}")
 
                     response = result['content']
 
@@ -213,80 +217,72 @@ class BilingualAlignmentService:
                         chapter_id=chapter.id
                     )
 
-                    # Парсинг JSON ответа с обработкой ошибок
-                    try:
-                        alignment_result = self._parse_llm_response(response)
-                        parse_success = True
-                        LogService.log_info(
-                            f"{log_prefix} ✅ JSON успешно распарсен",
-                            novel_id=chapter.novel_id,
-                            chapter_id=chapter.id
-                        )
-                        break  # Парсинг успешен - выход из retry цикла
-
-                    except Exception as parse_error:
-                        LogService.log_error(
-                            f"{log_prefix} ❌ Ошибка парсинга JSON (попытка {attempt}/{max_attempts}, retry {parse_retry}/{self.max_parse_retries}): {parse_error}",
-                            novel_id=chapter.novel_id,
-                            chapter_id=chapter.id
-                        )
-
-                        if parse_retry < self.max_parse_retries:
-                            # Задержка перед повторным запросом к LLM
-                            LogService.log_info(
-                                f"{log_prefix} ⏳ Задержка {self.parse_retry_delay} сек перед повторным запросом к LLM...",
-                                novel_id=chapter.novel_id,
-                                chapter_id=chapter.id
-                            )
-                            time.sleep(self.parse_retry_delay)
-                            continue  # Повторяем LLM запрос с ТЕМ ЖЕ порогом покрытия
-                        else:
-                            # Все retry парсинга исчерпаны
-                            LogService.log_error(
-                                f"{log_prefix} ❌ Не удалось распарсить JSON за {self.max_parse_retries} попыток (попытка {attempt}/{max_attempts})",
-                                novel_id=chapter.novel_id,
-                                chapter_id=chapter.id
-                            )
-                            break  # Выход из retry цикла, переход к следующему attempt
-
-                except Exception as e:
-                    # Обработка сетевых и других ошибок LLM
-                    LogService.log_error(
-                        f"{log_prefix} ❌ Ошибка LLM запроса (попытка {attempt}/{max_attempts}, retry {parse_retry}/{self.max_parse_retries}): {e}",
+                    # Парсинг JSON ответа
+                    alignment_result = self._parse_llm_response(response)
+                    technical_success = True
+                    LogService.log_info(
+                        f"{log_prefix} ✅ JSON успешно распарсен",
                         novel_id=chapter.novel_id,
                         chapter_id=chapter.id
                     )
-                    if parse_retry < self.max_parse_retries:
+                    break  # Технический успех - выход из retry цикла
+
+                except Exception as e:
+                    error_str = str(e)
+                    # Определяем тип ошибки
+                    is_network_error = any(x in error_str for x in [
+                        'timeout', 'i/o timeout', 'connection refused', 'dial tcp',
+                        'lookup', 'no such host', 'network is unreachable'
+                    ])
+                    error_type = "сети/LLM" if is_network_error else "парсинга JSON"
+
+                    LogService.log_error(
+                        f"{log_prefix} ❌ Ошибка {error_type} (tech retry {tech_retry}/{self.max_technical_retries}): {e}",
+                        novel_id=chapter.novel_id,
+                        chapter_id=chapter.id
+                    )
+
+                    if tech_retry < self.max_technical_retries:
+                        # Задержка перед повторным запросом - порог покрытия НЕ меняется!
                         LogService.log_info(
-                            f"{log_prefix} ⏳ Задержка {self.parse_retry_delay} сек перед повторным запросом...",
+                            f"{log_prefix} ⏳ Задержка {self.technical_retry_delay} сек перед повторным запросом (порог остается {min_volume_coverage * 100:.0f}%)...",
                             novel_id=chapter.novel_id,
                             chapter_id=chapter.id
                         )
-                        time.sleep(self.parse_retry_delay)
+                        time.sleep(self.technical_retry_delay)
                         continue
                     else:
+                        # Все технические retry исчерпаны
+                        LogService.log_error(
+                            f"{log_prefix} ❌ Все технические retry ({self.max_technical_retries}) исчерпаны для порога {min_volume_coverage * 100:.0f}%",
+                            novel_id=chapter.novel_id,
+                            chapter_id=chapter.id
+                        )
+                        # Сохраняем информацию о типе ошибки для решения о fallback
+                        last_error_is_network = is_network_error
                         break
 
-            # Проверяем успешность парсинга после всех retry
-            if not parse_success:
-                if attempt == max_attempts:
-                    # Последняя попытка - используем fallback
+            # Если технические retry провалились
+            if not technical_success:
+                # При сетевых ошибках НЕ используем fallback - просто прерываем
+                # (можно перезапустить позже когда сеть восстановится)
+                if 'last_error_is_network' in locals() and last_error_is_network:
                     LogService.log_error(
-                        f"{log_prefix} ❌ Все попытки LLM выравнивания ({max_attempts}) с retry парсинга ({self.max_parse_retries}) исчерпаны, используем fallback",
+                        f"{log_prefix} ❌ Сетевые ошибки - пропускаем главу (можно пересопоставить позже)",
+                        novel_id=chapter.novel_id,
+                        chapter_id=chapter.id
+                    )
+                    raise Exception(f"Сетевая ошибка при сопоставлении главы {chapter.chapter_number}")
+                else:
+                    # При ошибках парсинга JSON - используем fallback
+                    LogService.log_warning(
+                        f"{log_prefix} ⚠️ Ошибки парсинга JSON - используем fallback regex",
                         novel_id=chapter.novel_id,
                         chapter_id=chapter.id
                     )
                     return self._fallback_regex_alignment(russian_text, chinese_text, chapter)
-                else:
-                    # Переходим к следующему attempt с другим порогом покрытия
-                    LogService.log_warning(
-                        f"{log_prefix} ⚠️ Парсинг не удался, переходим к следующей попытке с порогом {coverage_thresholds[attempt + 1] * 100:.0f}%",
-                        novel_id=chapter.novel_id,
-                        chapter_id=chapter.id
-                    )
-                    continue
 
-            # Валидация качества (только если парсинг успешен)
+            # Технический успех - теперь проверяем качество и покрытие
             is_valid, quality_score, coverage_ru, coverage_zh, avg_confidence = self._validate_alignment(
                 alignment_result.get('alignments', []),
                 russian_text,
@@ -295,12 +291,13 @@ class BilingualAlignmentService:
 
             if not is_valid:
                 LogService.log_warning(
-                    f"{log_prefix} Низкое качество выравнивания (score={quality_score:.2f}, попытка {attempt})",
+                    f"{log_prefix} Низкое качество выравнивания (score={quality_score:.2f})",
                     novel_id=chapter.novel_id,
                     chapter_id=chapter.id
                 )
-                if attempt == max_attempts:
+                if coverage_attempt == max_coverage_attempts:
                     return self._fallback_regex_alignment(russian_text, chinese_text, chapter)
+                # Переходим к следующему порогу покрытия
                 continue
 
             # ПРОВЕРКА ОБЪЕМА ТЕКСТА
@@ -312,29 +309,30 @@ class BilingualAlignmentService:
             )
 
             LogService.log_info(
-                f"{log_prefix} Проверка объема (попытка {attempt}, порог {min_volume_coverage * 100:.0f}%): RU {volume_stats['coverage_ru_percent']}, ZH {volume_stats['coverage_zh_percent']}",
+                f"{log_prefix} Проверка объема (порог {min_volume_coverage * 100:.0f}%): RU {volume_stats['coverage_ru_percent']}, ZH {volume_stats['coverage_zh_percent']}",
                 novel_id=chapter.novel_id,
                 chapter_id=chapter.id
             )
 
             if not volume_valid:
+                # Проблема с покрытием - здесь можно снизить порог
                 LogService.log_warning(
-                    f"{log_prefix} ⚠️ Потеря текста при сопоставлении! RU: {volume_stats['coverage_ru_percent']} (нужно ≥{min_volume_coverage * 100:.0f}%), ZH: {volume_stats['coverage_zh_percent']} (нужно ≥{min_volume_coverage * 100:.0f}%)",
+                    f"{log_prefix} ⚠️ Потеря текста! RU: {volume_stats['coverage_ru_percent']} (нужно ≥{min_volume_coverage * 100:.0f}%), ZH: {volume_stats['coverage_zh_percent']}",
                     novel_id=chapter.novel_id,
                     chapter_id=chapter.id
                 )
 
-                if attempt < max_attempts:
-                    next_threshold = coverage_thresholds[attempt + 1]
+                if coverage_attempt < max_coverage_attempts:
+                    next_threshold = coverage_thresholds[coverage_attempt + 1]
                     LogService.log_info(
-                        f"{log_prefix} 🔄 Повторяем запрос к LLM для восстановления текста (следующий порог: {next_threshold * 100:.0f}%)...",
+                        f"{log_prefix} 🔄 Снижаем порог покрытия: {min_volume_coverage * 100:.0f}% → {next_threshold * 100:.0f}%",
                         novel_id=chapter.novel_id,
                         chapter_id=chapter.id
                     )
                     continue
                 else:
                     LogService.log_error(
-                        f"{log_prefix} ❌ Не удалось достичь минимального покрытия ({coverage_thresholds[3] * 100:.0f}%) за {max_attempts} попыток, используем fallback",
+                        f"{log_prefix} ❌ Не удалось достичь минимального покрытия ({coverage_thresholds[3] * 100:.0f}%) за {max_coverage_attempts} попыток, используем fallback",
                         novel_id=chapter.novel_id,
                         chapter_id=chapter.id
                     )
@@ -342,7 +340,7 @@ class BilingualAlignmentService:
 
             # Все проверки пройдены!
             LogService.log_info(
-                f"{log_prefix} ✅ Выравнивание успешно (попытка {attempt}): {len(alignment_result['alignments'])} пар, качество {quality_score:.2f}, покрытие RU {volume_stats['coverage_ru_percent']}, ZH {volume_stats['coverage_zh_percent']}",
+                f"{log_prefix} ✅ Выравнивание успешно: {len(alignment_result['alignments'])} пар, качество {quality_score:.2f}, покрытие RU {volume_stats['coverage_ru_percent']}, ZH {volume_stats['coverage_zh_percent']}",
                 novel_id=chapter.novel_id,
                 chapter_id=chapter.id
             )
