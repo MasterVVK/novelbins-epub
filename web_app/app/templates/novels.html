@@ -16,6 +16,34 @@
     </div>
 </div>
 
+<!-- Фильтр по автору -->
+{% if authors %}
+<div class="card mb-4">
+    <div class="card-body py-2">
+        <form method="GET" action="{{ url_for('main.novels') }}" class="row g-2 align-items-center">
+            <div class="col-auto">
+                <label class="col-form-label"><i class="bi bi-funnel"></i> Фильтр:</label>
+            </div>
+            <div class="col-auto">
+                <select name="author" class="form-select form-select-sm" onchange="this.form.submit()">
+                    <option value="">Все авторы</option>
+                    {% for author in authors %}
+                    <option value="{{ author }}" {% if author_filter == author %}selected{% endif %}>{{ author }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            {% if author_filter %}
+            <div class="col-auto">
+                <a href="{{ url_for('main.novels') }}" class="btn btn-sm btn-outline-secondary">
+                    <i class="bi bi-x-circle"></i> Сбросить
+                </a>
+            </div>
+            {% endif %}
+        </form>
+    </div>
+</div>
+{% endif %}
+
 {% if novels %}
 <div class="row">
     {% for novel in novels %}

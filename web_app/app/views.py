@@ -44,8 +44,27 @@ def dashboard():
 @main_bp.route('/novels')
 def novels():
     """Список новелл"""
-    novels = Novel.query.filter_by(is_active=True).order_by(Novel.created_at.desc()).all()
-    return render_template('novels.html', novels=novels)
+    # Получаем параметр фильтра по автору
+    author_filter = request.args.get('author', '').strip()
+
+    # Базовый запрос
+    query = Novel.query.filter_by(is_active=True)
+
+    # Применяем фильтр по автору если указан
+    if author_filter:
+        query = query.filter(Novel.author == author_filter)
+
+    novels = query.order_by(Novel.created_at.desc()).all()
+
+    # Получаем уникальных авторов для списка фильтра
+    authors = db.session.query(Novel.author).filter(
+        Novel.is_active == True,
+        Novel.author.isnot(None),
+        Novel.author != ''
+    ).distinct().order_by(Novel.author).all()
+    authors = [a[0] for a in authors]
+
+    return render_template('novels.html', novels=novels, authors=authors, author_filter=author_filter)
 
 
 @main_bp.route('/novels/deleted')
