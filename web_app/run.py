@@ -18,9 +18,10 @@ app = create_app()
 
 @app.cli.command("init-db")
 def init_db():
-    """Инициализация базы данных"""
-    db.create_all()
-    print("База данных инициализирована!")
+    """Инициализация базы данных через alembic миграции"""
+    from flask_migrate import upgrade
+    upgrade()
+    print("База данных инициализирована (миграции применены)!")
 
 if __name__ == '__main__':
     # Безопасный запуск: debug только в development
