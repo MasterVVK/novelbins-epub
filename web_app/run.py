@@ -23,4 +23,14 @@ def init_db():
     print("База данных инициализирована!")
 
 if __name__ == '__main__':
-    socketio.run(app, host='0.0.0.0', port=5001, debug=True, allow_unsafe_werkzeug=True)
+    # Безопасный запуск: debug только в development
+    is_debug = os.environ.get('FLASK_ENV') == 'development' or os.environ.get('FLASK_DEBUG') == '1'
+    host = '127.0.0.1' if not is_debug else '0.0.0.0'
+
+    socketio.run(
+        app,
+        host=host,
+        port=5001,
+        debug=is_debug,
+        allow_unsafe_werkzeug=is_debug
+    )
