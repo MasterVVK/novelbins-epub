@@ -68,10 +68,24 @@ class Chapter(db.Model):
         """Переведённое название главы
 
         Возвращает название из наиболее актуальной версии перевода:
-        - Приоритет 1: Отредактированный перевод (если есть)
-        - Приоритет 2: Текущий перевод
-        - Приоритет 3: None (если переводов нет)
+        - Приоритет 1: Последний перевод с валидным translated_title (среди всех)
+        - Приоритет 2: None (если названия нет ни в одном переводе)
         """
-        # Приоритет: отредактированный перевод → текущий перевод
-        translation = self.edited_translation or self.current_translation
-        return translation.translated_title if translation else None 
+        def is_valid_title(title):
+            """Проверяет, является ли строка валидным названием главы"""
+            if not title:
+                return False
+            title_lower = title.lower().strip()
+            # Валидные префиксы для названий
+            valid_prefixes = ('глава', 'chapter', '**глава', 'пролог', 'эпилог', 'интерлюдия')
+            # Если название слишком длинное и не начинается с валидного префикса — это скорее всего текст
+            if len(title) > 80 and not title_lower.startswith(valid_prefixes):
+                return False
+            return True
+
+        # Ищем среди всех переводов (от новых к старым по ID) первый с валидным названием
+        sorted_translations = sorted(self.translations, key=lambda t: t.id, reverse=True)
+        for trans in sorted_translations:
+            if is_valid_title(trans.translated_title):
+                return trans.translated_title
+        return None 

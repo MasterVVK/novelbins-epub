@@ -53,8 +53,8 @@ def fix_missing_titles(novel_id=None, dry_run=False, limit=None, yes=False):
         else:
             print("📚 Обрабатываются все новеллы")
 
-        # Фильтруем только переведённые/отредактированные главы
-        query = query.filter(Chapter.status.in_(['translated', 'edited']))
+        # Фильтруем только переведённые/отредактированные/сопоставленные главы
+        query = query.filter(Chapter.status.in_(['translated', 'edited', 'aligned']))
 
         all_chapters = query.all()
 
@@ -131,6 +131,11 @@ def fix_missing_titles(novel_id=None, dry_run=False, limit=None, yes=False):
                 title, content = translator_service.extract_title_and_content(
                     translation.translated_text
                 )
+
+                # Проверяем, что извлечённое название валидно (не текст)
+                if title and is_invalid_title(title):
+                    print(f"⚠️  [{i}/{total}] Глава {chapter.chapter_number}: Извлечённое название невалидно, переводим отдельно...")
+                    title = None  # Сбрасываем, чтобы перейти к переводу original_title
 
                 if title:
                     # Найдено название в тексте

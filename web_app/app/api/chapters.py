@@ -19,7 +19,7 @@ def update_chapter_status(chapter_id):
         new_status = data.get('status')
 
         # Валидация статуса
-        valid_statuses = ['pending', 'parsed', 'translated', 'edited', 'error']
+        valid_statuses = ['pending', 'parsed', 'translated', 'edited', 'aligned', 'error']
         if new_status not in valid_statuses:
             return jsonify({
                 'success': False,

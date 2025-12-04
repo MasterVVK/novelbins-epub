@@ -958,14 +958,9 @@ def align_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
                         chapter_id=chapter_id
                     )
 
-                # Проверка отмены задачи
+                # Проверка отмены задачи (без лога - главный лог в основном цикле)
                 novel_fresh = Novel.query.get(novel_id)
                 if _cancel_requested or novel_fresh.status == 'alignment_cancelled':
-                    LogService.log_warning(
-                        f"🛑 [Novel:{novel_id}, Ch:{chapter.chapter_number}] Выравнивание отменено",
-                        novel_id=novel_id,
-                        chapter_id=chapter_id
-                    )
                     return False
 
                 try:
@@ -1037,55 +1032,74 @@ def align_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
         )
 
         with ThreadPoolExecutor(max_workers=parallel_threads) as executor:
-            # Запускаем задачи
-            futures = {executor.submit(align_single_chapter, ch_id): ch_id
-                      for ch_id in chapter_ids}
+            # НЕ подаём все задачи сразу - подаём итеративно для возможности быстрой отмены
+            pending_ids = list(chapter_ids)  # Очередь глав на обработку
+            futures = {}  # Активные futures
+            cancelled = False
 
-            # Обрабатываем результаты по мере выполнения
-            for future in as_completed(futures):
-                # ПРОВЕРКА ОТМЕНЫ: Останавливаем обработку новых результатов
-                if _cancel_requested:
+            while pending_ids or futures:
+                # ПРОВЕРКА ОТМЕНЫ: Не подаём новые задачи
+                if _cancel_requested and not cancelled:
+                    cancelled = True
+                    remaining = len(pending_ids)
                     LogService.log_warning(
-                        f"🛑 [Novel:{novel_id}] Обнаружен запрос отмены, останавливаем обработку",
+                        f"🛑 [Novel:{novel_id}] Обнаружен запрос отмены, пропускаем {remaining} оставшихся глав",
                         novel_id=novel_id
                     )
-                    # Отменяем оставшиеся задачи
+                    pending_ids.clear()  # Очищаем очередь - не будем подавать новые
+                    # Отменяем ожидающие futures
                     for f in futures:
                         if not f.done():
                             f.cancel()
-                    # Даем 5 секунд на graceful shutdown
-                    executor.shutdown(wait=True, cancel_futures=True)
+
+                # Подаём новые задачи пока есть слоты и главы в очереди
+                while pending_ids and len(futures) < parallel_threads:
+                    ch_id = pending_ids.pop(0)
+                    future = executor.submit(align_single_chapter, ch_id)
+                    futures[future] = ch_id
+
+                # Если нет активных задач - выходим
+                if not futures:
                     break
 
-                chapter_id = futures[future]
+                # Ждём завершения хотя бы одной задачи
+                done_futures = [f for f in futures if f.done()]
+                if not done_futures:
+                    import time
+                    time.sleep(0.1)
+                    continue
 
-                try:
-                    result = future.result()
+                # Обрабатываем завершённые задачи
+                for future in done_futures:
+                    chapter_id = futures.pop(future)
 
-                    # Обновляем прогресс
-                    progress = int((processed_count / total_chapters) * 100)
-                    self.update_state(
-                        state='PROGRESS',
-                        meta={
-                            'status': f'Обработано {processed_count}/{total_chapters} глав',
-                            'progress': progress,
-                            'success_count': success_count,
-                            'processed_count': processed_count
-                        }
-                    )
+                    try:
+                        result = future.result()
 
-                    # Логируем прогресс каждые 10%
-                    if processed_count % max(1, total_chapters // 10) == 0:
-                        LogService.log_info(
-                            f"📊 [Novel:{novel_id}] Прогресс выравнивания: {processed_count}/{total_chapters} ({progress}%) | Успешно: {success_count}",
-                            novel_id=novel_id
+                        # Обновляем прогресс
+                        progress = int((processed_count / total_chapters) * 100)
+                        self.update_state(
+                            state='PROGRESS',
+                            meta={
+                                'status': f'Обработано {processed_count}/{total_chapters} глав',
+                                'progress': progress,
+                                'success_count': success_count,
+                                'processed_count': processed_count
+                            }
                         )
 
-                except Exception as e:
-                    LogService.log_error(
-                        f"❌ [Novel:{novel_id}] Ошибка в потоке выравнивания: {e}",
-                        novel_id=novel_id
-                    )
+                        # Логируем прогресс каждые 10%
+                        if processed_count % max(1, total_chapters // 10) == 0:
+                            LogService.log_info(
+                                f"📊 [Novel:{novel_id}] Прогресс выравнивания: {processed_count}/{total_chapters} ({progress}%) | Успешно: {success_count}",
+                                novel_id=novel_id
+                            )
+
+                    except Exception as e:
+                        LogService.log_error(
+                            f"❌ [Novel:{novel_id}] Ошибка в потоке выравнивания: {e}",
+                            novel_id=novel_id
+                        )
 
         # Финальный статус
         if _cancel_requested:

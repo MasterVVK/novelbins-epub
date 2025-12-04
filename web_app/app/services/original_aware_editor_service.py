@@ -484,9 +484,14 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
             # Подсчитываем общее количество терминов
             total_glossary_terms = sum(len(terms) for terms in glossary.get('all_terms', {}).values())
 
+            # Ищем название среди всех переводов главы (от новых к старым)
+            existing_title = chapter.translated_title  # Уже использует умную логику поиска
+            if not existing_title:
+                existing_title = f"Глава {chapter.chapter_number}"
+
             translation = Translation(
                 chapter_id=chapter.id,
-                translated_title=original_translation.translated_title if original_translation else f"Глава {chapter.chapter_number}",
+                translated_title=existing_title,
                 translated_text=edited_text,
                 summary=original_translation.summary if original_translation else None,
                 translation_type='edited',

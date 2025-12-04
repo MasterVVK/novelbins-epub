@@ -8,6 +8,9 @@
     <div class="card-header">
         <h5 class="card-title mb-0">
             <i class="bi bi-file-text"></i> {{ chapter.original_title or 'Глава ' + chapter.chapter_number|string }}
+            {% if chapter.translated_title %}
+                <br><small class="text-muted">{{ chapter.translated_title }}</small>
+            {% endif %}
         </h5>
     </div>
     <div class="card-body">

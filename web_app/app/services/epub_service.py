@@ -92,22 +92,23 @@ class EPUBService:
             # Получаем лучший перевод (отредактированный или исходный)
             edited_translation = chapter.edited_translation
             current_translation = chapter.current_translation
-            
+
             if edited_translation:
                 # Используем отредактированную версию
                 final_text = edited_translation.translated_text
-                final_title = edited_translation.translated_title
                 is_edited = True
                 quality_score = edited_translation.quality_score
             elif current_translation:
                 # Используем исходный перевод
                 final_text = current_translation.translated_text
-                final_title = current_translation.translated_title
                 is_edited = False
                 quality_score = None
             else:
                 # Пропускаем главы без перевода
                 continue
+
+            # Используем умную логику поиска названия (ищет валидное среди всех переводов)
+            final_title = chapter.translated_title
 
             if is_edited:
                 edited_count += 1
