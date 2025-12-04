@@ -525,10 +525,6 @@ def cancel_parsing_task(self, task_id):
         }
 
 
-# Глобальный словарь для хранения экземпляров ParallelEditorService по task_id
-_editor_services = {}
-
-
 @celery.task(bind=True, base=CallbackTask, soft_time_limit=172800, time_limit=172800)  # 48 часов
 def edit_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
     """
