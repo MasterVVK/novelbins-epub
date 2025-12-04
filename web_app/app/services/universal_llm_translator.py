@@ -80,19 +80,19 @@ class UniversalLLMTranslator:
         """Получение статуса сохранения истории промптов"""
         return self.save_prompt_history
 
-    def handle_full_cycle_failure(self):
+    async def handle_full_cycle_failure(self):
         """Обработка ситуации, когда все ключи неработающие"""
         self.full_cycles_without_success += 1
         logger.warning(f"Полный цикл без успеха #{self.full_cycles_without_success}")
 
         if self.full_cycles_without_success >= 3:
             logger.warning("3 полных цикла без успеха. Ожидание 5 минут...")
-            time.sleep(300)  # 5 минут
+            await asyncio.sleep(300)  # 5 минут
             self.reset_failed_keys()
             self.full_cycles_without_success = 0
         else:
             logger.info("Ожидание 30 секунд перед повторной попыткой...")
-            time.sleep(30)
+            await asyncio.sleep(30)
             self.reset_failed_keys()
 
     async def make_request_async(self, system_prompt: str, user_prompt: str, temperature: float = None) -> Optional[str]:
@@ -114,7 +114,7 @@ class UniversalLLMTranslator:
                     self.switch_to_next_key()
 
                     if self.all_keys_failed():
-                        self.handle_full_cycle_failure()
+                        await self.handle_full_cycle_failure()
                         attempts = 0
                         continue
 
@@ -174,7 +174,7 @@ class UniversalLLMTranslator:
                     else:
                         # Другая ошибка - пробуем еще раз
                         LogService.log_error(f"Ошибка запроса: {error}")
-                        time.sleep(5)
+                        await asyncio.sleep(5)
 
                     attempts += 1
 
@@ -183,7 +183,7 @@ class UniversalLLMTranslator:
                     import traceback
                     LogService.log_error(f"Traceback: {traceback.format_exc()}")
                     attempts += 1
-                    time.sleep(5)
+                    await asyncio.sleep(5)
 
             # Превышен лимит попыток
             LogService.log_error(f"Не удалось выполнить запрос после {max_attempts} попыток")
@@ -261,7 +261,7 @@ class UniversalLLMTranslator:
                                 remaining = delay_seconds
                                 while remaining > 0:
                                     wait_chunk = min(60, remaining)
-                                    time.sleep(wait_chunk)
+                                    await asyncio.sleep(wait_chunk)
                                     remaining -= wait_chunk
                                     if remaining > 0:
                                         minutes_left = remaining // 60
@@ -271,7 +271,7 @@ class UniversalLLMTranslator:
                                         else:
                                             LogService.log_info(f"   ⏱️  Осталось: {seconds_left} сек")
                             else:
-                                time.sleep(delay_seconds)
+                                await asyncio.sleep(delay_seconds)
 
                             LogService.log_info(f"🔄 Повторная попытка {attempt}/{len(retry_delays)} запроса к {self.model.model_id}")
 
@@ -338,7 +338,7 @@ class UniversalLLMTranslator:
                                 remaining = delay_seconds
                                 while remaining > 0:
                                     wait_chunk = min(60, remaining)
-                                    time.sleep(wait_chunk)
+                                    await asyncio.sleep(wait_chunk)
                                     remaining -= wait_chunk
                                     if remaining > 0:
                                         minutes_left = remaining // 60
@@ -348,7 +348,7 @@ class UniversalLLMTranslator:
                                         else:
                                             LogService.log_info(f"   ⏱️  Осталось: {seconds_left} сек")
                             else:
-                                time.sleep(delay_seconds)
+                                await asyncio.sleep(delay_seconds)
 
                             LogService.log_info(f"🔄 Повторная попытка {attempt}/{len(retry_delays)} запроса к {self.model.model_id}")
 
