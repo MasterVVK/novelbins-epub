@@ -178,7 +178,6 @@ test_pro.py
 # Uploads and generated artifacts
 /uploads
 **/uploads/
-/web_app/app/static/novnc/
 
 # Screenshots and images (generated during tests/debugging)
 /tmp/*.png
