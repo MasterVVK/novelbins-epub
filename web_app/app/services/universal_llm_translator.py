@@ -8,6 +8,7 @@ from typing import Optional, List
 from app.models import AIModel
 from app.services.ai_adapter_service import AIAdapterService
 from app.services.log_service import LogService
+from app.services.original_aware_editor_service import RateLimitError
 
 logger = logging.getLogger(__name__)
 
@@ -212,21 +213,28 @@ class UniversalLLMTranslator:
                     # Логируем полный результат для отладки
                     LogService.log_error(f"Полный результат ошибки: {result}")
 
-                    # Проверяем на недельный или дневной лимит - повторы бессмысленны
-                    if self.model.provider == 'ollama' and error_type in ['weekly_limit', 'daily_limit']:
-                        limit_type = 'недельный' if error_type == 'weekly_limit' else 'дневной'
+                    # Проверяем на лимиты использования - повторы бессмысленны
+                    if error_type in ['weekly_limit', 'daily_limit', 'rate_limit']:
+                        limit_names = {
+                            'weekly_limit': ('недельный', 'неделю'),
+                            'daily_limit': ('дневной', 'день'),
+                            'rate_limit': ('часовой', 'час')
+                        }
+                        limit_type, wait_period = limit_names.get(error_type, ('', ''))
+
                         LogService.log_error(f"🚫 Достигнут {limit_type} лимит использования модели {self.model.model_id}")
                         LogService.log_error(f"   Текст ошибки: {error}")
-                        LogService.log_error(f"🛑 Повторные попытки невозможны - лимит действует {limit_type.replace('й', 'ю неделю' if error_type == 'weekly_limit' else 'ый день')}")
+                        LogService.log_error(f"🛑 Повторные попытки невозможны - нужно ждать {wait_period}")
                         LogService.log_error(f"💡 Рекомендации:")
-                        LogService.log_error(f"   1. Используйте другую модель Ollama")
+                        LogService.log_error(f"   1. Используйте другую модель")
                         LogService.log_error(f"   2. Дождитесь сброса лимита")
                         LogService.log_error(f"   3. Обновите тарифный план")
 
                         if self.save_prompt_history and self.current_chapter_id:
                             self._save_prompt_history(system_prompt, user_prompt, None, result, False, error)
 
-                        return None
+                        # Кидаем исключение чтобы остановить всю задачу
+                        raise RateLimitError(f"Достигнут {limit_type} лимит: {error}")
 
                     # Специальная обработка для Ollama server error (500), upstream error (502), upstream timeout (504), timeout и unexpected error с короткими повторами
                     if self.model.provider == 'ollama' and error_type in ['upstream_error', 'upstream_timeout', 'server_error', 'timeout', 'unexpected']:

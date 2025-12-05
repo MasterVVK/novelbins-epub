@@ -536,7 +536,7 @@ def edit_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
         parallel_threads: Количество параллельных потоков (из конфига новеллы)
     """
     from app.services.translator_service import TranslatorService
-    from app.services.original_aware_editor_service import OriginalAwareEditorService, EmptyResultError, NoChangesError
+    from app.services.original_aware_editor_service import OriginalAwareEditorService, EmptyResultError, NoChangesError, RateLimitError
     from app.services.log_service import LogService
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from threading import Lock
@@ -663,6 +663,13 @@ def edit_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
                             # Неожиданный return False без исключения - трактуем как общую ошибку
                             raise Exception("edit_chapter вернул False без исключения")
 
+                    except RateLimitError as e:
+                        # Достигнут лимит API (часовой/недельный) - ОСТАНАВЛИВАЕМ ВСЮ ЗАДАЧУ
+                        LogService.log_error(f"🛑 [Novel:{novel_id}, Ch:{chapter.chapter_number}] {e}", novel_id=novel_id)
+                        LogService.log_error(f"🛑 [Novel:{novel_id}] ОСТАНОВКА ЗАДАЧИ: достигнут лимит API", novel_id=novel_id)
+                        # Возвращаем специальное значение для остановки всех потоков
+                        return 'RATE_LIMIT_STOP'
+
                     except NoChangesError as e:
                         # Текст не изменился - быстрый retry без задержек (макс 2 попытки)
                         no_changes_attempts += 1
@@ -744,6 +751,26 @@ def edit_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
                 # Получаем результат
                 try:
                     result = future.result()
+
+                    # Проверяем на RATE_LIMIT_STOP - нужно остановить ВСЮ задачу
+                    if result == 'RATE_LIMIT_STOP':
+                        LogService.log_error(f"🛑 [Novel:{novel_id}] Остановка всех потоков из-за достижения лимита API", novel_id=novel_id)
+
+                        # Отменяем все оставшиеся задачи
+                        for f in future_to_chapter_id:
+                            f.cancel()
+
+                        # Устанавливаем статус ошибки
+                        novel.status = 'editing_error'
+                        novel.editing_task_id = None
+                        db.session.commit()
+
+                        return {
+                            'status': 'rate_limit',
+                            'message': f'Редактура остановлена: достигнут лимит API. Отредактировано {success_count}/{total_chapters} глав.',
+                            'edited_chapters': success_count,
+                            'total_chapters': total_chapters
+                        }
 
                     # Обновляем прогресс
                     with counter_lock:

@@ -36,6 +36,11 @@ class NoChangesError(EditingError):
     pass
 
 
+class RateLimitError(EditingError):
+    """Достигнут лимит API (дневной/недельный) - требует остановки всей задачи"""
+    pass
+
+
 class OriginalAwareEditorService(GlossaryAwareEditorService):
     """
     Продвинутый сервис редактуры с использованием оригинального текста и глоссария.
