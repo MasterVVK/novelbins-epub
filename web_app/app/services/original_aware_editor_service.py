@@ -21,6 +21,21 @@ from app.services.glossary_service import GlossaryService
 logger = logging.getLogger(__name__)
 
 
+class EditingError(Exception):
+    """Базовый класс для ошибок редактуры"""
+    pass
+
+
+class EmptyResultError(EditingError):
+    """API вернул пустой результат - требует retry с задержками"""
+    pass
+
+
+class NoChangesError(EditingError):
+    """Текст не изменился после редактуры - требует быстрый retry"""
+    pass
+
+
 class OriginalAwareEditorService(GlossaryAwareEditorService):
     """
     Продвинутый сервис редактуры с использованием оригинального текста и глоссария.
@@ -119,7 +134,7 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
                                    novel_id=chapter.novel_id, chapter_id=chapter.id)
                 print(f"❌ ОШИБКА: Текст не изменился после редактуры главы {chapter.chapter_number}!")
                 print(f"   Это означает, что API не вернул отредактированный текст.")
-                return False
+                raise NoChangesError(f"Глава {chapter.chapter_number}: текст не изменился после редактуры")
 
             # Финальная валидация
             if not self.validate_with_original(original_text, edited_text, glossary):
@@ -252,9 +267,11 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
             # КРИТИЧЕСКИ ВАЖНО: Если API вернул None или пустую строку - это ОШИБКА
             # НЕ возвращаем translated текст, чтобы не записать его как edited!
             if not result:
-                raise ValueError(f"API вернул пустой результат при исправлении с оригиналом. Редактура невозможна.")
+                raise EmptyResultError(f"API вернул пустой результат при исправлении с оригиналом. Редактура невозможна.")
 
             return result
+        except EmptyResultError:
+            raise  # Пробрасываем EmptyResultError без изменений
         except Exception as e:
             LogService.log_error(f"Ошибка исправления с оригиналом: {e}", chapter_id=chapter_id)
             raise  # Прокидываем исключение выше, чтобы edit_chapter() вернул False
@@ -298,9 +315,11 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
             result = self.translator.translator.translate_text(translated, prompt, "", chapter_id, temperature=self.translator.temperature)
 
             if not result:
-                raise ValueError(f"API вернул пустой результат при улучшении стиля. Редактура невозможна.")
+                raise EmptyResultError(f"API вернул пустой результат при улучшении стиля. Редактура невозможна.")
 
             return result
+        except EmptyResultError:
+            raise  # Пробрасываем EmptyResultError без изменений
         except Exception as e:
             LogService.log_error(f"Ошибка улучшения стиля с оригиналом: {e}", chapter_id=chapter_id)
             raise
@@ -344,9 +363,11 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
             result = self.translator.translator.translate_text(translated, prompt, "", chapter_id, temperature=self.translator.temperature)
 
             if not result:
-                raise ValueError(f"API вернул пустой результат при полировке диалогов. Редактура невозможна.")
+                raise EmptyResultError(f"API вернул пустой результат при полировке диалогов. Редактура невозможна.")
 
             return result
+        except EmptyResultError:
+            raise  # Пробрасываем EmptyResultError без изменений
         except Exception as e:
             LogService.log_error(f"Ошибка полировки диалогов с оригиналом: {e}", chapter_id=chapter_id)
             raise
@@ -390,15 +411,17 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
             result = self.translator.translator.translate_text(translated, prompt, "", chapter_id, temperature=self.translator.temperature)
 
             if not result:
-                raise ValueError(f"API вернул пустой результат при финальной полировке. Редактура невозможна.")
+                raise EmptyResultError(f"API вернул пустой результат при финальной полировке. Редактура невозможна.")
 
             # Очищаем от метаданных Gemini
             result = self._clean_ai_response(result)
 
             if not result:
-                raise ValueError(f"После очистки от метаданных результат пустой. Редактура невозможна.")
+                raise EmptyResultError(f"После очистки от метаданных результат пустой. Редактура невозможна.")
 
             return result
+        except EmptyResultError:
+            raise  # Пробрасываем EmptyResultError без изменений
         except Exception as e:
             LogService.log_error(f"Ошибка финальной полировки с оригиналом: {e}", chapter_id=chapter_id)
             raise
