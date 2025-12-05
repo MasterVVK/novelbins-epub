@@ -617,11 +617,22 @@ def edit_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
                 if _cancel_requested or (novel_check and novel_check.status == 'editing_cancelled'):
                     return None
 
-                # Попытки редактуры с повтором при неудаче
-                max_attempts = 2
+                # Попытки редактуры с повтором при неудаче и прогрессивными задержками
+                # Попытка 1: сразу
+                # Попытка 2: через 5 минут
+                # Попытка 3: через 10 минут
+                max_attempts = 3
+                retry_delays = [0, 300, 600]  # секунды: 0, 5 мин, 10 мин
 
                 for attempt in range(1, max_attempts + 1):
                     try:
+                        # Задержка перед повторной попыткой (кроме первой)
+                        if attempt > 1:
+                            delay_seconds = retry_delays[attempt - 1]
+                            delay_minutes = delay_seconds // 60
+                            LogService.log_info(f"⏳ [Novel:{novel_id}, Ch:{chapter.chapter_number}] Ожидание {delay_minutes} минут перед попыткой {attempt}/{max_attempts}...", novel_id=novel_id)
+                            time.sleep(delay_seconds)
+
                         if attempt == 1:
                             LogService.log_info(f"🔄 [Novel:{novel_id}, Ch:{chapter.chapter_number}] Редактирую главу", novel_id=novel_id)
                         else:
@@ -648,62 +659,27 @@ def edit_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
                             LogService.log_info(f"✅ [Novel:{novel_id}, Ch:{chapter.chapter_number}] Отредактирована ({success_count}/{total_chapters})", novel_id=novel_id)
                             return True
                         else:
-                            # Редактура не удалась (текст не изменился)
+                            # Редактура не удалась (API вернул пустой результат или текст не изменился)
                             if attempt < max_attempts:
-                                LogService.log_warning(f"⚠️ [Novel:{novel_id}, Ch:{chapter.chapter_number}] Попытка {attempt}/{max_attempts} не удалась (текст не изменился). Повторяем...", novel_id=novel_id)
+                                LogService.log_warning(f"⚠️ [Novel:{novel_id}, Ch:{chapter.chapter_number}] Попытка {attempt}/{max_attempts} не удалась. Повтор через {retry_delays[attempt] // 60} мин...", novel_id=novel_id)
                                 continue
                             else:
-                                # Последняя попытка не удалась - принимаем как есть
-                                LogService.log_warning(f"⚠️ [Novel:{novel_id}, Ch:{chapter.chapter_number}] Все {max_attempts} попытки не удались. Принимаем текст как есть.", novel_id=novel_id)
-
-                                # Сохраняем переведенный текст как отредактированный
-                                from app.models import Translation
-                                initial_translation = Translation.query.filter_by(
-                                    chapter_id=chapter.id,
-                                    translation_type='initial'
-                                ).order_by(Translation.created_at.desc()).first()
-
-                                if initial_translation:
-                                    edited_translation = Translation(
-                                        chapter_id=chapter.id,
-                                        translated_title=initial_translation.translated_title,
-                                        translated_text=initial_translation.translated_text,  # Копируем переведенный текст
-                                        translation_type='edited',
-                                        api_used='ollama',
-                                        model_used=config.get('model_name', 'unknown'),
-                                        quality_score=5,  # Средняя оценка для неизмененного текста
-                                        translation_time=0.0
-                                    )
-                                    db.session.add(edited_translation)
-
-                                    # Обновляем edited_text главы
-                                    chapter.edited_text = initial_translation.translated_text
-
-                                # Обновляем статус главы на 'edited'
-                                chapter.status = 'edited'
-                                db.session.commit()
-
+                                # Последняя попытка не удалась - ПРОПУСКАЕМ главу (не копируем как "отредактированную")
                                 with counter_lock:
-                                    success_count += 1
                                     processed_count += 1
 
-                                    novel_update = Novel.query.get(novel_id)
-                                    if novel_update:
-                                        novel_update.edited_chapters = success_count
-                                        db.session.commit()
-
-                                LogService.log_info(f"✅ [Novel:{novel_id}, Ch:{chapter.chapter_number}] Принята без изменений ({success_count}/{total_chapters})", novel_id=novel_id)
-                                return True
+                                LogService.log_error(f"❌ [Novel:{novel_id}, Ch:{chapter.chapter_number}] Все {max_attempts} попытки не удались. Глава ПРОПУЩЕНА (остается в статусе 'translated').", novel_id=novel_id)
+                                return False
 
                     except Exception as e:
                         if attempt < max_attempts:
-                            LogService.log_warning(f"⚠️ [Novel:{novel_id}, Ch:{chapter.chapter_number}] Ошибка на попытке {attempt}/{max_attempts}: {e}. Повторяем...", novel_id=novel_id)
+                            LogService.log_warning(f"⚠️ [Novel:{novel_id}, Ch:{chapter.chapter_number}] Ошибка на попытке {attempt}/{max_attempts}: {e}. Повтор через {retry_delays[attempt] // 60} мин...", novel_id=novel_id)
                             continue
                         else:
-                            # Все попытки исчерпаны
+                            # Все попытки исчерпаны - ПРОПУСКАЕМ главу
                             with counter_lock:
                                 processed_count += 1
-                            error_msg = f"❌ [Novel:{novel_id}, Ch:{chapter.chapter_number}] Все {max_attempts} попытки завершились ошибками: {e}"
+                            error_msg = f"❌ [Novel:{novel_id}, Ch:{chapter.chapter_number}] Все {max_attempts} попытки завершились ошибками: {e}. Глава ПРОПУЩЕНА."
                             LogService.log_error(error_msg, novel_id=novel_id)
                             return False
 
