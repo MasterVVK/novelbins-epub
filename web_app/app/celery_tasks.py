@@ -651,13 +651,21 @@ def edit_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
                                 success_count += 1
                                 processed_count += 1
 
-                                # Обновляем счетчик в новелле
+                                # Подсчитываем РЕАЛЬНОЕ количество отредактированных глав из БД
+                                # (избегаем race conditions и рассинхронизации счётчиков)
+                                from sqlalchemy import func
+                                real_edited_count = db.session.query(func.count(Chapter.id)).filter(
+                                    Chapter.novel_id == novel_id,
+                                    Chapter.status.in_(['edited', 'aligned'])
+                                ).scalar() or 0
+
+                                # Обновляем счетчик в новелле реальным значением
                                 novel_update = Novel.query.get(novel_id)
                                 if novel_update:
-                                    novel_update.edited_chapters = success_count
+                                    novel_update.edited_chapters = real_edited_count
                                     db.session.commit()
 
-                            LogService.log_info(f"✅ [Novel:{novel_id}, Ch:{chapter.chapter_number}] Отредактирована ({success_count}/{total_chapters})", novel_id=novel_id)
+                            LogService.log_info(f"✅ [Novel:{novel_id}, Ch:{chapter.chapter_number}] Отредактирована ({real_edited_count}/{total_chapters})", novel_id=novel_id)
                             return True
                         else:
                             # Неожиданный return False без исключения - трактуем как общую ошибку
