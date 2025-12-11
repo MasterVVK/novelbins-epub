@@ -1229,7 +1229,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     if (hasActiveTasks) {
         console.log('✅ Обнаружены активные задачи, запускаем polling');
-        startPolling(novelId, 2000); // Опрашиваем каждые 2 секунды
+        startPolling(novelId, 60000); // Опрашиваем каждые 60 секунд
     } else {
         console.log('ℹ️ Активных задач нет, polling не требуется');
     }
