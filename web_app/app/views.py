@@ -594,48 +594,59 @@ def delete_permanently(novel_id):
 @main_bp.route('/novels/<int:novel_id>')
 def novel_detail(novel_id):
     """Детальная страница новеллы"""
+    from sqlalchemy import func
+
     # Получаем параметры пагинации
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 100, type=int)  # По умолчанию 100 глав на страницу
-    
+
     # Ограничиваем количество глав на страницу
     if per_page > 200:
         per_page = 200
     elif per_page < 10:
         per_page = 10
-    
+
     # Принудительно получаем свежие данные из базы без кеширования
     db.session.expire_all()
-    
+
     # Используем обычный SQLAlchemy запрос, но с принудительным обновлением
     novel = Novel.query.get_or_404(novel_id)
     db.session.refresh(novel)
-    
+
+    # Подсчитываем РЕАЛЬНОЕ количество глав по статусам из БД
+    # Это решает проблему рассинхронизации счётчиков
+    chapter_counts = db.session.query(
+        Chapter.status,
+        func.count(Chapter.id)
+    ).filter(
+        Chapter.novel_id == novel_id
+    ).group_by(Chapter.status).all()
+
+    counts_dict = {status: count for status, count in chapter_counts}
+
+    # Обновляем счётчики в объекте novel реальными значениями из БД
+    # (parsed включает всё, что прошло этап парсинга: parsed, translated, edited, aligned)
+    novel.total_chapters = sum(counts_dict.values())
+    novel.parsed_chapters = counts_dict.get('parsed', 0) + counts_dict.get('translated', 0) + counts_dict.get('edited', 0) + counts_dict.get('aligned', 0)
+    novel.translated_chapters = counts_dict.get('translated', 0) + counts_dict.get('edited', 0) + counts_dict.get('aligned', 0)
+    novel.edited_chapters = counts_dict.get('edited', 0) + counts_dict.get('aligned', 0)
+    novel.aligned_chapters = counts_dict.get('aligned', 0)
+
     # Получаем главы с пагинацией
     chapters_query = Chapter.query.filter_by(novel_id=novel_id).order_by(Chapter.chapter_number)
     chapters_pagination = chapters_query.paginate(
-        page=page, 
-        per_page=per_page, 
+        page=page,
+        per_page=per_page,
         error_out=False
     )
     chapters = chapters_pagination.items
-    
+
     # Получаем задачи для новеллы (включая EPUB)
     tasks = Task.query.filter_by(novel_id=novel_id).order_by(Task.updated_at.desc()).all()
 
-    # Отладочная информация
-    print(f"🔍 Страница новеллы '{novel.title}' - конфигурация: {novel.config}")
-    if novel.config:
-        if isinstance(novel.config, dict):
-            print(f"   max_chapters: {novel.config.get('max_chapters')} (тип: {type(novel.config.get('max_chapters'))})")
-            print(f"   request_delay: {novel.config.get('request_delay')}")
-        else:
-            print(f"   config тип: {type(novel.config)}")
-            print(f"   config значение: {novel.config}")
-
-    return render_template('novel_detail.html', 
-                         novel=novel, 
-                         chapters=chapters, 
+    return render_template('novel_detail.html',
+                         novel=novel,
+                         chapters=chapters,
                          chapters_pagination=chapters_pagination,
                          tasks=tasks,
                          current_page=page,
