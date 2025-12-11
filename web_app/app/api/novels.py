@@ -487,6 +487,34 @@ def get_novel_status(novel_id):
             novel.epub_generation_task_id
         )
 
+        # Считаем РЕАЛЬНОЕ количество глав по статусам из БД
+        # Это решает проблему рассинхронизации счётчиков
+        from app.models import Chapter
+        from sqlalchemy import func
+
+        chapter_counts = db.session.query(
+            Chapter.status,
+            func.count(Chapter.id)
+        ).filter(
+            Chapter.novel_id == novel_id
+        ).group_by(Chapter.status).all()
+
+        # Преобразуем в словарь
+        counts_dict = {status: count for status, count in chapter_counts}
+
+        # Реальные значения из БД
+        real_parsed = counts_dict.get('parsed', 0) + counts_dict.get('translated', 0) + counts_dict.get('edited', 0) + counts_dict.get('aligned', 0)
+        real_translated = counts_dict.get('translated', 0) + counts_dict.get('edited', 0) + counts_dict.get('aligned', 0)
+        real_edited = counts_dict.get('edited', 0) + counts_dict.get('aligned', 0)
+        real_aligned = counts_dict.get('aligned', 0)
+        real_total = sum(counts_dict.values())
+
+        # Вычисляем проценты
+        parsing_pct = round((real_parsed / real_total * 100), 1) if real_total > 0 else 0
+        translation_pct = round((real_translated / real_total * 100), 1) if real_total > 0 else 0
+        editing_pct = round((real_edited / real_translated * 100), 1) if real_translated > 0 else 0
+        alignment_pct = round((real_aligned / real_total * 100), 1) if real_total > 0 else 0
+
         # Формируем ответ с полной информацией о статусе
         response = {
             'success': True,
@@ -502,19 +530,19 @@ def get_novel_status(novel_id):
                 'epub_generation': novel.epub_generation_task_id
             },
 
-            # Прогресс
+            # Прогресс (реальные значения из БД)
             'progress': {
-                'total_chapters': novel.total_chapters or 0,
-                'parsed_chapters': novel.parsed_chapters or 0,
-                'translated_chapters': novel.translated_chapters or 0,
-                'edited_chapters': novel.edited_chapters or 0,
-                'aligned_chapters': novel.aligned_chapters or 0,
+                'total_chapters': real_total,
+                'parsed_chapters': real_parsed,
+                'translated_chapters': real_translated,
+                'edited_chapters': real_edited,
+                'aligned_chapters': real_aligned,
 
                 # Проценты
-                'parsing_percentage': novel.parsing_progress_percentage,
-                'translation_percentage': novel.progress_percentage,
-                'editing_percentage': novel.editing_progress_percentage,
-                'alignment_percentage': novel.alignment_progress_percentage
+                'parsing_percentage': parsing_pct,
+                'translation_percentage': translation_pct,
+                'editing_percentage': editing_pct,
+                'alignment_percentage': alignment_pct
             },
 
             # Дополнительная информация
