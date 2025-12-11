@@ -282,19 +282,12 @@ class CZBooksParser(BaseParser):
             # НЕ указываем явные пути - пусть uc управляет своей копией драйвера
             # Это решает проблему Permission denied на /usr/bin/chromedriver
             try:
-                self.driver = uc.Chrome(
-                    options=options,
-                    version_main=141  # Указываем версию Chrome явно
-                )
+                # Не указываем version_main - пусть uc автоматически определит версию Chrome
+                self.driver = uc.Chrome(options=options)
                 print("   ✅ undetected-chromedriver инициализирован")
             except Exception as e:
-                print(f"   ⚠️ Ошибка инициализации с версией 141, пробуем автоопределение: {e}")
-                try:
-                    self.driver = uc.Chrome(options=options)
-                    print("   ✅ undetected-chromedriver инициализирован (автоопределение)")
-                except Exception as e2:
-                    print(f"   ❌ Не удалось инициализировать undetected-chromedriver: {e2}")
-                    raise
+                print(f"   ❌ Не удалось инициализировать undetected-chromedriver: {e}")
+                raise
 
             # Увеличиваем таймауты для Cloudflare challenge
             self.driver.set_page_load_timeout(300)  # 5 минут на загрузку страницы
