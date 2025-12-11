@@ -31,7 +31,7 @@ class Chapter(db.Model):
 
     # Связи
     novel = relationship('Novel', back_populates='chapters')
-    translations = relationship('Translation', back_populates='chapter', cascade='all, delete-orphan')
+    translations = relationship('Translation', back_populates='chapter', cascade='all, delete-orphan', order_by='Translation.id')
     prompt_history = relationship('PromptHistory', back_populates='chapter', cascade='all, delete-orphan')
     bilingual_alignment = relationship('BilingualAlignment', back_populates='chapter', uselist=False, cascade='all, delete-orphan')
 
