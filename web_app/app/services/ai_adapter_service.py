@@ -497,6 +497,9 @@ class AIAdapterService:
                     elif 'upstream error' in error_detail_lower or response.status_code == 502:
                         error_type = 'upstream_error'
                         logger.error(f"⚠️ Обнаружена ошибка upstream (502) - временная проблема сервера")
+                    elif 'service temporarily unavailable' in error_detail_lower or 'service unavailable' in error_detail_lower or response.status_code == 503:
+                        error_type = 'service_unavailable'
+                        logger.error(f"⚠️ Обнаружена ошибка Service Unavailable (503) - сервис временно недоступен")
                     elif 'unmarshal' in error_detail_lower or 'unexpected end of json' in error_detail_lower or response.status_code == 500:
                         error_type = 'server_error'
                         logger.error(f"⚠️ Обнаружена внутренняя ошибка сервера (невалидный JSON или прерванный ответ)")
