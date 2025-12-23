@@ -55,10 +55,13 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
 
     def edit_chapter(self, chapter: Chapter) -> bool:
         """
-        Редактирование главы с полным использованием оригинала и глоссария
+        Редактирование главы с полным использованием оригинала и глоссария.
+
+        Вариант C2: Всегда выполняем все 4 этапа редактуры с fault-tolerance.
+        Если какой-то этап упал - продолжаем с тем что есть.
         """
         print(f"✏️ Начинаем продвинутую редактуру главы {chapter.chapter_number} с оригиналом и глоссарием")
-        LogService.log_info(f"[Novel:{chapter.novel_id}, Ch:{chapter.chapter_number}] Начинаем редактуру с оригиналом",
+        LogService.log_info(f"[Novel:{chapter.novel_id}, Ch:{chapter.chapter_number}] Начинаем редактуру с оригиналом (C2: все 4 этапа)",
                           novel_id=chapter.novel_id, chapter_id=chapter.id)
 
         # Получаем ВСЕ необходимые данные
@@ -96,75 +99,125 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
 
         start_time = time.time()
 
+        # Трекинг выполненных этапов для метаданных
+        completed_stages = []
+        failed_stages = []
+        edited_text = translated_text
+
+        # ===== ЭТАП 1: Исправление несоответствий с оригиналом и глоссарием =====
+        print(f"🔧 Этап 1/4: Исправление несоответствий с оригиналом...")
+        LogService.log_info("Этап 1/4: Исправляем несоответствия с оригиналом и глоссарием", chapter_id=chapter.id)
         try:
-            # Этап 1: Анализ качества с оригиналом
-            print(f"🔍 Этап 1: Анализ качества с оригиналом...")
-            strategy = self.analyze_with_original(original_text, translated_text, glossary, chapter.id)
-            quality_score = strategy.get('quality_score', 5)
-            missing_details = strategy.get('missing_details', [])
-
-            print(f"📊 Оценка качества: {quality_score}/10")
-            if missing_details:
-                print(f"⚠️ Найдено {len(missing_details)} пропущенных деталей из оригинала")
-                LogService.log_warning(f"Пропущенные детали: {missing_details[:5]}", chapter_id=chapter.id)
-
-            edited_text = translated_text
-
-            # Этап 2: Исправление несоответствий с оригиналом и глоссарием
-            if strategy.get('needs_glossary_fix') or missing_details:
-                print(f"🔧 Этап 2: Исправление несоответствий с оригиналом...")
-                LogService.log_info("Исправляем несоответствия с оригиналом и глоссарием", chapter_id=chapter.id)
-                edited_text = self.fix_with_original(original_text, edited_text, glossary, chapter.id)
-
-            # Этап 3: Улучшение стиля с оригиналом
-            if strategy.get('needs_style'):
-                print(f"✨ Этап 3: Улучшение стиля с учетом оригинала...")
-                LogService.log_info("Улучшаем стиль с оригиналом", chapter_id=chapter.id)
-                edited_text = self.improve_style_with_original(original_text, edited_text, glossary, chapter.id)
-
-            # Этап 4: Полировка диалогов с оригиналом
-            if strategy.get('needs_dialogue'):
-                print(f"💬 Этап 4: Полировка диалогов по оригиналу...")
-                LogService.log_info("Полируем диалоги с оригиналом", chapter_id=chapter.id)
-                edited_text = self.polish_dialogues_with_original(original_text, edited_text, glossary, chapter.id)
-
-            # Этап 5: Финальная полировка с полной проверкой
-            if strategy.get('needs_polish'):
-                print(f"🎯 Этап 5: Финальная полировка с полной проверкой...")
-                edited_text = self.final_polish_with_original(original_text, edited_text, glossary, chapter.id)
-
-            # КРИТИЧЕСКАЯ ПРОВЕРКА: Убеждаемся что текст действительно изменился
-            if edited_text == translated_text:
-                LogService.log_error(f"Глава {chapter.chapter_number}: текст не изменился после редактуры! Это означает ошибку редактуры.",
-                                   novel_id=chapter.novel_id, chapter_id=chapter.id)
-                print(f"❌ ОШИБКА: Текст не изменился после редактуры главы {chapter.chapter_number}!")
-                print(f"   Это означает, что API не вернул отредактированный текст.")
-                raise NoChangesError(f"Глава {chapter.chapter_number}: текст не изменился после редактуры")
-
-            # Финальная валидация
-            if not self.validate_with_original(original_text, edited_text, glossary):
-                LogService.log_error(f"Глава {chapter.chapter_number}: финальная валидация не пройдена",
-                                   novel_id=chapter.novel_id, chapter_id=chapter.id)
-                return False
-
-            editing_time = time.time() - start_time
-
-            # Сохранение результата с расширенными метаданными
-            self.save_edited_with_original_metadata(
-                chapter, edited_text, original_text, editing_time, quality_score, strategy, glossary
-            )
-
-            print(f"✅ Глава {chapter.chapter_number} отредактирована за {editing_time:.1f} сек")
-            print(f"📈 Качество повышено с {quality_score} до {min(quality_score + 3, 10)}/10")
-            LogService.log_info(f"[Novel:{chapter.novel_id}, Ch:{chapter.chapter_number}] Отредактирована с оригиналом за {editing_time:.1f} сек",
-                              novel_id=chapter.novel_id, chapter_id=chapter.id)
-            return True
-
+            result = self.fix_with_original(original_text, edited_text, glossary, chapter.id)
+            if result and result != edited_text:
+                edited_text = result
+                completed_stages.append('fix')
+                print(f"   ✅ Этап 1 выполнен")
+            else:
+                failed_stages.append('fix')
+                print(f"   ⚠️ Этап 1: текст не изменился")
         except Exception as e:
-            LogService.log_error(f"[Novel:{chapter.novel_id}, Ch:{chapter.chapter_number}] Ошибка редактуры с оригиналом: {e}",
+            failed_stages.append('fix')
+            LogService.log_warning(f"Этап fix пропущен из-за ошибки: {e}", chapter_id=chapter.id)
+            print(f"   ⚠️ Этап 1 пропущен: {e}")
+
+        # ===== ЭТАП 2: Улучшение стиля с оригиналом =====
+        print(f"✨ Этап 2/4: Улучшение стиля с учетом оригинала...")
+        LogService.log_info("Этап 2/4: Улучшаем стиль с оригиналом", chapter_id=chapter.id)
+        try:
+            result = self.improve_style_with_original(original_text, edited_text, glossary, chapter.id)
+            if result and result != edited_text:
+                edited_text = result
+                completed_stages.append('style')
+                print(f"   ✅ Этап 2 выполнен")
+            else:
+                failed_stages.append('style')
+                print(f"   ⚠️ Этап 2: текст не изменился")
+        except Exception as e:
+            failed_stages.append('style')
+            LogService.log_warning(f"Этап style пропущен из-за ошибки: {e}", chapter_id=chapter.id)
+            print(f"   ⚠️ Этап 2 пропущен: {e}")
+
+        # ===== ЭТАП 3: Полировка диалогов с оригиналом =====
+        print(f"💬 Этап 3/4: Полировка диалогов по оригиналу...")
+        LogService.log_info("Этап 3/4: Полируем диалоги с оригиналом", chapter_id=chapter.id)
+        try:
+            result = self.polish_dialogues_with_original(original_text, edited_text, glossary, chapter.id)
+            if result and result != edited_text:
+                edited_text = result
+                completed_stages.append('dialogue')
+                print(f"   ✅ Этап 3 выполнен")
+            else:
+                failed_stages.append('dialogue')
+                print(f"   ⚠️ Этап 3: текст не изменился")
+        except Exception as e:
+            failed_stages.append('dialogue')
+            LogService.log_warning(f"Этап dialogue пропущен из-за ошибки: {e}", chapter_id=chapter.id)
+            print(f"   ⚠️ Этап 3 пропущен: {e}")
+
+        # ===== ЭТАП 4: Финальная полировка с полной проверкой =====
+        print(f"🎯 Этап 4/4: Финальная полировка с полной проверкой...")
+        LogService.log_info("Этап 4/4: Финальная полировка с оригиналом", chapter_id=chapter.id)
+        try:
+            result = self.final_polish_with_original(original_text, edited_text, glossary, chapter.id)
+            if result and result != edited_text:
+                edited_text = result
+                completed_stages.append('final')
+                print(f"   ✅ Этап 4 выполнен")
+            else:
+                failed_stages.append('final')
+                print(f"   ⚠️ Этап 4: текст не изменился")
+        except Exception as e:
+            failed_stages.append('final')
+            LogService.log_warning(f"Этап final пропущен из-за ошибки: {e}", chapter_id=chapter.id)
+            print(f"   ⚠️ Этап 4 пропущен: {e}")
+
+        # ===== ИТОГОВАЯ ПРОВЕРКА =====
+        print(f"📊 Итог: выполнено {len(completed_stages)}/4 этапов: {completed_stages}")
+        if failed_stages:
+            print(f"   Пропущено: {failed_stages}")
+
+        # КРИТИЧЕСКАЯ ПРОВЕРКА: Убеждаемся что текст действительно изменился
+        if edited_text == translated_text:
+            LogService.log_error(f"Глава {chapter.chapter_number}: текст не изменился после редактуры! Все 4 этапа провалились.",
                                novel_id=chapter.novel_id, chapter_id=chapter.id)
-            print(f"❌ Ошибка при редактировании: {e}")
+            print(f"❌ ОШИБКА: Текст не изменился после редактуры главы {chapter.chapter_number}!")
+            print(f"   Все 4 этапа провалились или не внесли изменений.")
+            raise NoChangesError(f"Глава {chapter.chapter_number}: текст не изменился после редактуры (все 4 этапа провалились)")
+
+        # Финальная валидация
+        if not self.validate_with_original(original_text, edited_text, glossary):
+            LogService.log_error(f"Глава {chapter.chapter_number}: финальная валидация не пройдена",
+                               novel_id=chapter.novel_id, chapter_id=chapter.id)
             return False
+
+        editing_time = time.time() - start_time
+
+        # Формируем strategy для метаданных
+        strategy = {
+            'mode': 'C2_all_stages',
+            'completed_stages': completed_stages,
+            'failed_stages': failed_stages,
+            'stages_success_rate': f"{len(completed_stages)}/4",
+            'needs_style': 'style' in completed_stages,
+            'needs_dialogue': 'dialogue' in completed_stages,
+            'needs_polish': 'final' in completed_stages,
+            'needs_glossary_fix': 'fix' in completed_stages,
+        }
+
+        # Оценка качества на основе выполненных этапов
+        quality_score = 5 + len(completed_stages)  # 5 базовых + 1 за каждый этап
+
+        # Сохранение результата с расширенными метаданными
+        self.save_edited_with_original_metadata(
+            chapter, edited_text, original_text, editing_time, quality_score, strategy, glossary
+        )
+
+        print(f"✅ Глава {chapter.chapter_number} отредактирована за {editing_time:.1f} сек ({len(completed_stages)}/4 этапов)")
+        print(f"📈 Оценка качества: {min(quality_score + 3, 10)}/10")
+        LogService.log_info(f"[Novel:{chapter.novel_id}, Ch:{chapter.chapter_number}] Отредактирована с оригиналом за {editing_time:.1f} сек ({len(completed_stages)}/4 этапов)",
+                          novel_id=chapter.novel_id, chapter_id=chapter.id)
+        return True
 
     def analyze_with_original(self, original: str, translated: str,
                               glossary: Dict, chapter_id: int) -> Dict:
