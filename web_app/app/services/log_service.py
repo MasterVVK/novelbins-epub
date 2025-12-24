@@ -69,25 +69,27 @@ class LogService:
     """Сервис для работы с логами"""
     
     @staticmethod
-    def get_logger(task_id: Optional[int] = None, novel_id: Optional[int] = None, 
+    def get_logger(task_id: Optional[int] = None, novel_id: Optional[int] = None,
                    chapter_id: Optional[int] = None) -> logging.Logger:
         """Получение логгера с сохранением в базу данных"""
         logger = logging.getLogger(f"task_{task_id}" if task_id else "general")
-        
-        # Добавляем хендлер для базы данных
-        db_handler = DatabaseHandler(task_id, novel_id, chapter_id)
-        db_handler.setLevel(logging.INFO)
-        
-        # Форматтер
-        formatter = logging.Formatter(
-            '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'
-        )
-        db_handler.setFormatter(formatter)
-        
-        # Добавляем хендлер, если его еще нет
+
+        # Отключаем propagate для предотвращения дублирования логов
+        # через корневой логгер (особенно важно для Celery)
+        logger.propagate = False
+
+        # Добавляем хендлер для базы данных, если его ещё нет
         if not any(isinstance(h, DatabaseHandler) for h in logger.handlers):
+            db_handler = DatabaseHandler(task_id, novel_id, chapter_id)
+            db_handler.setLevel(logging.INFO)
+
+            # Форматтер
+            formatter = logging.Formatter(
+                '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'
+            )
+            db_handler.setFormatter(formatter)
             logger.addHandler(db_handler)
-        
+
         return logger
     
     @staticmethod
