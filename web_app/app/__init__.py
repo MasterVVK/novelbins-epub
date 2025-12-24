@@ -26,21 +26,41 @@ celery = Celery(
 )
 
 
+# Глобальный флаг для предотвращения повторной настройки логирования
+_logging_configured = False
+
+
 def setup_logging(app):
     """Настройка логирования"""
+    global _logging_configured
+
+    # Проверяем, было ли логирование уже настроено глобально
+    # Это предотвращает накопление хендлеров при повторных вызовах create_app()
+    # (особенно важно для Celery worker, который вызывает create_app для каждой задачи)
+    if _logging_configured:
+        return
+
     # Создаем папку для логов если её нет
     log_dir = os.path.dirname(app.config['LOG_FILE'])
     if log_dir and not os.path.exists(log_dir):
         os.makedirs(log_dir)
-    
+
     # Настраиваем уровень логирования
     log_level = getattr(logging, app.config['LOG_LEVEL'].upper())
-    
+
     # Форматтер для логов
     formatter = logging.Formatter(
         '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'
     )
-    
+
+    # Удаляем существующие хендлеры того же типа (на случай повторной инициализации)
+    handlers_to_remove = []
+    for handler in app.logger.handlers:
+        if isinstance(handler, (RotatingFileHandler, logging.StreamHandler)):
+            handlers_to_remove.append(handler)
+    for handler in handlers_to_remove:
+        app.logger.removeHandler(handler)
+
     # Хендлер для файла
     file_handler = RotatingFileHandler(
         app.config['LOG_FILE'],
@@ -49,17 +69,33 @@ def setup_logging(app):
     )
     file_handler.setFormatter(formatter)
     file_handler.setLevel(log_level)
-    
+
     # Хендлер для консоли
     console_handler = logging.StreamHandler()
     console_handler.setFormatter(formatter)
     console_handler.setLevel(log_level)
-    
-    # Настраиваем корневой логгер
+
+    # Настраиваем Flask app.logger
     app.logger.addHandler(file_handler)
     app.logger.addHandler(console_handler)
     app.logger.setLevel(log_level)
-    
+
+    # Отключаем propagate для логгера приложения, чтобы избежать дублирования
+    # через корневой логгер (особенно важно для Celery)
+    app.logger.propagate = False
+
+    # Настраиваем логгер 'app' для модульных логгеров (app.services.*, app.api.*)
+    app_logger = logging.getLogger('app')
+    # Удаляем существующие хендлеры
+    app_logger.handlers.clear()
+    app_logger.addHandler(file_handler)
+    app_logger.addHandler(console_handler)
+    app_logger.setLevel(log_level)
+    app_logger.propagate = False  # Не пропагировать в root logger
+
+    # Помечаем что логирование настроено глобально
+    _logging_configured = True
+
     # Логируем запуск приложения
     app.logger.info('Novel Translator startup')
 
