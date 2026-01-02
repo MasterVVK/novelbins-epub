@@ -566,26 +566,34 @@ class LLMTranslator:
         user_prompt = f"{context}\n\nТЕКСТ ДЛЯ ПЕРЕВОДА:\n{text}"
         return self.make_request(system_prompt, user_prompt, temperature=temperature)
 
-    def generate_summary(self, text: str, summary_prompt: str, chapter_id: int = None) -> Optional[str]:
-        """Генерация резюме главы"""
+    def generate_summary(self, text: str, summary_prompt: str, chapter_id: int = None, glossary_text: str = None) -> Optional[str]:
+        """Генерация резюме главы с учётом глоссария для консистентности терминов"""
         self.current_chapter_id = chapter_id
         # Не перезаписываем current_prompt_type, если он уже установлен
         if not hasattr(self, 'current_prompt_type') or self.current_prompt_type == 'translation':
             self.current_prompt_type = 'summary'
         self.request_start_time = time.time()
-        
-        user_prompt = f"ТЕКСТ ГЛАВЫ:\n{text}"
+
+        # Добавляем глоссарий для консистентности имён и терминов
+        if glossary_text:
+            user_prompt = f"ГЛОССАРИЙ ТЕРМИНОВ (используй эти переводы!):\n{glossary_text}\n\nТЕКСТ ГЛАВЫ:\n{text}"
+        else:
+            user_prompt = f"ТЕКСТ ГЛАВЫ:\n{text}"
         return self.make_request(summary_prompt, user_prompt, temperature=0.3)
 
-    def extract_terms(self, text: str, extraction_prompt: str, existing_glossary: Dict, chapter_id: int = None) -> Optional[str]:
-        """Извлечение новых терминов из текста"""
+    def extract_terms(self, text: str, extraction_prompt: str, existing_glossary: Dict, chapter_id: int = None, original_text: str = None) -> Optional[str]:
+        """Извлечение новых терминов из текста с контекстной фильтрацией глоссария"""
         self.current_chapter_id = chapter_id
         # Не перезаписываем current_prompt_type, если он уже установлен
         if not hasattr(self, 'current_prompt_type') or self.current_prompt_type == 'translation':
             self.current_prompt_type = 'terms_extraction'
         self.request_start_time = time.time()
-        
-        glossary_text = self.format_glossary_for_prompt(existing_glossary)
+
+        # Используем контекстную фильтрацию - только термины из текста главы
+        if original_text:
+            glossary_text = self.format_context_glossary_for_prompt(existing_glossary, original_text)
+        else:
+            glossary_text = self.format_glossary_for_prompt(existing_glossary)
         user_prompt = f"СУЩЕСТВУЮЩИЙ ГЛОССАРИЙ:\n{glossary_text}\n\nТЕКСТ ДЛЯ АНАЛИЗА:\n{text}"
         return self.make_request(extraction_prompt, user_prompt, temperature=0.2)
 
@@ -625,12 +633,41 @@ class LLMTranslator:
         
         return "\n".join(lines) if lines else "Глоссарий пуст"
 
+    def format_context_glossary_for_prompt(self, glossary: Dict, original_text: str) -> str:
+        """
+        Форматирование глоссария с контекстной фильтрацией.
+        Выбирает только термины, которые встречаются в оригинальном тексте.
+        """
+        if not original_text or not glossary:
+            return "Глоссарий пуст"
+
+        lines = []
+
+        for category, label in [
+            ('characters', 'ПЕРСОНАЖИ'),
+            ('locations', 'ЛОКАЦИИ'),
+            ('terms', 'ТЕРМИНЫ'),
+            ('techniques', 'ТЕХНИКИ'),
+            ('artifacts', 'АРТЕФАКТЫ')
+        ]:
+            found = []
+            for chinese, russian in glossary.get(category, {}).items():
+                if chinese in original_text:
+                    found.append(f"- {chinese} = {russian}")
+            if found:
+                lines.append(f"{label}:")
+                lines.extend(found)
+                lines.append("")
+
+        return "\n".join(lines) if lines else "Глоссарий пуст"
+
 
 class TranslationContext:
     """Контекст для перевода главы"""
-    
-    def __init__(self, novel_id: int):
+
+    def __init__(self, novel_id: int, original_text: str = None):
         self.novel_id = novel_id
+        self.original_text = original_text
         self.previous_summaries = []
         self.glossary = {}
         self._load_context()
@@ -653,7 +690,75 @@ class TranslationContext:
         
         # Загружаем глоссарий
         self.glossary = GlossaryItem.get_glossary_dict(self.novel_id)
-    
+
+    def _format_context_glossary(self) -> str:
+        """
+        Форматирование глоссария с фильтрацией по контексту главы.
+        Выбирает только термины, которые встречаются в оригинальном тексте.
+        """
+        if not self.original_text or not self.glossary:
+            return ""
+
+        lines = []
+        found_any = False
+
+        # Персонажи
+        chars_found = []
+        for chinese, russian in self.glossary.get('characters', {}).items():
+            if chinese in self.original_text:
+                chars_found.append(f"- {chinese} → {russian}")
+        if chars_found:
+            lines.append("УСТАНОВЛЕННЫЕ ПЕРЕВОДЫ ИМЁН:")
+            lines.extend(chars_found)
+            lines.append("")
+            found_any = True
+
+        # Локации
+        locs_found = []
+        for chinese, russian in self.glossary.get('locations', {}).items():
+            if chinese in self.original_text:
+                locs_found.append(f"- {chinese} → {russian}")
+        if locs_found:
+            lines.append("УСТАНОВЛЕННЫЕ ПЕРЕВОДЫ ЛОКАЦИЙ:")
+            lines.extend(locs_found)
+            lines.append("")
+            found_any = True
+
+        # Термины
+        terms_found = []
+        for chinese, russian in self.glossary.get('terms', {}).items():
+            if chinese in self.original_text:
+                terms_found.append(f"- {chinese} → {russian}")
+        if terms_found:
+            lines.append("УСТАНОВЛЕННЫЕ ПЕРЕВОДЫ ТЕРМИНОВ:")
+            lines.extend(terms_found)
+            lines.append("")
+            found_any = True
+
+        # Техники
+        techs_found = []
+        for chinese, russian in self.glossary.get('techniques', {}).items():
+            if chinese in self.original_text:
+                techs_found.append(f"- {chinese} → {russian}")
+        if techs_found:
+            lines.append("УСТАНОВЛЕННЫЕ ПЕРЕВОДЫ ТЕХНИК:")
+            lines.extend(techs_found)
+            lines.append("")
+            found_any = True
+
+        # Артефакты
+        arts_found = []
+        for chinese, russian in self.glossary.get('artifacts', {}).items():
+            if chinese in self.original_text:
+                arts_found.append(f"- {chinese} → {russian}")
+        if arts_found:
+            lines.append("УСТАНОВЛЕННЫЕ ПЕРЕВОДЫ АРТЕФАКТОВ:")
+            lines.extend(arts_found)
+            lines.append("")
+            found_any = True
+
+        return "\n".join(lines) if found_any else ""
+
     def build_context_prompt(self) -> str:
         """Построение расширенного контекста для промпта"""
         lines = []
@@ -667,24 +772,10 @@ class TranslationContext:
                 lines.append(item['summary'])
             lines.append("\n" + "=" * 50 + "\n")
 
-        # Добавляем глоссарий
-        if self.glossary['characters']:
-            lines.append("УСТАНОВЛЕННЫЕ ПЕРЕВОДЫ ИМЁН:")
-            for eng, rus in sorted(self.glossary['characters'].items()):
-                lines.append(f"- {eng} → {rus}")
-            lines.append("")
-
-        if self.glossary['locations']:
-            lines.append("УСТАНОВЛЕННЫЕ ПЕРЕВОДЫ ЛОКАЦИЙ:")
-            for eng, rus in sorted(self.glossary['locations'].items()):
-                lines.append(f"- {eng} → {rus}")
-            lines.append("")
-
-        if self.glossary['terms']:
-            lines.append("УСТАНОВЛЕННЫЕ ПЕРЕВОДЫ ТЕРМИНОВ:")
-            for eng, rus in sorted(self.glossary['terms'].items()):
-                lines.append(f"- {eng} → {rus}")
-            lines.append("")
+        # Добавляем глоссарий (контекстная фильтрация по оригиналу главы)
+        glossary_text = self._format_context_glossary()
+        if glossary_text:
+            lines.append(glossary_text)
 
         return "\n".join(lines)
 
@@ -755,10 +846,10 @@ class TranslatorService:
             LogService.log_info(f"Шаблон промпта получен: {prompt_template.name}", 
                               novel_id=chapter.novel_id, chapter_id=chapter.id)
             
-            # Создаем контекст перевода
+            # Создаем контекст перевода с оригинальным текстом для контекстной фильтрации глоссария
             LogService.log_info(f"Создаем контекст перевода для главы {chapter.chapter_number}",
                               novel_id=chapter.novel_id, chapter_id=chapter.id)
-            context = TranslationContext(chapter.novel_id)
+            context = TranslationContext(chapter.novel_id, chapter.original_text)
             context_prompt = context.build_context_prompt()
 
             # Добавляем оригинальное название главы в контекст для лучшего понимания LLM
@@ -1265,12 +1356,14 @@ class TranslatorService:
             LogService.log_info(f"Валидация пройдена, качество: {self.calculate_quality_score(validation)}", 
                               novel_id=chapter.novel_id, chapter_id=chapter.id)
             
-            # Генерируем резюме
+            # Генерируем резюме с контекстным глоссарием для консистентности терминов
             summary = None
             if prompt_template.summary_prompt:
-                LogService.log_info(f"Генерируем резюме для главы {chapter.chapter_number}", 
+                LogService.log_info(f"Генерируем резюме для главы {chapter.chapter_number}",
                                   novel_id=chapter.novel_id, chapter_id=chapter.id)
-                summary = self.translator.generate_summary(content, prompt_template.summary_prompt, chapter.id)
+                # Передаём контекстный глоссарий для правильных имён в резюме
+                glossary_for_summary = context._format_context_glossary() if hasattr(context, '_format_context_glossary') else None
+                summary = self.translator.generate_summary(content, prompt_template.summary_prompt, chapter.id, glossary_for_summary)
                 if summary:
                     LogService.log_info(f"Резюме сгенерировано, длина: {len(summary)} символов", 
                                       novel_id=chapter.novel_id, chapter_id=chapter.id)
@@ -1278,12 +1371,12 @@ class TranslatorService:
                     LogService.log_warning(f"Не удалось сгенерировать резюме для главы {chapter.chapter_number}", 
                                          novel_id=chapter.novel_id, chapter_id=chapter.id)
             
-            # Извлекаем новые термины
+            # Извлекаем новые термины с контекстной фильтрацией глоссария
             if prompt_template.terms_extraction_prompt:
-                LogService.log_info(f"Извлекаем новые термины из главы {chapter.chapter_number}", 
+                LogService.log_info(f"Извлекаем новые термины из главы {chapter.chapter_number}",
                                   novel_id=chapter.novel_id, chapter_id=chapter.id)
-                # Используем исходный китайский текст для извлечения терминов
-                new_terms = self.extract_new_terms(chapter.original_text, prompt_template.terms_extraction_prompt, context.glossary, chapter.id)
+                # Используем исходный китайский текст для извлечения терминов и фильтрации глоссария
+                new_terms = self.extract_new_terms(chapter.original_text, prompt_template.terms_extraction_prompt, context.glossary, chapter.id, chapter.original_text)
                 if new_terms:
                     LogService.log_info(f"Найдено {len(new_terms)} новых терминов", 
                                       novel_id=chapter.novel_id, chapter_id=chapter.id)
@@ -1890,12 +1983,13 @@ class TranslatorService:
         
         return max(1, min(10, int(score)))
 
-    def extract_new_terms(self, text: str, extraction_prompt: str, existing_glossary: Dict, chapter_id: int = None) -> Optional[Dict]:
-        """Извлечение новых терминов из переведенного текста"""
+    def extract_new_terms(self, text: str, extraction_prompt: str, existing_glossary: Dict, chapter_id: int = None, original_text: str = None) -> Optional[Dict]:
+        """Извлечение новых терминов из текста с контекстной фильтрацией глоссария"""
         logger.info(f"🔍 Начинаем извлечение терминов из текста длиной {len(text)} символов")
         logger.info(f"📋 Используем промпт: {extraction_prompt[:200]}...")
-        
-        result = self.translator.extract_terms(text, extraction_prompt, existing_glossary, chapter_id)
+
+        # Передаём original_text для контекстной фильтрации глоссария
+        result = self.translator.extract_terms(text, extraction_prompt, existing_glossary, chapter_id, original_text)
         if not result:
             logger.warning("❌ Не удалось извлечь термины - пустой результат")
             return None
