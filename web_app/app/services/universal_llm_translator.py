@@ -469,25 +469,33 @@ class UniversalLLMTranslator:
         user_prompt = f"{context}\n\nТЕКСТ ДЛЯ ПЕРЕВОДА:\n{text}"
         return self.make_request(system_prompt, user_prompt, temperature=temperature)
 
-    def generate_summary(self, text: str, summary_prompt: str, chapter_id: int = None) -> Optional[str]:
-        """Генерация резюме главы"""
+    def generate_summary(self, text: str, summary_prompt: str, chapter_id: int = None, glossary_text: str = None) -> Optional[str]:
+        """Генерация резюме главы с учётом глоссария для консистентности терминов"""
         self.current_chapter_id = chapter_id
         if not hasattr(self, 'current_prompt_type') or self.current_prompt_type == 'translation':
             self.current_prompt_type = 'summary'
         self.request_start_time = time.time()
 
-        user_prompt = f"ТЕКСТ ГЛАВЫ:\n{text}"
+        # Добавляем глоссарий для консистентности имён и терминов
+        if glossary_text:
+            user_prompt = f"ГЛОССАРИЙ ТЕРМИНОВ (используй эти переводы!):\n{glossary_text}\n\nТЕКСТ ГЛАВЫ:\n{text}"
+        else:
+            user_prompt = f"ТЕКСТ ГЛАВЫ:\n{text}"
         return self.make_request(summary_prompt, user_prompt, temperature=0.3)
 
     def extract_terms(self, text: str, extraction_prompt: str, existing_glossary: dict,
-                     chapter_id: int = None) -> Optional[str]:
-        """Извлечение новых терминов из текста"""
+                     chapter_id: int = None, original_text: str = None) -> Optional[str]:
+        """Извлечение новых терминов из текста с контекстной фильтрацией глоссария"""
         self.current_chapter_id = chapter_id
         if not hasattr(self, 'current_prompt_type') or self.current_prompt_type == 'translation':
             self.current_prompt_type = 'terms_extraction'
         self.request_start_time = time.time()
 
-        glossary_text = self._format_glossary_for_prompt(existing_glossary)
+        # Используем контекстную фильтрацию - только термины из текста главы
+        if original_text:
+            glossary_text = self._format_context_glossary_for_prompt(existing_glossary, original_text)
+        else:
+            glossary_text = self._format_glossary_for_prompt(existing_glossary)
         user_prompt = f"СУЩЕСТВУЮЩИЙ ГЛОССАРИЙ:\n{glossary_text}\n\nТЕКСТ ДЛЯ АНАЛИЗА:\n{text}"
         return self.make_request(extraction_prompt, user_prompt, temperature=0.2)
 
@@ -524,5 +532,33 @@ class UniversalLLMTranslator:
             for eng, rus in sorted(glossary['artifacts'].items()):
                 lines.append(f"- {eng} = {rus}")
             lines.append("")
+
+        return "\n".join(lines) if lines else "Глоссарий пуст"
+
+    def _format_context_glossary_for_prompt(self, glossary: dict, original_text: str) -> str:
+        """
+        Форматирование глоссария с контекстной фильтрацией.
+        Включает только термины, которые встречаются в оригинальном тексте.
+        """
+        if not original_text or not glossary:
+            return "Глоссарий пуст"
+
+        lines = []
+        categories = [
+            ('characters', 'ПЕРСОНАЖИ'),
+            ('locations', 'ЛОКАЦИИ'),
+            ('terms', 'ТЕРМИНЫ'),
+            ('techniques', 'ТЕХНИКИ'),
+            ('artifacts', 'АРТЕФАКТЫ')
+        ]
+
+        for cat_key, cat_name in categories:
+            terms = glossary.get(cat_key, {})
+            matching_terms = [(eng, rus) for eng, rus in terms.items() if eng in original_text]
+            if matching_terms:
+                lines.append(f"{cat_name}:")
+                for eng, rus in sorted(matching_terms):
+                    lines.append(f"- {eng} = {rus}")
+                lines.append("")
 
         return "\n".join(lines) if lines else "Глоссарий пуст"
