@@ -10,6 +10,21 @@ from app.services.ai_adapter_service import AIAdapterService
 from app.services.log_service import LogService
 from app.services.original_aware_editor_service import RateLimitError
 
+# Для нормализации традиционного/упрощённого китайского
+try:
+    from opencc import OpenCC
+    _opencc_t2s = OpenCC('t2s')  # Traditional to Simplified
+
+    def normalize_chinese(text: str) -> str:
+        """Нормализация китайского текста: традиционный → упрощённый"""
+        if not text:
+            return text
+        return _opencc_t2s.convert(text)
+except ImportError:
+    def normalize_chinese(text: str) -> str:
+        """Fallback: без нормализации если OpenCC не установлен"""
+        return text
+
 logger = logging.getLogger(__name__)
 
 
@@ -539,9 +554,13 @@ class UniversalLLMTranslator:
         """
         Форматирование глоссария с контекстной фильтрацией.
         Включает только термины, которые встречаются в оригинальном тексте.
+        Нормализует китайский текст для корректного сопоставления традиционный/упрощённый.
         """
         if not original_text or not glossary:
             return "Глоссарий пуст"
+
+        # Нормализуем оригинальный текст для поиска
+        original_normalized = normalize_chinese(original_text)
 
         lines = []
         categories = [
@@ -554,7 +573,11 @@ class UniversalLLMTranslator:
 
         for cat_key, cat_name in categories:
             terms = glossary.get(cat_key, {})
-            matching_terms = [(eng, rus) for eng, rus in terms.items() if eng in original_text]
+            matching_terms = []
+            for eng, rus in terms.items():
+                eng_normalized = normalize_chinese(eng)
+                if eng in original_text or eng_normalized in original_normalized:
+                    matching_terms.append((eng, rus))
             if matching_terms:
                 lines.append(f"{cat_name}:")
                 for eng, rus in sorted(matching_terms):

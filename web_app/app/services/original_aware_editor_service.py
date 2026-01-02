@@ -18,6 +18,21 @@ from app.services.log_service import LogService
 from app.services.prompt_template_service import PromptTemplateService
 from app.services.glossary_service import GlossaryService
 
+# Для нормализации традиционного/упрощённого китайского
+try:
+    from opencc import OpenCC
+    _opencc_t2s = OpenCC('t2s')  # Traditional to Simplified
+
+    def normalize_chinese(text: str) -> str:
+        """Нормализация китайского текста: традиционный → упрощённый"""
+        if not text:
+            return text
+        return _opencc_t2s.convert(text)
+except ImportError:
+    def normalize_chinese(text: str) -> str:
+        """Fallback: без нормализации если OpenCC не установлен"""
+        return text
+
 logger = logging.getLogger(__name__)
 
 
@@ -758,16 +773,22 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
         """
         Форматирование глоссария с фильтрацией по контексту главы.
         Выбирает только термины, которые встречаются в оригинальном тексте.
+        Нормализует китайский текст для корректного сопоставления традиционный/упрощённый.
         """
         if not original_text:
             return ""
+
+        # Нормализуем оригинальный текст для поиска
+        original_normalized = normalize_chinese(original_text)
 
         result = ["ГЛОССАРИЙ ТЕРМИНОВ:"]
 
         for category in ['characters', 'locations', 'terms', 'techniques', 'artifacts']:
             terms = glossary.get(category, {})
             for chinese, russian in terms.items():
-                if chinese in original_text:
+                # Проверяем и оригинальный и нормализованный вариант
+                chinese_normalized = normalize_chinese(chinese)
+                if chinese in original_text or chinese_normalized in original_normalized:
                     result.append(f"  {chinese} = {russian}")
 
         # Если ничего не найдено, возвращаем пустую строку

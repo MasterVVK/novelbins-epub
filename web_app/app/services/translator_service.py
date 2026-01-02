@@ -14,6 +14,21 @@ from app import db
 from app.services.settings_service import SettingsService
 from app.services.log_service import LogService
 
+# Для нормализации традиционного/упрощённого китайского
+try:
+    from opencc import OpenCC
+    _opencc_t2s = OpenCC('t2s')  # Traditional to Simplified
+
+    def normalize_chinese(text: str) -> str:
+        """Нормализация китайского текста: традиционный → упрощённый"""
+        if not text:
+            return text
+        return _opencc_t2s.convert(text)
+except ImportError:
+    def normalize_chinese(text: str) -> str:
+        """Fallback: без нормализации если OpenCC не установлен"""
+        return text
+
 logger = logging.getLogger(__name__)
 
 
@@ -637,9 +652,13 @@ class LLMTranslator:
         """
         Форматирование глоссария с контекстной фильтрацией.
         Выбирает только термины, которые встречаются в оригинальном тексте.
+        Нормализует китайский текст для корректного сопоставления традиционный/упрощённый.
         """
         if not original_text or not glossary:
             return "Глоссарий пуст"
+
+        # Нормализуем оригинальный текст для поиска
+        original_normalized = normalize_chinese(original_text)
 
         lines = []
 
@@ -652,7 +671,9 @@ class LLMTranslator:
         ]:
             found = []
             for chinese, russian in glossary.get(category, {}).items():
-                if chinese in original_text:
+                # Проверяем и оригинальный и нормализованный вариант
+                chinese_normalized = normalize_chinese(chinese)
+                if chinese in original_text or chinese_normalized in original_normalized:
                     found.append(f"- {chinese} = {russian}")
             if found:
                 lines.append(f"{label}:")
@@ -695,17 +716,26 @@ class TranslationContext:
         """
         Форматирование глоссария с фильтрацией по контексту главы.
         Выбирает только термины, которые встречаются в оригинальном тексте.
+        Нормализует китайский текст для корректного сопоставления традиционный/упрощённый.
         """
         if not self.original_text or not self.glossary:
             return ""
 
+        # Нормализуем оригинальный текст для поиска
+        original_normalized = normalize_chinese(self.original_text)
+
         lines = []
         found_any = False
+
+        def term_matches(chinese: str) -> bool:
+            """Проверяет, есть ли термин в тексте (с учётом нормализации)"""
+            chinese_norm = normalize_chinese(chinese)
+            return chinese in self.original_text or chinese_norm in original_normalized
 
         # Персонажи
         chars_found = []
         for chinese, russian in self.glossary.get('characters', {}).items():
-            if chinese in self.original_text:
+            if term_matches(chinese):
                 chars_found.append(f"- {chinese} → {russian}")
         if chars_found:
             lines.append("УСТАНОВЛЕННЫЕ ПЕРЕВОДЫ ИМЁН:")
@@ -716,7 +746,7 @@ class TranslationContext:
         # Локации
         locs_found = []
         for chinese, russian in self.glossary.get('locations', {}).items():
-            if chinese in self.original_text:
+            if term_matches(chinese):
                 locs_found.append(f"- {chinese} → {russian}")
         if locs_found:
             lines.append("УСТАНОВЛЕННЫЕ ПЕРЕВОДЫ ЛОКАЦИЙ:")
@@ -727,7 +757,7 @@ class TranslationContext:
         # Термины
         terms_found = []
         for chinese, russian in self.glossary.get('terms', {}).items():
-            if chinese in self.original_text:
+            if term_matches(chinese):
                 terms_found.append(f"- {chinese} → {russian}")
         if terms_found:
             lines.append("УСТАНОВЛЕННЫЕ ПЕРЕВОДЫ ТЕРМИНОВ:")
@@ -738,7 +768,7 @@ class TranslationContext:
         # Техники
         techs_found = []
         for chinese, russian in self.glossary.get('techniques', {}).items():
-            if chinese in self.original_text:
+            if term_matches(chinese):
                 techs_found.append(f"- {chinese} → {russian}")
         if techs_found:
             lines.append("УСТАНОВЛЕННЫЕ ПЕРЕВОДЫ ТЕХНИК:")
@@ -749,7 +779,7 @@ class TranslationContext:
         # Артефакты
         arts_found = []
         for chinese, russian in self.glossary.get('artifacts', {}).items():
-            if chinese in self.original_text:
+            if term_matches(chinese):
                 arts_found.append(f"- {chinese} → {russian}")
         if arts_found:
             lines.append("УСТАНОВЛЕННЫЕ ПЕРЕВОДЫ АРТЕФАКТОВ:")
@@ -2078,22 +2108,33 @@ class TranslatorService:
         return True
 
     def save_new_terms(self, new_terms: Dict, novel_id: int, chapter_number: int):
-        """Сохранение новых терминов в глоссарий"""
+        """Сохранение новых терминов в глоссарий с нормализацией китайского"""
         total_saved = 0
         for category, terms in new_terms.items():
             logger.info(f"📝 Обрабатываем категорию {category}: {len(terms)} терминов")
             for eng, rus in terms.items():
-                logger.info(f"🔍 Проверяем термин: {eng} = {rus}")
-                # Проверяем, нет ли уже такого термина
+                # Нормализуем китайский текст (традиционный → упрощённый)
+                eng_normalized = normalize_chinese(eng)
+                logger.info(f"🔍 Проверяем термин: {eng} → {eng_normalized} = {rus}")
+
+                # Проверяем по нормализованному термину
                 existing = GlossaryItem.query.filter_by(
                     novel_id=novel_id,
-                    english_term=eng
+                    english_term=eng_normalized
                 ).first()
-                
+
+                # Также проверяем оригинальный вариант (если отличается)
+                if not existing and eng != eng_normalized:
+                    existing = GlossaryItem.query.filter_by(
+                        novel_id=novel_id,
+                        english_term=eng
+                    ).first()
+
                 if not existing:
+                    # Сохраняем нормализованный вариант
                     glossary_item = GlossaryItem(
                         novel_id=novel_id,
-                        english_term=eng,
+                        english_term=eng_normalized,
                         russian_term=rus,
                         category=category,
                         first_appearance_chapter=chapter_number,
@@ -2102,9 +2143,9 @@ class TranslatorService:
                     )
                     db.session.add(glossary_item)
                     total_saved += 1
-                    logger.info(f"✅ Сохранен новый термин: {eng} = {rus} (категория: {category})")
+                    logger.info(f"✅ Сохранен новый термин: {eng_normalized} = {rus} (категория: {category})")
                 else:
-                    logger.info(f"ℹ️ Термин уже существует: {eng}")
+                    logger.info(f"ℹ️ Термин уже существует: {eng_normalized}")
         
         db.session.commit()
         logger.info(f"📚 Всего сохранено новых терминов: {total_saved}")
