@@ -224,7 +224,7 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
         """
         Анализ качества перевода с полной сверкой с оригиналом
         """
-        glossary_text = self._format_entire_glossary(glossary)
+        glossary_text = self._format_context_glossary(glossary, original)
         novel_info = self._get_novel_info(chapter_id)
 
         # Получаем промпт из БД
@@ -289,7 +289,7 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
         """
         Исправление несоответствий с оригиналом и глоссарием
         """
-        glossary_text = self._format_entire_glossary(glossary)
+        glossary_text = self._format_context_glossary(glossary, original)
         novel_info = self._get_novel_info(chapter_id)
 
         # Получаем промпт из БД
@@ -339,7 +339,7 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
         """
         Улучшение стиля с учетом оригинала
         """
-        glossary_text = self._format_entire_glossary(glossary)
+        glossary_text = self._format_context_glossary(glossary, original)
         novel_info = self._get_novel_info(chapter_id)
 
         # Получаем промпт из БД
@@ -387,7 +387,7 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
         """
         Полировка диалогов с учетом оригинала
         """
-        characters_info = self._extract_characters_from_glossary(glossary)
+        characters_info = self._extract_characters_from_glossary(glossary, original)
         novel_info = self._get_novel_info(chapter_id)
 
         # Получаем промпт из БД
@@ -435,7 +435,7 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
         """
         Финальная полировка с полной проверкой по оригиналу
         """
-        glossary_text = self._format_entire_glossary(glossary)
+        glossary_text = self._format_context_glossary(glossary, original)
         novel_info = self._get_novel_info(chapter_id)
 
         # Получаем промпт из БД
@@ -754,29 +754,52 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
 
         return "\n".join(result)
 
-    def _extract_characters_from_glossary(self, glossary: Dict) -> str:
+    def _format_context_glossary(self, glossary: Dict, original_text: str) -> str:
         """
-        Извлечение информации о персонажах из глоссария
+        Форматирование глоссария с фильтрацией по контексту главы.
+        Выбирает только термины, которые встречаются в оригинальном тексте.
+        """
+        if not original_text:
+            return ""
+
+        result = ["ГЛОССАРИЙ ТЕРМИНОВ:"]
+
+        for category in ['characters', 'locations', 'terms', 'techniques', 'artifacts']:
+            terms = glossary.get(category, {})
+            for chinese, russian in terms.items():
+                if chinese in original_text:
+                    result.append(f"  {chinese} = {russian}")
+
+        # Если ничего не найдено, возвращаем пустую строку
+        if len(result) == 1:
+            return ""
+
+        return "\n".join(result)
+
+    def _extract_characters_from_glossary(self, glossary: Dict, original_text: str = None) -> str:
+        """
+        Извлечение информации о персонажах из глоссария.
+        Если передан original_text, фильтрует только персонажей из этой главы.
         """
         result = []
 
-        # Главные персонажи (критические)
-        critical_chars = {}
-        for eng, rus in glossary.get('priority', {}).get('critical', {}).items():
-            if any(word in eng.lower() for word in ['bai', 'li', 'zhang', 'wang', 'chen']):
-                critical_chars[eng] = rus
+        characters = glossary.get('characters', {})
 
-        if critical_chars:
-            result.append("ГЛАВНЫЕ ПЕРСОНАЖИ:")
-            for eng, rus in critical_chars.items():
-                result.append(f"  {eng} = {rus}")
-            result.append("")
+        if original_text:
+            # Контекстная фильтрация - только персонажи из этой главы
+            result.append("ПЕРСОНАЖИ:")
+            for chinese, russian in characters.items():
+                if chinese in original_text:
+                    result.append(f"  {chinese} = {russian}")
+        else:
+            # Fallback - первые 100 персонажей
+            result.append("ПЕРСОНАЖИ:")
+            for chinese, russian in list(characters.items())[:100]:
+                result.append(f"  {chinese} = {russian}")
 
-        # Все персонажи из категории
-        if glossary.get('characters'):
-            result.append("ВСЕ ПЕРСОНАЖИ:")
-            for eng, rus in list(glossary['characters'].items())[:100]:
-                result.append(f"  {eng} = {rus}")
+        # Если ничего не найдено, возвращаем пустую строку
+        if len(result) == 1:
+            return ""
 
         return "\n".join(result)
 
