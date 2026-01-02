@@ -88,6 +88,11 @@ redis-cli ping                           # Проверка Redis
 3. **Multi-Stage Editing**: Последовательная редактура
 4. **Quality Scoring**: Оценка качества
 
+**Контекстная фильтрация глоссария** (`_format_context_glossary()`):
+- В промпт включаются только термины, присутствующие в оригинальном тексте главы
+- Экономия токенов: 98.5% (51,731 → 788 токенов на главу)
+- Применяется в: переводе, редактуре, генерации summary, извлечении терминов
+
 **Ollama параметры** (`ai_adapter_service.py:303-326`):
 - Токены: китайский 1.5 сим/токен, русский 2.5, английский 4.0
 - `num_ctx`: `prompt_length × 1.2` (минимум 2048)
@@ -133,11 +138,13 @@ PGPASSWORD='novelbins_strong_pass_2025' psql -U novelbins_user -d novelbins_epub
 **OriginalAwareEditorService** (`app/services/original_aware_editor_service.py`):
 
 Этапы редактуры:
-1. Загрузка данных + глоссарий
+1. Загрузка данных + глоссарий (контекстная фильтрация)
 2. Анализ с оригиналом (сравнение, выявление несоответствий)
 3. Исправление с учетом оригинала
 4. Улучшение стиля
 5. Сохранение (`chapter.edited_text`, `status='edited'`)
+
+**Контекстная фильтрация глоссария**: Метод `_format_context_glossary()` включает в промпт только термины из `original_text`. Заменил старый `_format_entire_glossary()` с жёсткими лимитами (50 characters, 30 locations).
 
 **Промпт-шаблоны**: `analyze_with_original_prompt`, `fix_with_original_prompt`, `polish_with_original_prompt`
 
