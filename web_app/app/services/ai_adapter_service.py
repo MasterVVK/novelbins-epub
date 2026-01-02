@@ -327,14 +327,17 @@ class AIAdapterService:
                     num_ctx = min_context_size
 
                 # num_predict = num_ctx × 2 (обычные модели)
-                # Для reasoning моделей: num_ctx × 4 (требуют больше токенов для внутреннего мышления)
+                # Для reasoning моделей: num_ctx × 6 (требуют больше токенов для внутреннего мышления)
+                # + минимум 40000 токенов чтобы thinking не съело весь бюджет
                 if hasattr(self.model, 'enable_thinking') and self.model.enable_thinking:
-                    predict_multiplier = 4  # Reasoning модели
-                    logger.info(f"  🧠 Reasoning модель: используем multiplier × {predict_multiplier} для num_predict")
+                    predict_multiplier = 6  # Reasoning модели (увеличено с 4 до 6)
+                    min_predict_for_reasoning = 40000  # Минимум для reasoning моделей
+                    num_predict = max(num_ctx * predict_multiplier, min_predict_for_reasoning)
+                    num_predict = min(num_predict, self.model.max_output_tokens)
+                    logger.info(f"  🧠 Reasoning модель: num_predict = max(num_ctx × {predict_multiplier}, {min_predict_for_reasoning:,})")
                 else:
                     predict_multiplier = 2  # Обычные модели
-
-                num_predict = min(num_ctx * predict_multiplier, self.model.max_output_tokens)
+                    num_predict = min(num_ctx * predict_multiplier, self.model.max_output_tokens)
 
                 # Логируем упрощенную логику расчета
                 logger.info(f"Ollama: Расчет контекста для {self.model.name}:")
@@ -423,6 +426,23 @@ class AIAdapterService:
                             logger.debug(f"Found {len(think_blocks)} <think> blocks, removing them")
                             content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL)
                             content = content.strip()
+
+                        # Проверка пустого ответа при наличии thinking
+                        if not content.strip() and 'thinking' in data and data['thinking']:
+                            logger.warning(f"⚠️ ПУСТОЙ ОТВЕТ при наличии thinking! Thinking съел все токены.")
+                            logger.warning(f"   Thinking: {len(data['thinking'])} символов")
+                            logger.warning(f"   num_predict было: {num_predict:,}, нужно увеличить min_predict_for_reasoning")
+                            # Возвращаем ошибку вместо пустого ответа
+                            return {
+                                'success': False,
+                                'content': '',
+                                'error': 'Пустой ответ: thinking процесс использовал все токены. Попробуйте увеличить num_predict.',
+                                'usage': {
+                                    'prompt_tokens': data.get('prompt_eval_count', 0),
+                                    'completion_tokens': data.get('eval_count', 0),
+                                    'total_tokens': data.get('prompt_eval_count', 0) + data.get('eval_count', 0)
+                                }
+                            }
 
                         return {
                             'success': True,
