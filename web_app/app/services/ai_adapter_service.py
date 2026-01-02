@@ -328,10 +328,10 @@ class AIAdapterService:
 
                 # num_predict = num_ctx × 2 (обычные модели)
                 # Для reasoning моделей: num_ctx × 6 (требуют больше токенов для внутреннего мышления)
-                # + минимум 40000 токенов чтобы thinking не съело весь бюджет
+                # + минимум 80000 токенов чтобы thinking не съело весь бюджет
                 if hasattr(self.model, 'enable_thinking') and self.model.enable_thinking:
                     predict_multiplier = 6  # Reasoning модели (увеличено с 4 до 6)
-                    min_predict_for_reasoning = 40000  # Минимум для reasoning моделей
+                    min_predict_for_reasoning = 80000  # Минимум для reasoning моделей (увеличено с 40k)
                     num_predict = max(num_ctx * predict_multiplier, min_predict_for_reasoning)
                     num_predict = min(num_predict, self.model.max_output_tokens)
                     logger.info(f"  🧠 Reasoning модель: num_predict = max(num_ctx × {predict_multiplier}, {min_predict_for_reasoning:,})")
