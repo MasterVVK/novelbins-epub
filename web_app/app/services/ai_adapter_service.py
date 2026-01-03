@@ -363,31 +363,38 @@ class AIAdapterService:
                 # на больших промптах (95k+). Тесты: инструкции в начале → 34 симв, в конце → 6000+ симв
                 full_prompt = f"{user_prompt}\n\n{system_prompt}"
 
-                # Подготавливаем JSON для запроса
-                request_json = {
-                    'model': self.model.model_id,
-                    'prompt': full_prompt,  # Единый промпт вместо system + prompt
-                    'stream': False,
-                    'options': {
-                        'temperature': temperature,
-                        'num_predict': num_predict,      # Максимальный размер генерации
-                        'num_ctx': num_ctx,              # Размер контекста = промпт + 20%
-                        'num_keep': num_ctx              # Сколько токенов сохранять
+                # Retry loop для случаев когда thinking съедает все токены
+                max_thinking_retries = 3
+                current_num_predict = num_predict
+
+                for thinking_retry in range(max_thinking_retries):
+                    # Подготавливаем JSON для запроса
+                    request_json = {
+                        'model': self.model.model_id,
+                        'prompt': full_prompt,  # Единый промпт вместо system + prompt
+                        'stream': False,
+                        'options': {
+                            'temperature': temperature,
+                            'num_predict': current_num_predict,      # Максимальный размер генерации
+                            'num_ctx': num_ctx,              # Размер контекста = промпт + 20%
+                            'num_keep': num_ctx              # Сколько токенов сохранять
+                        }
                     }
-                }
 
-                # Включаем thinking mode если он активирован для модели
-                if hasattr(self.model, 'enable_thinking') and self.model.enable_thinking:
-                    request_json['think'] = True
-                    logger.info(f"🧠 Thinking mode активирован для {self.model.model_id}")
+                    # Включаем thinking mode если он активирован для модели
+                    if hasattr(self.model, 'enable_thinking') and self.model.enable_thinking:
+                        request_json['think'] = True
+                        if thinking_retry == 0:
+                            logger.info(f"🧠 Thinking mode активирован для {self.model.model_id}")
 
-                # Делаем запрос к модели с упрощенными параметрами контекста
-                response = await client.post(
-                    f"{self.model.api_endpoint}/generate",
-                    json=request_json
-                )
+                    # Делаем запрос к модели с упрощенными параметрами контекста
+                    response = await client.post(
+                        f"{self.model.api_endpoint}/generate",
+                        json=request_json
+                    )
 
-                if response.status_code == 200:
+                    if response.status_code != 200:
+                        break  # Выходим из retry loop, обработаем ошибку ниже
                     try:
                         data = response.json()
                         content = data.get('response', '')
@@ -429,14 +436,29 @@ class AIAdapterService:
 
                         # Проверка пустого ответа при наличии thinking
                         if not content.strip() and 'thinking' in data and data['thinking']:
+                            thinking_len = len(data['thinking'])
                             logger.warning(f"⚠️ ПУСТОЙ ОТВЕТ при наличии thinking! Thinking съел все токены.")
-                            logger.warning(f"   Thinking: {len(data['thinking'])} символов")
-                            logger.warning(f"   num_predict было: {num_predict:,}, нужно увеличить min_predict_for_reasoning")
-                            # Возвращаем ошибку вместо пустого ответа
+                            logger.warning(f"   Thinking: {thinking_len} символов")
+                            logger.warning(f"   num_predict было: {current_num_predict:,}")
+
+                            # Retry с увеличенным num_predict на 20%
+                            if thinking_retry < max_thinking_retries - 1:
+                                new_num_predict = int(current_num_predict * 1.2)
+                                # Ограничиваем максимальным значением модели
+                                new_num_predict = min(new_num_predict, self.model.max_output_tokens)
+
+                                if new_num_predict > current_num_predict:
+                                    logger.info(f"🔄 Retry {thinking_retry + 2}/{max_thinking_retries}: увеличиваем num_predict {current_num_predict:,} → {new_num_predict:,} (+20%)")
+                                    current_num_predict = new_num_predict
+                                    continue  # Повторяем запрос
+                                else:
+                                    logger.warning(f"   Достигнут лимит модели ({self.model.max_output_tokens:,}), retry невозможен")
+
+                            # Все retry исчерпаны или достигнут лимит
                             return {
                                 'success': False,
                                 'content': '',
-                                'error': 'Пустой ответ: thinking процесс использовал все токены. Попробуйте увеличить num_predict.',
+                                'error': f'Пустой ответ: thinking процесс использовал все токены (попыток: {thinking_retry + 1}/{max_thinking_retries}, последний num_predict: {current_num_predict:,})',
                                 'usage': {
                                     'prompt_tokens': data.get('prompt_eval_count', 0),
                                     'completion_tokens': data.get('eval_count', 0),
@@ -465,7 +487,9 @@ class AIAdapterService:
                             'error': f'Ollama вернул HTTP 200, но невалидный JSON: {error_text[:200]}',
                             'error_type': 'invalid_json'
                         }
-                else:
+
+                # Обработка HTTP ошибок (после break из цикла)
+                if response.status_code != 200:
                     # Пытаемся получить детальную информацию об ошибке
                     error_detail = f'HTTP {response.status_code}'
                     error_text = None
