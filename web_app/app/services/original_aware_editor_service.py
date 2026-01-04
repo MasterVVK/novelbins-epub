@@ -61,6 +61,11 @@ class TextTooLongError(EditingError):
     pass
 
 
+class ProhibitedContentError(EditingError):
+    """Контент заблокирован политикой безопасности (PROHIBITED_CONTENT) - пропустить главу"""
+    pass
+
+
 class OriginalAwareEditorService(GlossaryAwareEditorService):
     """
     Продвинутый сервис редактуры с использованием оригинального текста и глоссария.

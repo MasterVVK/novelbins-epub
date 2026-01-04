@@ -8,7 +8,7 @@ from typing import Optional, List
 from app.models import AIModel
 from app.services.ai_adapter_service import AIAdapterService
 from app.services.log_service import LogService
-from app.services.original_aware_editor_service import RateLimitError
+from app.services.original_aware_editor_service import RateLimitError, ProhibitedContentError
 
 # Для нормализации традиционного/упрощённого китайского
 try:
@@ -178,6 +178,11 @@ class UniversalLLMTranslator:
                     LogService.log_error(f"Ошибка запроса: {error} (тип: {error_type})")
                     LogService.log_info(f"Полный результат ошибки: {result}")
 
+                    # PROHIBITED_CONTENT - контент заблокирован политикой безопасности
+                    # Нет смысла повторять - сразу пропускаем главу
+                    if 'PROHIBITED_CONTENT' in error:
+                        raise ProhibitedContentError(f"Контент заблокирован: {error}")
+
                     if 'Rate limit' in error or result.get('retry_after'):
                         # Rate limit - помечаем ключ и переключаемся
                         LogService.log_warning(f"Rate limit для ключа #{self.current_key_index + 1}")
@@ -227,6 +232,11 @@ class UniversalLLMTranslator:
 
                     # Логируем полный результат для отладки
                     LogService.log_error(f"Полный результат ошибки: {result}")
+
+                    # PROHIBITED_CONTENT - контент заблокирован политикой безопасности
+                    # Нет смысла повторять - сразу пропускаем главу
+                    if 'PROHIBITED_CONTENT' in error:
+                        raise ProhibitedContentError(f"Контент заблокирован: {error}")
 
                     # Проверяем на НЕДЕЛЬНЫЙ лимит - повторы бессмысленны, нужно остановить задачу
                     # ЧАСОВОЙ лимит (rate_limit) обрабатывается НИЖЕ с прогрессивными повторами

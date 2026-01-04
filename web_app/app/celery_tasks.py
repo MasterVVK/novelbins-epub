@@ -536,7 +536,7 @@ def edit_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
         parallel_threads: Количество параллельных потоков (из конфига новеллы)
     """
     from app.services.translator_service import TranslatorService
-    from app.services.original_aware_editor_service import OriginalAwareEditorService, EmptyResultError, NoChangesError, RateLimitError, TextTooLongError
+    from app.services.original_aware_editor_service import OriginalAwareEditorService, EmptyResultError, NoChangesError, RateLimitError, TextTooLongError, ProhibitedContentError
     from app.services.log_service import LogService
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from threading import Lock
@@ -723,6 +723,13 @@ def edit_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
                                 processed_count += 1
                             LogService.log_error(f"❌ [Novel:{novel_id}, Ch:{chapter.chapter_number}] {e} после {max_attempts_too_long} попыток. Глава ПРОПУЩЕНА.", novel_id=novel_id)
                             return False
+
+                    except ProhibitedContentError as e:
+                        # Контент заблокирован политикой безопасности Gemini - ПРОПУСКАЕМ сразу без retry
+                        with counter_lock:
+                            processed_count += 1
+                        LogService.log_warning(f"⛔ [Novel:{novel_id}, Ch:{chapter.chapter_number}] {e}. Глава ПРОПУЩЕНА.", novel_id=novel_id)
+                        return False
 
                     except Exception as e:
                         # Другие ошибки - retry с задержками (макс 3 попытки)
