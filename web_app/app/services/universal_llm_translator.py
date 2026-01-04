@@ -172,7 +172,6 @@ class UniversalLLMTranslator:
                         # Успех - сбрасываем счётчик
                         self.full_cycles_without_success = 0
                         self.last_finish_reason = result.get('finish_reason', 'unknown')
-                        LogService.log_info(f"✅ Ключ #{self.current_key_index + 1} успешно отработал")
 
                         # Сохраняем промпт в историю
                         if self.save_prompt_history and self.current_chapter_id:
