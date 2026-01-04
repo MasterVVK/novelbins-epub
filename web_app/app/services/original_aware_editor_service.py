@@ -162,6 +162,9 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
             else:
                 failed_stages.append('fix')
                 print(f"   ⚠️ Этап 1: текст не изменился")
+        except ProhibitedContentError:
+            # Контент заблокирован - пробрасываем наверх для пропуска всей главы
+            raise
         except Exception as e:
             failed_stages.append('fix')
             LogService.log_warning(f"Этап fix пропущен из-за ошибки: {e}", chapter_id=chapter.id)
@@ -179,6 +182,8 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
             else:
                 failed_stages.append('style')
                 print(f"   ⚠️ Этап 2: текст не изменился")
+        except ProhibitedContentError:
+            raise
         except Exception as e:
             failed_stages.append('style')
             LogService.log_warning(f"Этап style пропущен из-за ошибки: {e}", chapter_id=chapter.id)
@@ -196,6 +201,8 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
             else:
                 failed_stages.append('dialogue')
                 print(f"   ⚠️ Этап 3: текст не изменился")
+        except ProhibitedContentError:
+            raise
         except Exception as e:
             failed_stages.append('dialogue')
             LogService.log_warning(f"Этап dialogue пропущен из-за ошибки: {e}", chapter_id=chapter.id)
@@ -213,6 +220,8 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
             else:
                 failed_stages.append('final')
                 print(f"   ⚠️ Этап 4: текст не изменился")
+        except ProhibitedContentError:
+            raise
         except Exception as e:
             failed_stages.append('final')
             LogService.log_warning(f"Этап final пропущен из-за ошибки: {e}", chapter_id=chapter.id)
