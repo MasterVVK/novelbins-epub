@@ -199,6 +199,10 @@ class UniversalLLMTranslator:
 
                     attempts += 1
 
+                except ProhibitedContentError:
+                    # Пробрасываем наружу без retry - контент заблокирован
+                    raise
+
                 except Exception as e:
                     LogService.log_error(f"Исключение при запросе: {e}")
                     import traceback
