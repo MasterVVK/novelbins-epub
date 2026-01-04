@@ -4,6 +4,7 @@
 import time
 import logging
 import asyncio
+import threading
 from typing import Optional, List
 from app.models import AIModel
 from app.services.ai_adapter_service import AIAdapterService
@@ -37,6 +38,7 @@ class UniversalLLMTranslator:
     # Глобальные переменные класса для сохранения состояния между экземплярами
     _global_key_index = 0  # Последний работающий ключ
     _global_failed_keys = set()  # Неработающие ключи
+    _key_lock = threading.Lock()  # Lock для thread-safe доступа
 
     def __init__(self, model: AIModel):
         """
@@ -46,8 +48,9 @@ class UniversalLLMTranslator:
         """
         self.model = model
         # Используем глобальный индекс ключа вместо сброса на 0
-        self.current_key_index = UniversalLLMTranslator._global_key_index
-        self.failed_keys = UniversalLLMTranslator._global_failed_keys
+        with UniversalLLMTranslator._key_lock:
+            self.current_key_index = UniversalLLMTranslator._global_key_index
+            self.failed_keys = UniversalLLMTranslator._global_failed_keys
         self.full_cycles_without_success = 0
         self.last_finish_reason = None
         self.save_prompt_history = True
@@ -72,26 +75,30 @@ class UniversalLLMTranslator:
     def switch_to_next_key(self):
         """Переключение на следующий ключ (только для Gemini с ротацией)"""
         if self.model.provider == 'gemini' and self.model.api_keys and len(self.model.api_keys) > 1:
-            self.current_key_index = (self.current_key_index + 1) % len(self.model.api_keys)
-            # Сохраняем глобально для следующих экземпляров
-            UniversalLLMTranslator._global_key_index = self.current_key_index
+            with UniversalLLMTranslator._key_lock:
+                self.current_key_index = (self.current_key_index + 1) % len(self.model.api_keys)
+                # Сохраняем глобально для следующих экземпляров
+                UniversalLLMTranslator._global_key_index = self.current_key_index
             logger.info(f"Переключение на ключ #{self.current_key_index + 1}")
 
     def mark_key_as_failed(self):
         """Помечаем текущий ключ как неработающий"""
         if self.model.provider == 'gemini' and self.model.api_keys:
-            self.failed_keys.add(self.current_key_index)
+            with UniversalLLMTranslator._key_lock:
+                self.failed_keys.add(self.current_key_index)
             logger.warning(f"Ключ #{self.current_key_index + 1} помечен как неработающий")
 
     def reset_failed_keys(self):
         """Сброс списка неработающих ключей"""
-        self.failed_keys.clear()
+        with UniversalLLMTranslator._key_lock:
+            self.failed_keys.clear()
         logger.info("Сброс списка неработающих ключей")
 
     def all_keys_failed(self) -> bool:
         """Проверяем, все ли ключи неработающие"""
         if self.model.provider == 'gemini' and self.model.api_keys:
-            return len(self.failed_keys) == len(self.model.api_keys)
+            with UniversalLLMTranslator._key_lock:
+                return len(self.failed_keys) == len(self.model.api_keys)
         return False
 
     def set_save_prompt_history(self, save: bool):
