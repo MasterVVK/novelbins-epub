@@ -536,7 +536,7 @@ def edit_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
         parallel_threads: Количество параллельных потоков (из конфига новеллы)
     """
     from app.services.translator_service import TranslatorService
-    from app.services.original_aware_editor_service import OriginalAwareEditorService, EmptyResultError, NoChangesError, RateLimitError
+    from app.services.original_aware_editor_service import OriginalAwareEditorService, EmptyResultError, NoChangesError, RateLimitError, TextTooLongError
     from app.services.log_service import LogService
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from threading import Lock
@@ -620,15 +620,18 @@ def edit_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
                 # Попытки редактуры с разной логикой retry для разных типов ошибок:
                 # - EmptyResultError (API вернул пустой результат): 3 попытки с задержками (0, +5м, +10м)
                 # - NoChangesError (текст не изменился): 2 попытки без задержек
+                # - TextTooLongError (галлюцинации LLM, текст >3x): 2 попытки без задержек
                 # - Другие ошибки: 3 попытки с задержками
 
                 max_attempts_empty = 3
                 max_attempts_no_changes = 2
+                max_attempts_too_long = 2
                 retry_delays = [0, 300, 600]  # секунды: 0, 5 мин, 10 мин
 
                 attempt = 0
                 empty_result_attempts = 0
                 no_changes_attempts = 0
+                too_long_attempts = 0
 
                 while True:
                     attempt += 1
@@ -706,6 +709,19 @@ def edit_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
                             with counter_lock:
                                 processed_count += 1
                             LogService.log_error(f"❌ [Novel:{novel_id}, Ch:{chapter.chapter_number}] API возвращает пустой результат после {max_attempts_empty} попыток. Глава ПРОПУЩЕНА.", novel_id=novel_id)
+                            return False
+
+                    except TextTooLongError as e:
+                        # Текст слишком длинный (галлюцинации LLM) - быстрый retry без задержек (макс 2 попытки)
+                        too_long_attempts += 1
+                        if too_long_attempts < max_attempts_too_long:
+                            LogService.log_warning(f"⚠️ [Novel:{novel_id}, Ch:{chapter.chapter_number}] {e}. Попытка {too_long_attempts}/{max_attempts_too_long}. Повтор сразу...", novel_id=novel_id)
+                            continue
+                        else:
+                            # Исчерпаны попытки для TextTooLongError - ПРОПУСКАЕМ
+                            with counter_lock:
+                                processed_count += 1
+                            LogService.log_error(f"❌ [Novel:{novel_id}, Ch:{chapter.chapter_number}] {e} после {max_attempts_too_long} попыток. Глава ПРОПУЩЕНА.", novel_id=novel_id)
                             return False
 
                     except Exception as e:

@@ -56,17 +56,43 @@ class RateLimitError(EditingError):
     pass
 
 
+class TextTooLongError(EditingError):
+    """Текст после редактуры слишком длинный (галлюцинации LLM) - требует retry"""
+    pass
+
+
 class OriginalAwareEditorService(GlossaryAwareEditorService):
     """
     Продвинутый сервис редактуры с использованием оригинального текста и глоссария.
     Обеспечивает максимальную точность перевода через постоянную сверку с оригиналом.
     """
 
+    # Константы для контроля галлюцинаций
+    MAX_TEXT_EXPANSION_RATIO = 3.0  # Максимальное расширение текста (3x от оригинала)
+    MAX_LENGTH_RETRIES = 2  # Максимум retry при превышении лимита длины
+
     def __init__(self, translator_service: TranslatorService):
         super().__init__(translator_service)
         self.translator = translator_service
         self.template_service = PromptTemplateService
         self.glossary_service = GlossaryService
+
+    def _check_text_length(self, result: str, original: str, stage_name: str, chapter_id: int) -> bool:
+        """
+        Проверка длины результата редактуры.
+        Возвращает True если длина в пределах нормы, False если текст слишком длинный.
+        """
+        if not result or not original:
+            return True
+
+        ratio = len(result) / len(original)
+        if ratio > self.MAX_TEXT_EXPANSION_RATIO:
+            LogService.log_warning(
+                f"⚠️ Этап {stage_name}: текст слишком длинный ({ratio:.1f}x > {self.MAX_TEXT_EXPANSION_RATIO}x)",
+                chapter_id=chapter_id
+            )
+            return False
+        return True
 
     def edit_chapter(self, chapter: Chapter) -> bool:
         """
@@ -512,9 +538,9 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
             LogService.log_error(f"Валидация: текст слишком короткий ({len(edited)} < {len(original) * 0.3})")
             return False
 
-        if len(edited) > len(original) * 3.0:  # Увеличил с 2.5 до 3.0
-            LogService.log_warning(f"Валидация: текст длинный ({len(edited)} > {len(original) * 3.0}), но допустимо")
-            # Не возвращаем False - это предупреждение, не ошибка
+        if len(edited) > len(original) * self.MAX_TEXT_EXPANSION_RATIO:
+            ratio = len(edited) / len(original)
+            raise TextTooLongError(f"Текст слишком длинный ({ratio:.1f}x > {self.MAX_TEXT_EXPANSION_RATIO}x)")
 
         # Проверка наличия ключевых терминов из глоссария
         missing_critical = []
