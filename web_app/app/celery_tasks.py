@@ -729,6 +729,7 @@ def edit_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
                         with counter_lock:
                             processed_count += 1
                         LogService.log_warning(f"⛔ [Novel:{novel_id}, Ch:{chapter.chapter_number}] {e}. Глава ПРОПУЩЕНА.", novel_id=novel_id)
+                        print(f"⛔ [Novel:{novel_id}, Ch:{chapter.chapter_number}] PROHIBITED_CONTENT - Глава ПРОПУЩЕНА")
                         return False
 
                     except Exception as e:
