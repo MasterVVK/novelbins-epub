@@ -34,6 +34,10 @@ class UniversalLLMTranslator:
     через AIAdapterService с ротацией ключей для Gemini
     """
 
+    # Глобальные переменные класса для сохранения состояния между экземплярами
+    _global_key_index = 0  # Последний работающий ключ
+    _global_failed_keys = set()  # Неработающие ключи
+
     def __init__(self, model: AIModel):
         """
         Инициализация переводчика
@@ -41,8 +45,9 @@ class UniversalLLMTranslator:
             model: Модель AI из базы данных
         """
         self.model = model
-        self.current_key_index = 0
-        self.failed_keys = set()
+        # Используем глобальный индекс ключа вместо сброса на 0
+        self.current_key_index = UniversalLLMTranslator._global_key_index
+        self.failed_keys = UniversalLLMTranslator._global_failed_keys
         self.full_cycles_without_success = 0
         self.last_finish_reason = None
         self.save_prompt_history = True
@@ -68,6 +73,8 @@ class UniversalLLMTranslator:
         """Переключение на следующий ключ (только для Gemini с ротацией)"""
         if self.model.provider == 'gemini' and self.model.api_keys and len(self.model.api_keys) > 1:
             self.current_key_index = (self.current_key_index + 1) % len(self.model.api_keys)
+            # Сохраняем глобально для следующих экземпляров
+            UniversalLLMTranslator._global_key_index = self.current_key_index
             logger.info(f"Переключение на ключ #{self.current_key_index + 1}")
 
     def mark_key_as_failed(self):
