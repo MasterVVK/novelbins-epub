@@ -702,10 +702,16 @@ class TranslationContext:
             status='translated'
         ).order_by(Chapter.chapter_number.desc()).limit(5).all()
         
+        # Минимальная длина текста для включения в контекст (фильтр заметок автора)
+        MIN_CHAPTER_LENGTH = 500
+
         for chapter in reversed(chapters):
             if chapter.current_translation and chapter.current_translation.summary:
+                # Пропускаем заметки автора (< 500 символов)
+                if not chapter.original_text or len(chapter.original_text) < MIN_CHAPTER_LENGTH:
+                    continue
                 self.previous_summaries.append({
-                    'chapter': chapter.chapter_number,
+                    'title': chapter.original_title,
                     'summary': chapter.current_translation.summary
                 })
         
@@ -798,7 +804,7 @@ class TranslationContext:
             lines.append("КОНТЕКСТ ПРЕДЫДУЩИХ ГЛАВ:")
             lines.append("=" * 50)
             for item in self.previous_summaries:
-                lines.append(f"\nГлава {item['chapter']}:")
+                lines.append(f"\n{item['title']}:")
                 lines.append(item['summary'])
             lines.append("\n" + "=" * 50 + "\n")
 
