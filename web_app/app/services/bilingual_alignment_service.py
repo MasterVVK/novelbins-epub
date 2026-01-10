@@ -424,6 +424,31 @@ class BilingualAlignmentService:
             logger.error(f"Шаблон промпта (первые 500 символов): {template.alignment_prompt[:500]}")
             raise
 
+    def _fix_json_errors(self, json_str: str) -> str:
+        """Исправление типичных ошибок JSON от LLM"""
+        import re
+
+        fixed = json_str
+
+        # 1. Пропущенные запятые между объектами: }{ → },{
+        fixed = re.sub(r'\}\s*\{', '},{', fixed)
+
+        # 2. Пропущенные запятые между строками: "value1" "value2" → "value1", "value2"
+        # (только если это не внутри одной строки)
+        fixed = re.sub(r'"\s*\n\s*"', '",\n"', fixed)
+
+        # 3. Пропущенные запятые после значений перед ключами: "value" "key": → "value", "key":
+        fixed = re.sub(r'"\s+"([a-zA-Z_])', r'", "\1', fixed)
+
+        # 4. Trailing commas перед закрывающими скобками: ,] → ]
+        fixed = re.sub(r',\s*\]', ']', fixed)
+        fixed = re.sub(r',\s*\}', '}', fixed)
+
+        # 5. Пропущенные запятые между элементами массива: }\n{ → },\n{
+        fixed = re.sub(r'\}\s*\n\s*\{', '},\n{', fixed)
+
+        return fixed
+
     def _parse_llm_response(self, response: str) -> Dict:
         """Парсинг JSON ответа от LLM с улучшенной обработкой ошибок"""
         import re
@@ -453,7 +478,18 @@ class BilingualAlignmentService:
         except json.JSONDecodeError as e:
             logger.warning(f"Прямой парсинг JSON не удался: {e}")
 
-            # Попытка 2: Ищем JSON блок через regex
+            # Попытка 2: Исправляем типичные ошибки JSON от LLM
+            fixed_response = self._fix_json_errors(response)
+            if fixed_response != response:
+                try:
+                    result = json.loads(fixed_response)
+                    if 'alignments' in result:
+                        logger.info(f"JSON успешно распарсен после исправления ошибок")
+                        return result
+                except json.JSONDecodeError:
+                    pass  # Продолжаем к следующей попытке
+
+            # Попытка 3: Ищем JSON блок через regex
             # Паттерн: ищем { ... "alignments": [ ... ] ... }
             json_pattern = r'\{[\s\S]*?"alignments"[\s\S]*?\][\s\S]*?\}'
             matches = re.findall(json_pattern, response)
@@ -472,6 +508,17 @@ class BilingualAlignmentService:
                     return result
 
                 except json.JSONDecodeError as e2:
+                    # Попытка исправить ошибки JSON в regex-извлечённом кандидате
+                    fixed_candidate = self._fix_json_errors(json_candidate)
+                    if fixed_candidate != json_candidate:
+                        try:
+                            result = json.loads(fixed_candidate)
+                            if 'alignments' in result:
+                                logger.info(f"JSON успешно распарсен после regex + исправления ошибок")
+                                return result
+                        except json.JSONDecodeError:
+                            pass
+
                     logger.error(f"Regex извлечение также не удалось: {e2}")
                     logger.error(f"Найденный кандидат JSON (первые 500 символов): {json_candidate[:500]}")
 
