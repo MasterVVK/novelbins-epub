@@ -196,11 +196,15 @@ class BilingualAlignmentService:
                     start_time = datetime.now()
 
                     # Вызываем асинхронный метод через asyncio.run()
+                    # Для alignment нужен увеличенный num_predict (×4, мин 50k),
+                    # т.к. выходной JSON содержит оба исходных текста
                     result = asyncio.run(ai_adapter.generate_content(
                         system_prompt=template.system_prompt if template.system_prompt else "",
                         user_prompt=prompt,
                         temperature=template.temperature,
-                        max_tokens=template.max_tokens
+                        max_tokens=template.max_tokens,
+                        expected_output_multiplier=4.0,
+                        min_output_tokens=50000
                     ))
 
                     duration = (datetime.now() - start_time).total_seconds()

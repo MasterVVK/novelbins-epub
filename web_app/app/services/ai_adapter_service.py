@@ -84,9 +84,16 @@ class AIAdapterService:
         return estimated_tokens
 
     async def generate_content(self, system_prompt: str, user_prompt: str,
-                              temperature: float = None, max_tokens: int = None) -> Dict:
+                              temperature: float = None, max_tokens: int = None,
+                              expected_output_multiplier: float = None,
+                              min_output_tokens: int = None) -> Dict:
         """
         Генерация контента через выбранную модель
+
+        Args:
+            expected_output_multiplier: Множитель для num_predict (для случаев когда выход содержит входные тексты, например alignment)
+            min_output_tokens: Минимальное количество токенов для генерации (для больших ответов)
+
         Returns:
             Dict с результатом: {'success': bool, 'content': str, 'error': str}
         """
@@ -101,7 +108,8 @@ class AIAdapterService:
             elif self.model.provider == 'anthropic':
                 return await self._call_anthropic(system_prompt, user_prompt, temperature, max_tokens)
             elif self.model.provider == 'ollama':
-                return await self._call_ollama(system_prompt, user_prompt, temperature, max_tokens)
+                return await self._call_ollama(system_prompt, user_prompt, temperature, max_tokens,
+                                               expected_output_multiplier, min_output_tokens)
             elif self.model.provider == 'openrouter':
                 return await self._call_openrouter(system_prompt, user_prompt, temperature, max_tokens)
             else:
@@ -281,7 +289,9 @@ class AIAdapterService:
                 }
 
     async def _call_ollama(self, system_prompt: str, user_prompt: str,
-                           temperature: float, max_tokens: int) -> Dict:
+                           temperature: float, max_tokens: int,
+                           expected_output_multiplier: float = None,
+                           min_output_tokens: int = None) -> Dict:
         """Вызов Ollama API с динамическим расчетом размера контекста на основе параметров модели"""
         # Увеличенный таймаут для Ollama (большие модели требуют времени на загрузку и обработку)
         try:
@@ -329,7 +339,15 @@ class AIAdapterService:
                 # num_predict = num_ctx × 2 (обычные модели)
                 # Для reasoning моделей: num_ctx × 6 (требуют больше токенов для внутреннего мышления)
                 # + минимум 80000 токенов чтобы thinking не съело весь бюджет
-                if hasattr(self.model, 'enable_thinking') and self.model.enable_thinking:
+                # Для alignment и других задач с большим выходом: используем переданный множитель
+                if expected_output_multiplier:
+                    # Явно переданный множитель (например, для alignment ×4)
+                    predict_multiplier = expected_output_multiplier
+                    min_predict = min_output_tokens or 0
+                    num_predict = max(int(num_ctx * predict_multiplier), min_predict)
+                    num_predict = min(num_predict, self.model.max_output_tokens)
+                    logger.info(f"  📤 Увеличенный выход: num_predict = max(num_ctx × {predict_multiplier}, {min_predict:,})")
+                elif hasattr(self.model, 'enable_thinking') and self.model.enable_thinking:
                     predict_multiplier = 6  # Reasoning модели (увеличено с 4 до 6)
                     min_predict_for_reasoning = 80000  # Минимум для reasoning моделей (увеличено с 40k)
                     num_predict = max(num_ctx * predict_multiplier, min_predict_for_reasoning)
@@ -412,11 +430,23 @@ class AIAdapterService:
                         logger.info(f"Ollama response received: {len(content)} chars, {data.get('eval_count', 0)} tokens")
                         logger.info(f"Finish reason: {finish_reason}, Done: {data.get('done')}")
 
-                        # Проверяем на обрезку
-                        if not data.get('done'):
+                        # Проверяем на обрезку и делаем retry при необходимости
+                        if not data.get('done') and content.strip():
                             logger.warning(f"⚠️ Ollama response was truncated! Done=False")
-                            logger.warning(f"Requested num_predict: {min(max_tokens, self.model.max_output_tokens)}")
+                            logger.warning(f"Requested num_predict: {current_num_predict:,}")
                             logger.warning(f"Actual tokens generated: {data.get('eval_count', 0)}")
+
+                            # Retry с увеличенным num_predict на 50%
+                            if thinking_retry < max_thinking_retries - 1:
+                                new_num_predict = int(current_num_predict * 1.5)
+                                new_num_predict = min(new_num_predict, self.model.max_output_tokens)
+
+                                if new_num_predict > current_num_predict:
+                                    logger.info(f"🔄 Truncation retry {thinking_retry + 2}/{max_thinking_retries}: увеличиваем num_predict {current_num_predict:,} → {new_num_predict:,} (+50%)")
+                                    current_num_predict = new_num_predict
+                                    continue  # Повторяем запрос
+                                else:
+                                    logger.warning(f"   Достигнут лимит модели ({self.model.max_output_tokens:,}), возвращаем обрезанный ответ")
 
                         # Очистка ответа от служебных токенов
                         import re
