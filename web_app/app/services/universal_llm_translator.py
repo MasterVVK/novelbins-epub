@@ -199,6 +199,16 @@ class UniversalLLMTranslator:
                         # Проблема с ключом
                         self.mark_key_as_failed()
                         self.switch_to_next_key()
+                    elif error_type == 'overloaded':
+                        # Модель перегружена - длительная пауза без смены ключа
+                        wait_time = 30 + (attempts * 15)  # 30, 45, 60... секунд
+                        LogService.log_warning(f"⚠️ Модель перегружена, ждём {wait_time} сек...")
+                        await asyncio.sleep(wait_time)
+                    elif error_type in ['service_unavailable', 'server_error']:
+                        # Временные серверные ошибки - средняя пауза
+                        wait_time = 15 + (attempts * 10)  # 15, 25, 35... секунд
+                        LogService.log_warning(f"⚠️ Серверная ошибка ({error_type}), ждём {wait_time} сек...")
+                        await asyncio.sleep(wait_time)
                     else:
                         # Другая ошибка - пробуем еще раз
                         LogService.log_error(f"Ошибка запроса: {error}")
@@ -442,6 +452,76 @@ class UniversalLLMTranslator:
 
                         # Кидаем исключение чтобы остановить всю задачу
                         raise RateLimitError(f"Часовой лимит не снят после ~60 минут ожидания")
+
+                    # Обработка overloaded для всех провайдеров
+                    if error_type == 'overloaded':
+                        LogService.log_warning(f"⚠️ Модель {self.model.model_id} перегружена")
+                        LogService.log_warning(f"   Текст ошибки: {error}")
+
+                        # Прогрессивные интервалы: 30 сек, 1 мин, 2 мин, 5 мин
+                        retry_delays = [
+                            (30, "30 секунд"),
+                            (60, "1 минуту"),
+                            (120, "2 минуты"),
+                            (300, "5 минут")
+                        ]
+
+                        for attempt, (delay_seconds, delay_text) in enumerate(retry_delays, 1):
+                            LogService.log_warning(f"⏳ Попытка {attempt}/{len(retry_delays)}: Ожидание {delay_text} перед повторным запросом...")
+                            await asyncio.sleep(delay_seconds)
+
+                            adapter = AIAdapterService(model_id=self.model.id, chapter_id=self.current_chapter_id)
+                            retry_result = await adapter.generate_content(system_prompt, user_prompt, temperature, max_tokens)
+
+                            if retry_result['success']:
+                                LogService.log_info(f"✅ Успешно после {attempt} попыток ожидания")
+                                self.last_finish_reason = retry_result.get('finish_reason', 'unknown')
+
+                                if self.save_prompt_history and self.current_chapter_id:
+                                    self._save_prompt_history(system_prompt, user_prompt, retry_result['content'], retry_result, True)
+
+                                return retry_result['content']
+                            else:
+                                retry_error_type = retry_result.get('error_type', 'general')
+                                retry_error = retry_result.get('error', 'Неизвестная ошибка')
+                                LogService.log_warning(f"⚠️ Попытка {attempt} неудачна: {retry_error} (тип: {retry_error_type})")
+
+                                if retry_error_type != 'overloaded':
+                                    LogService.log_error(f"❌ Тип ошибки изменился на {retry_error_type}, прерываем повторы")
+                                    if self.save_prompt_history and self.current_chapter_id:
+                                        self._save_prompt_history(system_prompt, user_prompt, None, retry_result, False, retry_error)
+                                    return None
+
+                        LogService.log_error(f"❌ Все {len(retry_delays)} попыток исчерпаны, модель всё ещё перегружена")
+                        if self.save_prompt_history and self.current_chapter_id:
+                            self._save_prompt_history(system_prompt, user_prompt, None, result, False, f"Модель перегружена после {len(retry_delays)} попыток")
+                        return None
+
+                    # Обработка service_unavailable и server_error для не-Ollama провайдеров
+                    if error_type in ['service_unavailable', 'server_error']:
+                        LogService.log_warning(f"⚠️ Серверная ошибка ({error_type}) для модели {self.model.model_id}")
+
+                        retry_delays = [(15, "15 секунд"), (30, "30 секунд"), (60, "1 минуту")]
+
+                        for attempt, (delay_seconds, delay_text) in enumerate(retry_delays, 1):
+                            LogService.log_warning(f"⏳ Попытка {attempt}/{len(retry_delays)}: Ожидание {delay_text}...")
+                            await asyncio.sleep(delay_seconds)
+
+                            adapter = AIAdapterService(model_id=self.model.id, chapter_id=self.current_chapter_id)
+                            retry_result = await adapter.generate_content(system_prompt, user_prompt, temperature, max_tokens)
+
+                            if retry_result['success']:
+                                LogService.log_info(f"✅ Успешно после {attempt} попыток")
+                                self.last_finish_reason = retry_result.get('finish_reason', 'unknown')
+                                if self.save_prompt_history and self.current_chapter_id:
+                                    self._save_prompt_history(system_prompt, user_prompt, retry_result['content'], retry_result, True)
+                                return retry_result['content']
+
+                        LogService.log_error(f"❌ Все попытки исчерпаны")
+                        if self.save_prompt_history and self.current_chapter_id:
+                            self._save_prompt_history(system_prompt, user_prompt, None, result, False, error)
+                        return None
+
                     else:
                         # Для других типов ошибок сохраняем и возвращаем None
                         if self.save_prompt_history and self.current_chapter_id:

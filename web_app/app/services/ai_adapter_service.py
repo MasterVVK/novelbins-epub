@@ -185,12 +185,28 @@ class AIAdapterService:
                     return {'success': False, 'error': 'Нет кандидатов в ответе'}
 
             elif response.status_code == 429:
-                return {'success': False, 'error': 'Rate limit превышен', 'retry_after': 60}
+                return {'success': False, 'error': 'Rate limit превышен', 'retry_after': 60, 'error_type': 'rate_limit'}
             else:
                 error_data = response.json()
+                error_message = error_data.get('error', {}).get('message', f'HTTP {response.status_code}')
+
+                # Определяем тип ошибки
+                error_type = 'general'
+                error_lower = error_message.lower()
+
+                if 'overloaded' in error_lower or 'overload' in error_lower:
+                    error_type = 'overloaded'
+                    logger.warning(f"⚠️ Gemini модель перегружена, нужна длительная пауза")
+                elif response.status_code == 503:
+                    error_type = 'service_unavailable'
+                elif response.status_code == 500:
+                    error_type = 'server_error'
+
                 return {
                     'success': False,
-                    'error': error_data.get('error', {}).get('message', f'HTTP {response.status_code}')
+                    'error': error_message,
+                    'error_type': error_type,
+                    'status_code': response.status_code
                 }
 
     async def _call_openai(self, system_prompt: str, user_prompt: str,
