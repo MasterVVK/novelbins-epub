@@ -1414,7 +1414,8 @@ class TranslatorService:
                 # Используем исходный китайский текст для извлечения терминов и фильтрации глоссария
                 new_terms = self.extract_new_terms(chapter.original_text, prompt_template.terms_extraction_prompt, context.glossary, chapter.id, chapter.original_text)
                 if new_terms:
-                    LogService.log_info(f"Найдено {len(new_terms)} новых терминов", 
+                    total_terms = sum(len(terms) for terms in new_terms.values())
+                    LogService.log_info(f"Найдено {total_terms} новых терминов",
                                       novel_id=chapter.novel_id, chapter_id=chapter.id)
                     self.save_new_terms(new_terms, chapter.novel_id, chapter.chapter_number)
                 else:
