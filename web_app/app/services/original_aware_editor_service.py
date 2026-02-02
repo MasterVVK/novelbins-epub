@@ -73,7 +73,7 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
     """
 
     # Константы для контроля галлюцинаций
-    MAX_TEXT_EXPANSION_RATIO = 4.0  # Максимальное расширение текста (4x от оригинала)
+    MAX_TEXT_EXPANSION_RATIO = 6.0  # Максимальное расширение текста (6x от оригинала)
     MAX_LENGTH_RETRIES = 2  # Максимум retry при превышении лимита длины
 
     def __init__(self, translator_service: TranslatorService):
