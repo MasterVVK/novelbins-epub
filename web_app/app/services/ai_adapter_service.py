@@ -366,12 +366,14 @@ class AIAdapterService:
                 elif hasattr(self.model, 'enable_thinking') and self.model.enable_thinking:
                     predict_multiplier = 6  # Reasoning модели (увеличено с 4 до 6)
                     min_predict_for_reasoning = 80000  # Минимум для reasoning моделей (увеличено с 40k)
+                    logger.info(f"  ✅ enable_thinking=True для {self.model.model_id}")
                     num_predict = max(num_ctx * predict_multiplier, min_predict_for_reasoning)
                     num_predict = min(num_predict, self.model.max_output_tokens)
                     logger.info(f"  🧠 Reasoning модель: num_predict = max(num_ctx × {predict_multiplier}, {min_predict_for_reasoning:,})")
                 else:
                     predict_multiplier = 2  # Обычные модели
                     num_predict = min(num_ctx * predict_multiplier, self.model.max_output_tokens)
+                    logger.info(f"  ⚠️ enable_thinking=False для {self.model.model_id} (hasattr={hasattr(self.model, 'enable_thinking')}, value={getattr(self.model, 'enable_thinking', None)})")
 
                 # Логируем упрощенную логику расчета
                 logger.info(f"Ollama: Расчет контекста для {self.model.name}:")
