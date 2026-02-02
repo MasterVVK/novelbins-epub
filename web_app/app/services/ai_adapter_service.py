@@ -402,6 +402,10 @@ class AIAdapterService:
                 current_num_predict = num_predict
 
                 for thinking_retry in range(max_thinking_retries):
+                    # Логируем текущее значение num_predict на каждой попытке
+                    if thinking_retry > 0:
+                        logger.info(f"🔄 Попытка {thinking_retry + 1}/{max_thinking_retries}: current_num_predict = {current_num_predict:,}")
+
                     # Подготавливаем JSON для запроса
                     request_json = {
                         'model': self.model.model_id,
