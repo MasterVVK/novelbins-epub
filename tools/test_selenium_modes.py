@@ -94,7 +94,17 @@ def test_undetected_headless():
     options.add_argument('--disable-gpu')
     options.add_argument('--window-size=1920,1080')
 
-    driver = uc.Chrome(options=options)
+    # Определяем мажорную версию Chrome для точного совпадения с драйвером
+    import subprocess
+    version_main = None
+    try:
+        chrome_path = uc.find_chrome_executable()
+        result = subprocess.run([chrome_path, '--version'], capture_output=True, text=True, timeout=5)
+        version_main = int(result.stdout.strip().split()[-1].split('.')[0])
+    except Exception:
+        pass
+
+    driver = uc.Chrome(options=options, version_main=version_main)
     driver.set_page_load_timeout(60)
 
     try:
@@ -164,7 +174,17 @@ def test_undetected_xvfb():
     options.add_argument('--window-size=1920,1080')
     options.add_argument('--start-maximized')
 
-    driver = uc.Chrome(options=options)
+    # Определяем мажорную версию Chrome для точного совпадения с драйвером
+    import subprocess
+    version_main = None
+    try:
+        chrome_path = uc.find_chrome_executable()
+        result = subprocess.run([chrome_path, '--version'], capture_output=True, text=True, timeout=5)
+        version_main = int(result.stdout.strip().split()[-1].split('.')[0])
+    except Exception:
+        pass
+
+    driver = uc.Chrome(options=options, version_main=version_main)
     driver.set_page_load_timeout(60)
 
     try:

@@ -62,12 +62,25 @@ def run_once(args, headless: bool) -> str:
                 opts.add_argument(f"--proxy-server=socks5://{proxy_url}")
             return opts
 
+        # Определяем мажорную версию Chrome для точного совпадения с драйвером
+        import subprocess
+        version_main = None
+        try:
+            chrome_path = uc.find_chrome_executable()
+            result = subprocess.run(
+                [chrome_path, '--version'],
+                capture_output=True, text=True, timeout=5
+            )
+            version_main = int(result.stdout.strip().split()[-1].split('.')[0])
+        except Exception:
+            pass
+
         # Две попытки с новыми options
         last_err = None
         for idx in range(2):
             try:
                 opts = build_options()
-                self.driver = uc.Chrome(options=opts)
+                self.driver = uc.Chrome(options=opts, version_main=version_main)
                 break
             except Exception as e:  # noqa: BLE001
                 last_err = e
