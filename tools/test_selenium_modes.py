@@ -100,7 +100,9 @@ def test_undetected_headless():
     try:
         chrome_path = uc.find_chrome_executable()
         result = subprocess.run([chrome_path, '--version'], capture_output=True, text=True, timeout=5)
-        version_main = int(result.stdout.strip().split()[-1].split('.')[0])
+        import re as _re
+        version_match = _re.search(r'(\d+)\.', result.stdout)
+        version_main = int(version_match.group(1)) if version_match else None
     except Exception:
         pass
 
@@ -180,7 +182,9 @@ def test_undetected_xvfb():
     try:
         chrome_path = uc.find_chrome_executable()
         result = subprocess.run([chrome_path, '--version'], capture_output=True, text=True, timeout=5)
-        version_main = int(result.stdout.strip().split()[-1].split('.')[0])
+        import re as _re
+        version_match = _re.search(r'(\d+)\.', result.stdout)
+        version_main = int(version_match.group(1)) if version_match else None
     except Exception:
         pass
 

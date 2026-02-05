@@ -283,6 +283,7 @@ class CZBooksParser(BaseParser):
             # Это решает проблему Permission denied на /usr/bin/chromedriver
             try:
                 # Определяем мажорную версию Chrome для точного совпадения с драйвером
+                # Вывод может быть: "Chromium 144.0.7559.109 snap" или "Google Chrome 144.0.7559.109"
                 import subprocess
                 version_main = None
                 try:
@@ -291,7 +292,9 @@ class CZBooksParser(BaseParser):
                         [chrome_path, '--version'],
                         capture_output=True, text=True, timeout=5
                     )
-                    version_main = int(result.stdout.strip().split()[-1].split('.')[0])
+                    version_match = re.search(r'(\d+)\.', result.stdout)
+                    if version_match:
+                        version_main = int(version_match.group(1))
                     print(f"   🔍 Определена версия Chrome: {version_main}")
                 except Exception as ve:
                     print(f"   ⚠️ Не удалось определить версию Chrome: {ve}")

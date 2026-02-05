@@ -71,7 +71,9 @@ def run_once(args, headless: bool) -> str:
                 [chrome_path, '--version'],
                 capture_output=True, text=True, timeout=5
             )
-            version_main = int(result.stdout.strip().split()[-1].split('.')[0])
+            import re as _re
+            version_match = _re.search(r'(\d+)\.', result.stdout)
+            version_main = int(version_match.group(1)) if version_match else None
         except Exception:
             pass
 
