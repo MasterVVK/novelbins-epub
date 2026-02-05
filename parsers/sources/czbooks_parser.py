@@ -282,8 +282,21 @@ class CZBooksParser(BaseParser):
             # НЕ указываем явные пути - пусть uc управляет своей копией драйвера
             # Это решает проблему Permission denied на /usr/bin/chromedriver
             try:
-                # Не указываем version_main - пусть uc автоматически определит версию Chrome
-                self.driver = uc.Chrome(options=options)
+                # Определяем мажорную версию Chrome для точного совпадения с драйвером
+                import subprocess
+                version_main = None
+                try:
+                    chrome_path = uc.find_chrome_executable()
+                    result = subprocess.run(
+                        [chrome_path, '--version'],
+                        capture_output=True, text=True, timeout=5
+                    )
+                    version_main = int(result.stdout.strip().split()[-1].split('.')[0])
+                    print(f"   🔍 Определена версия Chrome: {version_main}")
+                except Exception as ve:
+                    print(f"   ⚠️ Не удалось определить версию Chrome: {ve}")
+
+                self.driver = uc.Chrome(options=options, version_main=version_main)
                 print("   ✅ undetected-chromedriver инициализирован")
             except Exception as e:
                 print(f"   ❌ Не удалось инициализировать undetected-chromedriver: {e}")
