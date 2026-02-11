@@ -599,6 +599,9 @@ class AIAdapterService:
                     elif 'unmarshal' in error_detail_lower or 'unexpected end of json' in error_detail_lower or response.status_code == 500:
                         error_type = 'server_error'
                         logger.error(f"⚠️ Обнаружена внутренняя ошибка сервера (невалидный JSON или прерванный ответ)")
+                    elif 'concurrent request slot' in error_detail_lower or (response.status_code == 429 and 'timed out' in error_detail_lower):
+                        error_type = 'concurrent_slot'
+                        logger.error(f"⚠️ Все параллельные слоты Ollama заняты - нужно дождаться завершения текущего запроса")
                     elif 'not found' in error_detail_lower:
                         error_type = 'model_not_found'
 

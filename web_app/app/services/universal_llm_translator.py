@@ -282,8 +282,8 @@ class UniversalLLMTranslator:
                         # Кидаем исключение чтобы остановить всю задачу
                         raise RateLimitError(f"Достигнут {limit_type} лимит: {error}")
 
-                    # Специальная обработка для Ollama server error (500), upstream error (502), service unavailable (503), upstream timeout (504), timeout и unexpected error с короткими повторами
-                    if self.model.provider == 'ollama' and error_type in ['upstream_error', 'upstream_timeout', 'server_error', 'service_unavailable', 'timeout', 'unexpected']:
+                    # Специальная обработка для Ollama server error (500), upstream error (502), service unavailable (503), upstream timeout (504), timeout, unexpected error и concurrent_slot (429) с короткими повторами
+                    if self.model.provider == 'ollama' and error_type in ['upstream_error', 'upstream_timeout', 'server_error', 'service_unavailable', 'timeout', 'unexpected', 'concurrent_slot']:
                         if error_type == 'server_error':
                             error_name = 'внутренняя ошибка сервера (500)'
                         elif error_type == 'service_unavailable':
@@ -294,6 +294,8 @@ class UniversalLLMTranslator:
                             error_name = 'таймаут клиента (>20 минут)'
                         elif error_type == 'unexpected':
                             error_name = 'неожиданная ошибка сети (RemoteProtocolError и др.)'
+                        elif error_type == 'concurrent_slot':
+                            error_name = 'слоты Ollama заняты (429 concurrent request slot)'
                         else:
                             error_name = 'upstream error (502)'
 
@@ -351,8 +353,8 @@ class UniversalLLMTranslator:
                                 LogService.log_warning(f"   Тип ошибки: {retry_error_type}")
                                 LogService.log_warning(f"   Текст ошибки: {retry_error}")
 
-                                # Если это всё ещё server/upstream error/service_unavailable/timeout/unexpected, продолжаем повторы
-                                if retry_error_type in ['upstream_error', 'upstream_timeout', 'server_error', 'service_unavailable', 'timeout', 'unexpected']:
+                                # Если это всё ещё server/upstream error/service_unavailable/timeout/unexpected/concurrent_slot, продолжаем повторы
+                                if retry_error_type in ['upstream_error', 'upstream_timeout', 'server_error', 'service_unavailable', 'timeout', 'unexpected', 'concurrent_slot']:
                                     LogService.log_warning(f"   → Продолжаем повторы ({retry_error_type})")
                                     continue
                                 else:
