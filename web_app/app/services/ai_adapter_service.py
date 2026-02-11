@@ -375,11 +375,22 @@ class AIAdapterService:
                     num_predict = min(num_ctx * predict_multiplier, self.model.max_output_tokens)
                     logger.info(f"  ⚠️ enable_thinking=False для {self.model.model_id} (hasattr={hasattr(self.model, 'enable_thinking')}, value={getattr(self.model, 'enable_thinking', None)})")
 
+                # Для thinking/reasoning моделей: расширяем num_ctx чтобы вместить промпт + thinking + ответ
+                # num_ctx в Ollama — общее контекстное окно (вход + выход), поэтому для reasoning моделей
+                # оно должно покрывать prompt_length + num_predict
+                if hasattr(self.model, 'enable_thinking') and self.model.enable_thinking:
+                    thinking_num_ctx = prompt_length + num_predict
+                    if thinking_num_ctx <= model_max_context:
+                        num_ctx = thinking_num_ctx
+                    else:
+                        num_ctx = model_max_context
+                    logger.info(f"  🧠 Reasoning: num_ctx расширен до prompt + num_predict = {num_ctx:,}")
+
                 # Логируем упрощенную логику расчета
                 logger.info(f"Ollama: Расчет контекста для {self.model.name}:")
                 logger.info(f"  📝 Размер промпта: ~{prompt_length:,} токенов")
-                logger.info(f"  📏 num_ctx (промпт + 20%): {num_ctx:,} токенов")
-                logger.info(f"  🔧 num_predict: {num_predict:,} токенов (num_ctx × {predict_multiplier})")
+                logger.info(f"  📏 num_ctx: {num_ctx:,} токенов")
+                logger.info(f"  🔧 num_predict: {num_predict:,} токенов")
                 logger.info(f"  📊 Лимиты модели: max_input={model_max_context:,}, max_output={self.model.max_output_tokens:,}")
 
                 # Логируем параметры запроса
