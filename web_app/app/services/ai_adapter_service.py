@@ -413,11 +413,12 @@ class AIAdapterService:
                 # Retry loop для случаев когда thinking съедает все токены
                 max_thinking_retries = 3
                 current_num_predict = num_predict
+                current_num_ctx = num_ctx
 
                 for thinking_retry in range(max_thinking_retries):
                     # Логируем текущее значение num_predict на каждой попытке
                     if thinking_retry > 0:
-                        logger.info(f"🔄 Попытка {thinking_retry + 1}/{max_thinking_retries}: current_num_predict = {current_num_predict:,}")
+                        logger.info(f"🔄 Попытка {thinking_retry + 1}/{max_thinking_retries}: current_num_predict = {current_num_predict:,}, current_num_ctx = {current_num_ctx:,}")
 
                     # Подготавливаем JSON для запроса
                     request_json = {
@@ -427,8 +428,8 @@ class AIAdapterService:
                         'options': {
                             'temperature': temperature,
                             'num_predict': current_num_predict,      # Максимальный размер генерации
-                            'num_ctx': num_ctx,              # Размер контекста = промпт + 20%
-                            'num_keep': num_ctx              # Сколько токенов сохранять
+                            'num_ctx': current_num_ctx,              # Размер контекста (обновляется при retry)
+                            'num_keep': current_num_ctx              # Сколько токенов сохранять
                         }
                     }
 
@@ -477,6 +478,11 @@ class AIAdapterService:
                                 if new_num_predict > current_num_predict:
                                     logger.info(f"🔄 Truncation retry {thinking_retry + 2}/{max_thinking_retries}: увеличиваем num_predict {current_num_predict:,} → {new_num_predict:,} (+50%)")
                                     current_num_predict = new_num_predict
+                                    # Пересчитываем num_ctx для thinking моделей
+                                    if hasattr(self.model, 'enable_thinking') and self.model.enable_thinking:
+                                        new_num_ctx = prompt_length + current_num_predict
+                                        current_num_ctx = min(new_num_ctx, model_max_context)
+                                        logger.info(f"🔄 num_ctx обновлён → {current_num_ctx:,}")
                                     continue  # Повторяем запрос
                                 else:
                                     logger.warning(f"   Достигнут лимит модели ({self.model.max_output_tokens:,}), возвращаем обрезанный ответ")
@@ -504,15 +510,20 @@ class AIAdapterService:
                             logger.warning(f"   Thinking: {thinking_len} символов")
                             logger.warning(f"   num_predict было: {current_num_predict:,}")
 
-                            # Retry с увеличенным num_predict на 20%
+                            # Retry с увеличенным num_predict на 50% и пересчётом num_ctx
                             if thinking_retry < max_thinking_retries - 1:
-                                new_num_predict = int(current_num_predict * 1.2)
+                                new_num_predict = int(current_num_predict * 1.5)
                                 # Ограничиваем максимальным значением модели
                                 new_num_predict = min(new_num_predict, self.model.max_output_tokens)
 
                                 if new_num_predict > current_num_predict:
-                                    logger.info(f"🔄 Retry {thinking_retry + 2}/{max_thinking_retries}: увеличиваем num_predict {current_num_predict:,} → {new_num_predict:,} (+20%)")
+                                    logger.info(f"🔄 Retry {thinking_retry + 2}/{max_thinking_retries}: увеличиваем num_predict {current_num_predict:,} → {new_num_predict:,} (+50%)")
                                     current_num_predict = new_num_predict
+                                    # Пересчитываем num_ctx — ключевое исправление!
+                                    # num_ctx в Ollama = общее окно (промпт + thinking + ответ)
+                                    new_num_ctx = prompt_length + current_num_predict
+                                    current_num_ctx = min(new_num_ctx, model_max_context)
+                                    logger.info(f"🔄 num_ctx обновлён → {current_num_ctx:,}")
                                     continue  # Повторяем запрос
                                 else:
                                     logger.warning(f"   Достигнут лимит модели ({self.model.max_output_tokens:,}), retry невозможен")
