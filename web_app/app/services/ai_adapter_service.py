@@ -445,7 +445,24 @@ class AIAdapterService:
                         json=request_json
                     )
 
-                    if response.status_code != 200:
+                    if response.status_code == 400:
+                        # Проверяем ошибку превышения max_output_tokens модели
+                        try:
+                            error_data = response.json()
+                            error_msg = error_data.get('error', '')
+                            import re as _re
+                            match = _re.search(r"exceeds model's maximum output tokens \((\d+)\)", error_msg)
+                            if match and thinking_retry < max_thinking_retries - 1:
+                                model_real_limit = int(match.group(1))
+                                logger.warning(f"⚠️ Ollama: реальный лимит модели = {model_real_limit:,}, уменьшаем num_predict {current_num_predict:,} → {model_real_limit:,}")
+                                current_num_predict = model_real_limit
+                                current_num_ctx = prompt_length + current_num_predict
+                                current_num_ctx = min(current_num_ctx, model_max_context)
+                                continue  # Повторяем с корректным лимитом
+                        except Exception:
+                            pass
+                        break  # Другая 400 ошибка — выходим
+                    elif response.status_code != 200:
                         break  # Выходим из retry loop, обработаем ошибку ниже
                     try:
                         data = response.json()
