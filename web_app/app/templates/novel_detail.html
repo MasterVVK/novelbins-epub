@@ -157,11 +157,19 @@
                         {% endif %}
                     </div>
                     <div class="col-md-3 mb-2">
+                        {% if novel.translation_task_id %}
+                        <!-- Кнопка отмены перевода -->
+                        <button type="button" onclick="cancelTranslation({{ novel.id }})" class="btn btn-outline-danger w-100">
+                            <i class="bi bi-x-circle"></i> Отменить перевод
+                        </button>
+                        {% else %}
+                        <!-- Кнопка запуска перевода -->
                         <form method="POST" action="{{ url_for('main.start_translation', novel_id=novel.id) }}" style="display: inline;">
                             <button type="submit" class="btn btn-outline-success w-100">
                                 <i class="bi bi-translate"></i> Перевод
                             </button>
                         </form>
+                        {% endif %}
                     </div>
                     <div class="col-md-3 mb-2">
                         {% if novel.editing_task_id %}
@@ -746,6 +754,33 @@ async function cancelEditing(novelId) {
     }
 }
 
+// Отмена перевода
+async function cancelTranslation(novelId) {
+    if (!confirm('Вы уверены, что хотите отменить перевод? Текущий прогресс будет сохранён, но незавершённые главы не будут переведены.')) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/novels/${novelId}/translate/cancel`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            alert('✅ Перевод успешно отменён');
+            location.reload();
+        } else {
+            alert('❌ Ошибка: ' + (data.error || 'Неизвестная ошибка'));
+        }
+    } catch (error) {
+        alert('❌ Ошибка при отмене перевода: ' + error.message);
+    }
+}
+
 async function cancelAlignment(novelId) {
     if (!confirm('Вы уверены, что хотите отменить сопоставление? Текущий прогресс будет сохранён, но незавершённые главы не будут сопоставлены.')) {
         return;
@@ -1053,6 +1088,9 @@ function updateActionButtons(novelId, tasks) {
     // Парсинг
     updateTaskButton('parsing', tasks.parsing, novelId, 'парсинг', 'Парсинг', 'download');
 
+    // Перевод
+    updateTaskButton('translation', tasks.translation, novelId, 'перевод', 'Перевод', 'translate');
+
     // Редактура
     updateTaskButton('editing', tasks.editing, novelId, 'редактуру', 'Редактура', 'pencil-square');
 
@@ -1066,6 +1104,7 @@ function updateActionButtons(novelId, tasks) {
 function updateTaskButton(taskType, taskId, novelId, cancelText, buttonText, iconName) {
     const cancelFunctions = {
         'parsing': 'cancelParsing',
+        'translation': 'cancelTranslation',
         'editing': 'cancelEditing',
         'alignment': 'cancelAlignment'
     };
@@ -1094,12 +1133,14 @@ function updateTaskButton(taskType, taskId, novelId, cancelText, buttonText, ico
         // Если задачи нет - показываем кнопку запуска
         const routes = {
             'parsing': `/novels/${novelId}/parse`,
+            'translation': `/novels/${novelId}/translate`,
             'editing': `/novels/${novelId}/edit`,
             'alignment': `/novels/${novelId}/alignment`
         };
 
         const colors = {
             'parsing': 'primary',
+            'translation': 'success',
             'editing': 'warning',
             'alignment': 'info'
         };
@@ -1225,7 +1266,7 @@ function stopPolling() {
 // Автоматически запускаем polling при загрузке страницы если есть активные задачи
 document.addEventListener('DOMContentLoaded', function() {
     const novelId = {{ novel.id }};
-    const hasActiveTasks = {{ 'true' if (novel.parsing_task_id or novel.editing_task_id or novel.alignment_task_id or novel.epub_generation_task_id) else 'false' }};
+    const hasActiveTasks = {{ 'true' if (novel.parsing_task_id or novel.translation_task_id or novel.editing_task_id or novel.alignment_task_id or novel.epub_generation_task_id) else 'false' }};
 
     if (hasActiveTasks) {
         console.log('✅ Обнаружены активные задачи, запускаем polling');
