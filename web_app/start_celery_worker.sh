@@ -106,10 +106,14 @@ echo -e "📊 ${YELLOW}Параметры запуска:${NC}"
 echo "  • Виртуальный дисплей: $XVFB_DISPLAY"
 echo "  • Разрешение: $XVFB_RESOLUTION"
 echo "  • Redis: localhost:6379/1 (dedicated database)"
-echo "  • Queue: czbooks_queue (dedicated queue)"
+echo "  • Queue: czbooks_queue (только парсинг)"
 echo "  • Concurrency: 1 worker (для czbooks.net)"
+echo "  • Pool: solo (для Selenium)"
 echo "  • Loglevel: INFO"
 echo "  • VNC веб-доступ: http://localhost:6080/vnc.html"
+echo
+echo -e "${YELLOW}💡 LLM задачи (перевод, редактура, сопоставление, EPUB) запускаются отдельно:${NC}"
+echo -e "${YELLOW}   ./start_llm_worker.sh${NC}"
 echo
 
 # Запуск Celery worker через Xvfb
