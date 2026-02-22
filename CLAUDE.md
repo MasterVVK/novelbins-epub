@@ -102,8 +102,10 @@ redis-cli ping                           # Проверка Redis
 ### Background Task Queue
 
 Celery с Redis (`web_app/app/celery_tasks.py`):
-- **Очередь**: `czbooks_queue` для всех задач
-- **Worker**: `--concurrency=1 --pool=solo` (ограничения Selenium)
+- **Два worker'а:**
+  - Parsing worker (`start_celery_worker.sh`): `--pool=solo --concurrency=1 --queues=czbooks_queue` (Selenium + Xvfb)
+  - LLM worker (`start_llm_worker.sh`): `--pool=prefork --concurrency=4 --queues=llm_queue` (перевод, редактура, сопоставление, EPUB)
+- **Per-novel блокировка**: `get_active_task_for_novel()` — только 1 задача на новеллу, разные новеллы параллельно
 - **БД**: PostgreSQL 18.0 (MVCC, без блокировок)
 
 **Задачи**:
