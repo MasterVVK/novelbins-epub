@@ -713,11 +713,26 @@ def start_parsing(novel_id):
 
 @main_bp.route('/novels/<int:novel_id>/translate', methods=['POST'])
 def start_translation(novel_id):
-    """Запуск перевода новеллы"""
-    print(f"🚀 Запрос на перевод новеллы {novel_id}")
-    
+    """Запуск перевода новеллы через Celery"""
+    logger.info(f"🚀 Запрос на перевод новеллы {novel_id}")
     novel = Novel.query.get_or_404(novel_id)
-    print(f"📖 Найдена новелла: {novel.title}")
+    logger.info(f"📖 Найдена новелла: {novel.title}")
+
+    # IDEMPOTENCY CHECK: Проверяем, не запущен ли уже перевод
+    if novel.translation_task_id:
+        from celery.result import AsyncResult
+        from app import celery
+
+        task_result = AsyncResult(novel.translation_task_id, app=celery)
+
+        if task_result.state in ['PENDING', 'STARTED', 'PROGRESS']:
+            logger.warning(f"⚠️ Перевод уже запущен (task_id: {novel.translation_task_id}, state: {task_result.state})")
+            flash(f'Перевод уже запущен (задача: {novel.translation_task_id[:8]}...)', 'warning')
+            return redirect(url_for('main.novel_detail', novel_id=novel_id))
+        else:
+            logger.info(f"✅ Предыдущая задача завершена (state: {task_result.state}), запускаем новую")
+            novel.translation_task_id = None
+            db.session.commit()
 
     # Проверяем наличие шаблона промпта
     prompt_template = novel.get_prompt_template()
@@ -726,111 +741,48 @@ def start_translation(novel_id):
         return redirect(url_for('main.novel_detail', novel_id=novel_id))
 
     # Получаем главы для перевода
-    # Изменяем логику: переводим все главы, которые НЕ имеют статус 'translated'
     chapters = Chapter.query.filter(
         Chapter.novel_id == novel_id,
         Chapter.status == 'parsed',
-        Chapter.id.isnot(None)
     ).order_by(Chapter.chapter_number).all()
 
-    # Отладочная информация
-    print(f"🔍 Найдено глав для перевода: {len(chapters)}")
+    logger.info(f"🔍 Найдено глав для перевода: {len(chapters)}")
     for ch in chapters:
-        print(f"  - Глава {ch.chapter_number}: {ch.original_title} (статус: {ch.status})")
+        logger.info(f"  - Глава {ch.chapter_number}: {ch.original_title} (статус: {ch.status})")
 
     if not chapters:
         flash('Нет глав для перевода', 'warning')
         return redirect(url_for('main.novel_detail', novel_id=novel_id))
 
-    # Создаем задачу перевода
-    task = Task(
-        novel_id=novel_id,
-        task_type='translate',
-        priority=2,
-        status='running',
-        progress=0
-    )
-    db.session.add(task)
-    db.session.commit()
+    # Запускаем Celery задачу перевода
+    try:
+        from app.celery_tasks import translate_novel_chapters_task
+        from app import celery
 
-    # Запускаем перевод в отдельном потоке
-    task_id = task.id
-    prompt_template_id = prompt_template.id
-    chapter_ids = [ch.id for ch in chapters]
-    def translate_novel():
-        # Создаем контекст приложения для фонового потока
-        app = create_app()
-        with app.app_context():
-            try:
-                from app.services.translator_service import TranslatorService
-                
-                # Получаем свежие копии объектов из базы данных
-                task = Task.query.get(task_id)
-                novel = Novel.query.get(novel_id)
-                prompt_template = PromptTemplate.query.get(prompt_template_id)
-                chapters = [Chapter.query.get(cid) for cid in chapter_ids]
-                
-                if not task or not novel or not prompt_template:
-                    print("❌ Не удалось получить объекты из базы данных")
-                    return
-                
-                # Создаем конфигурацию из настроек новеллы
-                config = {}
-                if novel.config:
-                    config['model_name'] = novel.config.get('translation_model')
-                    config['temperature'] = novel.config.get('translation_temperature')
-                    print(f"🔍 Конфигурация новеллы: model={config.get('model_name')}, temp={config.get('temperature')}")
-                translator = TranslatorService(config=config)
-                total_chapters = len(chapters)
-                print(f"🔄 Начинаем перевод {total_chapters} глав")
-                
-                for i, chapter in enumerate(chapters):
-                    try:
-                        print(f"📝 Переводим главу {i+1}/{total_chapters}: {chapter.chapter_number}")
-                        # Получаем свежую копию главы из базы данных
-                        chapter = Chapter.query.get(chapter.id)
-                        if not chapter:
-                            print(f"❌ Глава {i+1} не найдена в базе данных")
-                            return
-                        
-                        # Обновляем прогресс
-                        progress = (i / total_chapters) * 100
-                        task.update_progress(progress / 100, f"Перевод главы {chapter.chapter_number}")
-                        emit_task_update(task.id, progress, 'running')
-                        
-                        # Переводим главу
-                        success = translator.translate_chapter(chapter)
-                        if not success:
-                            print(f"❌ Ошибка перевода главы {chapter.chapter_number}")
-                            task.fail(f"Ошибка перевода главы {chapter.chapter_number}")
-                            return
-                        
-                        time.sleep(2)  # Пауза между главами
-                        
-                    except Exception as e:
-                        print(f"❌ Ошибка перевода главы {i+1}: {e}")
-                        task.fail(f"Ошибка перевода главы {i+1}: {e}")
-                        return
-                
-                # Завершаем задачу
-                task.complete({
-                    'translated_chapters': total_chapters,
-                    'novel_id': novel_id,
-                    'template_used': prompt_template.name
-                })
-                novel.update_stats()
-                emit_task_update(task.id, 100, 'completed')
-                
-            except Exception as e:
-                print(f"❌ Ошибка перевода: {e}")
-                if 'task' in locals() and task:
-                    task.fail(f"Ошибка перевода: {e}")
-                    emit_task_update(task.id, 0, 'failed')
-    
-    thread = threading.Thread(target=translate_novel)
-    thread.start()
-    
-    flash(f'Запущен перевод новеллы "{novel.title}" с шаблоном "{prompt_template.name}"', 'success')
+        chapter_ids = [ch.id for ch in chapters]
+        task = translate_novel_chapters_task.apply_async(
+            kwargs={
+                'novel_id': novel_id,
+                'chapter_ids': chapter_ids,
+            },
+            queue='czbooks_queue'
+        )
+
+        # Сохраняем ID задачи в новелле
+        novel.translation_task_id = task.id
+        db.session.commit()
+
+        logger.info(f"✅ Task ID: {task.id}, State: {task.state}")
+        LogService.log_info(
+            f"🎯 Перевод запущен через Celery для {len(chapters)} глав",
+            novel_id=novel_id
+        )
+        flash(f'Перевод запущен для {len(chapters)} глав с шаблоном "{prompt_template.name}"', 'success')
+
+    except Exception as e:
+        logger.error(f"❌ Ошибка запуска задачи перевода: {e}")
+        flash(f'Ошибка запуска перевода: {str(e)}', 'error')
+
     return redirect(url_for('main.novel_detail', novel_id=novel_id))
 
 
