@@ -776,7 +776,7 @@ def start_translation(novel_id):
                 'novel_id': novel_id,
                 'chapter_ids': chapter_ids,
             },
-            queue='czbooks_queue'
+            queue='llm_queue'
         )
 
         # Сохраняем ID задачи в новелле
@@ -846,7 +846,7 @@ def start_editing(novel_id):
                 'chapter_ids': chapter_ids,
                 'parallel_threads': parallel_threads
             },
-            queue='czbooks_queue'
+            queue='llm_queue'
         )
 
         # Сохраняем ID задачи в новелле
@@ -920,7 +920,7 @@ def start_alignment(novel_id):
                 'chapter_ids': chapter_ids,
                 'parallel_threads': parallel_threads
             },
-            queue='czbooks_queue'
+            queue='llm_queue'
         )
 
         # Сохраняем ID задачи в новелле
