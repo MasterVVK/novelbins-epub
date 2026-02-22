@@ -482,6 +482,7 @@ def get_novel_status(novel_id):
         # Проверяем наличие активных задач
         has_active_tasks = bool(
             novel.parsing_task_id or
+            novel.translation_task_id or
             novel.editing_task_id or
             novel.alignment_task_id or
             novel.epub_generation_task_id
@@ -525,6 +526,7 @@ def get_novel_status(novel_id):
             # Активные задачи
             'tasks': {
                 'parsing': novel.parsing_task_id,
+                'translation': novel.translation_task_id,
                 'editing': novel.editing_task_id,
                 'alignment': novel.alignment_task_id,
                 'epub_generation': novel.epub_generation_task_id
