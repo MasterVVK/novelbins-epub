@@ -7,11 +7,8 @@ from app.services.parser_service import WebParserService
 from app.services.original_aware_editor_service import OriginalAwareEditorService
 from app.services.log_service import LogService
 from app.services.parser_integration import ParserIntegrationService
-import threading
-import time
 import logging
 from datetime import datetime
-from app import create_app
 
 logger = logging.getLogger(__name__)
 
