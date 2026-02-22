@@ -685,14 +685,11 @@ def start_parsing(novel_id):
     novel = Novel.query.get_or_404(novel_id)
     print(f"📖 Найдена новелла: {novel.title}")
 
-    # Проверяем, не запущен ли уже парсинг
-    if novel.parsing_task_id:
-        from celery.result import AsyncResult
-        from app import celery
-        task = AsyncResult(novel.parsing_task_id, app=celery)
-        if task.state in ['PENDING', 'STARTED', 'PROGRESS']:
-            flash('Парсинг уже выполняется для этой новеллы', 'warning')
-            return redirect(url_for('main.novel_detail', novel_id=novel_id))
+    # Per-novel блокировка: только одна задача на новеллу
+    active_task, _ = get_active_task_for_novel(novel)
+    if active_task:
+        flash(f'Невозможно запустить парсинг: уже выполняется {active_task}', 'warning')
+        return redirect(url_for('main.novel_detail', novel_id=novel_id))
 
     # Получаем параметры из конфига новеллы
     start_chapter = None
@@ -742,21 +739,11 @@ def start_translation(novel_id):
     novel = Novel.query.get_or_404(novel_id)
     logger.info(f"📖 Найдена новелла: {novel.title}")
 
-    # IDEMPOTENCY CHECK: Проверяем, не запущен ли уже перевод
-    if novel.translation_task_id:
-        from celery.result import AsyncResult
-        from app import celery
-
-        task_result = AsyncResult(novel.translation_task_id, app=celery)
-
-        if task_result.state in ['PENDING', 'STARTED', 'PROGRESS']:
-            logger.warning(f"⚠️ Перевод уже запущен (task_id: {novel.translation_task_id}, state: {task_result.state})")
-            flash(f'Перевод уже запущен (задача: {novel.translation_task_id[:8]}...)', 'warning')
-            return redirect(url_for('main.novel_detail', novel_id=novel_id))
-        else:
-            logger.info(f"✅ Предыдущая задача завершена (state: {task_result.state}), запускаем новую")
-            novel.translation_task_id = None
-            db.session.commit()
+    # Per-novel блокировка: только одна задача на новеллу
+    active_task, _ = get_active_task_for_novel(novel)
+    if active_task:
+        flash(f'Невозможно запустить перевод: уже выполняется {active_task}', 'warning')
+        return redirect(url_for('main.novel_detail', novel_id=novel_id))
 
     # Проверяем наличие шаблона промпта
     prompt_template = novel.get_prompt_template()
@@ -817,24 +804,11 @@ def start_editing(novel_id):
     novel = Novel.query.get_or_404(novel_id)
     logger.info(f"📖 Найдена новелла: {novel.title}")
 
-    # IDEMPOTENCY CHECK: Проверяем, не запущена ли уже редактура
-    if novel.editing_task_id:
-        from celery.result import AsyncResult
-        from app import celery
-
-        # Проверяем статус существующей задачи
-        task_result = AsyncResult(novel.editing_task_id, app=celery)
-
-        # Если задача активна (PENDING, STARTED, PROGRESS), не запускаем новую
-        if task_result.state in ['PENDING', 'STARTED', 'PROGRESS']:
-            logger.warning(f"⚠️ Редактура уже запущена (task_id: {novel.editing_task_id}, state: {task_result.state})")
-            flash(f'Редактура уже запущена (задача: {novel.editing_task_id[:8]}...)', 'warning')
-            return redirect(url_for('main.novel_detail', novel_id=novel_id))
-        else:
-            # Задача завершена/отменена, можно запустить новую
-            logger.info(f"✅ Предыдущая задача завершена (state: {task_result.state}), запускаем новую")
-            novel.editing_task_id = None
-            db.session.commit()
+    # Per-novel блокировка: только одна задача на новеллу
+    active_task, _ = get_active_task_for_novel(novel)
+    if active_task:
+        flash(f'Невозможно запустить редактуру: уже выполняется {active_task}', 'warning')
+        return redirect(url_for('main.novel_detail', novel_id=novel_id))
 
     # Получаем главы для редактуры
     chapters = Chapter.query.filter_by(
@@ -900,24 +874,11 @@ def start_alignment(novel_id):
     novel = Novel.query.get_or_404(novel_id)
     logger.info(f"📖 Найдена новелла: {novel.title}")
 
-    # IDEMPOTENCY CHECK: Проверяем, не запущено ли уже сопоставление
-    if novel.alignment_task_id:
-        from celery.result import AsyncResult
-        from app import celery
-
-        # Проверяем статус существующей задачи
-        task_result = AsyncResult(novel.alignment_task_id, app=celery)
-
-        # Если задача активна (PENDING, STARTED, PROGRESS), не запускаем новую
-        if task_result.state in ['PENDING', 'STARTED', 'PROGRESS']:
-            logger.warning(f"⚠️ Сопоставление уже запущено (task_id: {novel.alignment_task_id}, state: {task_result.state})")
-            flash(f'Сопоставление уже запущено (задача: {novel.alignment_task_id[:8]}...)', 'warning')
-            return redirect(url_for('main.novel_detail', novel_id=novel_id))
-        else:
-            # Задача завершена/отменена, можно запустить новую
-            logger.info(f"✅ Предыдущая задача завершена (state: {task_result.state}), запускаем новую")
-            novel.alignment_task_id = None
-            db.session.commit()
+    # Per-novel блокировка: только одна задача на новеллу
+    active_task, _ = get_active_task_for_novel(novel)
+    if active_task:
+        flash(f'Невозможно запустить сопоставление: уже выполняется {active_task}', 'warning')
+        return redirect(url_for('main.novel_detail', novel_id=novel_id))
 
     # Получаем главы для сопоставления
     # ВАЖНО: Только отредактированные (status='edited'), но еще НЕ сопоставленные
@@ -986,6 +947,12 @@ def generate_epub(novel_id):
     from app.services.epub_service import EPUBService
     
     novel = Novel.query.get_or_404(novel_id)
+
+    # Per-novel блокировка: только одна задача на новеллу
+    active_task, _ = get_active_task_for_novel(novel)
+    if active_task:
+        flash(f'Невозможно создать EPUB: уже выполняется {active_task}', 'warning')
+        return redirect(url_for('main.novel_detail', novel_id=novel_id))
 
     # Создаем задачу генерации EPUB
     task = Task(
@@ -1074,16 +1041,17 @@ def generate_bilingual_epub(novel_id):
 
     novel = Novel.query.get_or_404(novel_id)
 
-    # Проверяем что уже не запущена генерация
-    if novel.epub_generation_task_id:
-        flash('Генерация EPUB уже запущена. Дождитесь завершения.', 'warning')
+    # Per-novel блокировка: только одна задача на новеллу
+    active_task, _ = get_active_task_for_novel(novel)
+    if active_task:
+        flash(f'Невозможно создать двуязычный EPUB: уже выполняется {active_task}', 'warning')
         return redirect(url_for('main.novel_detail', novel_id=novel_id))
 
     try:
         # Запускаем Celery задачу
         task = generate_bilingual_epub_task.apply_async(
             args=[novel_id],
-            queue='czbooks_queue'
+            queue='llm_queue'
         )
 
         # Сохраняем task_id
