@@ -49,6 +49,7 @@ class Novel(db.Model):
 
     # Celery task ID для отслеживания фоновых задач
     parsing_task_id = Column(String(255))  # ID задачи Celery для парсинга
+    translation_task_id = Column(String(255))  # ID задачи Celery для перевода
     editing_task_id = Column(String(255))  # ID задачи Celery для редактуры
     alignment_task_id = Column(String(255))  # ID задачи Celery для выравнивания
     epub_generation_task_id = Column(String(255))  # ID задачи Celery для генерации EPUB
