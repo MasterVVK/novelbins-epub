@@ -15,6 +15,33 @@ logger = logging.getLogger(__name__)
 main_bp = Blueprint('main', __name__)
 
 
+def get_active_task_for_novel(novel):
+    """Проверяет, есть ли активная задача у новеллы.
+    Возвращает (task_type, task_id) или (None, None).
+    Очищает stale task_id если задача завершена."""
+    from celery.result import AsyncResult
+    from app import celery
+
+    task_fields = [
+        ('парсинг', 'parsing_task_id'),
+        ('перевод', 'translation_task_id'),
+        ('редактура', 'editing_task_id'),
+        ('сопоставление', 'alignment_task_id'),
+        ('генерация EPUB', 'epub_generation_task_id'),
+    ]
+    for task_name, field in task_fields:
+        task_id = getattr(novel, field)
+        if task_id:
+            result = AsyncResult(task_id, app=celery)
+            if result.state in ['PENDING', 'STARTED', 'PROGRESS']:
+                return task_name, task_id
+            else:
+                # Stale task_id — задача завершена, очищаем
+                setattr(novel, field, None)
+                db.session.commit()
+    return None, None
+
+
 @main_bp.route('/')
 def dashboard():
     """Главная страница - дашборд"""
