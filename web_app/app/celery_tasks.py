@@ -47,10 +47,17 @@ class CallbackTask(Task):
                 novel = Novel.query.get(novel_id)
                 if novel:
                     # Не перезаписываем уже установленный статус ошибки
-                    # (parsing_error, parsing_timeout, parsing_cancelled)
-                    if novel.status not in ['parsing_error', 'parsing_timeout', 'parsing_cancelled']:
+                    error_statuses = [
+                        'parsing_error', 'parsing_timeout', 'parsing_cancelled',
+                        'translation_error', 'translation_timeout', 'translation_cancelled',
+                    ]
+                    if novel.status not in error_statuses:
                         novel.status = 'error'
-                    novel.parsing_task_id = None
+                    # Очищаем task_id для задачи, которая упала
+                    if novel.parsing_task_id == task_id:
+                        novel.parsing_task_id = None
+                    if novel.translation_task_id == task_id:
+                        novel.translation_task_id = None
                     db.session.commit()
 
 
@@ -914,6 +921,220 @@ def cancel_editing_task(self, task_id):
             'status': 'error',
             'message': str(e)
         }
+
+
+@celery.task(bind=True, base=CallbackTask, soft_time_limit=172800, time_limit=172800)  # 48 часов
+def translate_novel_chapters_task(self, novel_id, chapter_ids):
+    """
+    Фоновая задача перевода глав новеллы (последовательно)
+
+    Args:
+        novel_id: ID новеллы
+        chapter_ids: Список ID глав для перевода
+    """
+    from app.services.translator_service import TranslatorService
+    from app.services.log_service import LogService
+
+    # Флаг для отслеживания отмены
+    global _cancel_requested
+    _cancel_requested = False
+
+    # Устанавливаем обработчик сигнала SIGTERM для отмены
+    old_handler = signal.signal(signal.SIGTERM, signal_handler)
+
+    success_count = 0
+    total_chapters = 0
+
+    try:
+        # Получаем новеллу
+        novel = Novel.query.get(novel_id)
+        if not novel:
+            raise ValueError(f"Novel {novel_id} not found")
+
+        # Проверяем наличие шаблона промпта
+        prompt_template = novel.get_prompt_template()
+        if not prompt_template:
+            raise ValueError(f"Не найден шаблон промпта для новеллы {novel_id}")
+
+        # Обновляем статус
+        novel.status = 'translating'
+        novel.translation_task_id = self.request.id
+        db.session.commit()
+
+        # Инициализируем сервис перевода
+        config = {}
+        if novel.config:
+            config['model_name'] = novel.config.get('translation_model')
+            config['temperature'] = novel.config.get('translation_temperature')
+
+        translator = TranslatorService(config=config)
+
+        # Получаем главы
+        chapters = Chapter.query.filter(Chapter.id.in_(chapter_ids)).order_by(Chapter.chapter_number).all()
+
+        if not chapters:
+            raise ValueError("Главы для перевода не найдены")
+
+        total_chapters = len(chapters)
+
+        self.update_state(state='PROGRESS', meta={'status': 'Начинаем перевод', 'progress': 0})
+        LogService.log_info(f"📝 [Novel:{novel_id}] Начинаем перевод {total_chapters} глав(ы)", novel_id=novel_id)
+
+        # Последовательный перевод глав
+        for i, chapter in enumerate(chapters):
+            # Проверяем отмену
+            db.session.refresh(novel)
+            if _cancel_requested or novel.status == 'translation_cancelled':
+                novel.status = 'translation_cancelled'
+                novel.translation_task_id = None
+                db.session.commit()
+
+                LogService.log_warning(f"🛑 [Novel:{novel_id}] Перевод отменён пользователем. Переведено {success_count}/{total_chapters} глав(ы)", novel_id=novel_id)
+                return {
+                    'status': 'cancelled',
+                    'message': 'Перевод отменён пользователем',
+                    'translated_chapters': success_count,
+                    'total_chapters': total_chapters
+                }
+
+            # Перезагружаем главу из БД
+            chapter = Chapter.query.get(chapter.id)
+            if not chapter:
+                LogService.log_error(f"❌ [Novel:{novel_id}] Глава ID={chapter.id} не найдена", novel_id=novel_id)
+                continue
+
+            # Пропускаем уже переведённые
+            if chapter.status in ('translated', 'edited', 'aligned'):
+                LogService.log_info(f"⏭️ [Novel:{novel_id}, Ch:{chapter.chapter_number}] Уже переведена, пропускаем", novel_id=novel_id)
+                continue
+
+            # Retry логика: 3 попытки с задержками
+            max_attempts = 3
+            retry_delays = [0, 300, 600]  # 0, 5 мин, 10 мин
+
+            for attempt in range(max_attempts):
+                # Проверяем отмену перед каждой попыткой
+                if _cancel_requested:
+                    break
+
+                try:
+                    if attempt == 0:
+                        LogService.log_info(f"🔄 [Novel:{novel_id}, Ch:{chapter.chapter_number}] Переводим главу ({i+1}/{total_chapters})", novel_id=novel_id)
+                    else:
+                        delay_minutes = retry_delays[attempt] // 60
+                        LogService.log_warning(f"🔄 [Novel:{novel_id}, Ch:{chapter.chapter_number}] Попытка {attempt+1}/{max_attempts} (после {delay_minutes} мин задержки)", novel_id=novel_id)
+
+                    success = translator.translate_chapter(chapter)
+
+                    if success:
+                        success_count += 1
+
+                        # Обновляем счётчик реальным значением из БД
+                        from sqlalchemy import func
+                        real_translated_count = db.session.query(func.count(Chapter.id)).filter(
+                            Chapter.novel_id == novel_id,
+                            Chapter.status.in_(['translated', 'edited', 'aligned'])
+                        ).scalar() or 0
+
+                        novel_update = Novel.query.get(novel_id)
+                        if novel_update:
+                            novel_update.translated_chapters = real_translated_count
+                            db.session.commit()
+
+                        LogService.log_info(f"✅ [Novel:{novel_id}, Ch:{chapter.chapter_number}] Переведена ({real_translated_count}/{total_chapters})", novel_id=novel_id)
+                        break  # Успех — выходим из retry
+                    else:
+                        raise Exception("translate_chapter вернул False")
+
+                except Exception as e:
+                    if attempt < max_attempts - 1:
+                        delay_seconds = retry_delays[attempt + 1]
+                        delay_minutes = delay_seconds // 60
+                        LogService.log_warning(f"⚠️ [Novel:{novel_id}, Ch:{chapter.chapter_number}] Ошибка: {e}. Повтор через {delay_minutes} мин...", novel_id=novel_id)
+                        time.sleep(delay_seconds)
+                    else:
+                        LogService.log_error(f"❌ [Novel:{novel_id}, Ch:{chapter.chapter_number}] Все {max_attempts} попытки завершились ошибками: {e}. Глава ПРОПУЩЕНА.", novel_id=novel_id)
+
+            # Обновляем прогресс
+            progress = int(((i + 1) / total_chapters) * 100)
+            self.update_state(
+                state='PROGRESS',
+                meta={
+                    'status': f'Перевод: {i+1}/{total_chapters} глав',
+                    'progress': progress,
+                    'translated_chapters': success_count
+                }
+            )
+
+            # Пауза между главами
+            if i < total_chapters - 1:
+                time.sleep(2)
+
+        # Финальный статус
+        if success_count > 0:
+            novel.status = 'translated'
+            completion_msg = f'🎉 [Novel:{novel_id}] Перевод завершён: {success_count}/{total_chapters} глав(ы) переведено'
+            LogService.log_info(completion_msg, novel_id=novel_id)
+        else:
+            novel.status = 'translation_error'
+            error_msg = f'❌ [Novel:{novel_id}] Перевод завершён БЕЗ УСПЕШНЫХ РЕЗУЛЬТАТОВ: 0/{total_chapters} глав переведено'
+            LogService.log_error(error_msg, novel_id=novel_id)
+
+        novel.translation_task_id = None
+        db.session.commit()
+
+        return {
+            'status': 'completed' if success_count > 0 else 'failed',
+            'message': f'Перевод завершён. Переведено {success_count} глав из {total_chapters}',
+            'translated_chapters': success_count,
+            'total_chapters': total_chapters
+        }
+
+    except Terminated:
+        # Отмена через сигнал
+        novel = Novel.query.get(novel_id)
+        if novel:
+            novel.status = 'translation_cancelled'
+            novel.translation_task_id = None
+            db.session.commit()
+        LogService.log_warning(f"🛑 [Novel:{novel_id}] Перевод прерван по сигналу SIGTERM", novel_id=novel_id)
+        return {
+            'status': 'cancelled',
+            'message': 'Перевод отменён пользователем',
+            'translated_chapters': success_count,
+            'total_chapters': total_chapters
+        }
+
+    except SoftTimeLimitExceeded:
+        novel = Novel.query.get(novel_id)
+        if novel:
+            novel.status = 'translation_timeout'
+            novel.translation_task_id = None
+            db.session.commit()
+        LogService.log_error(f"⏱️ [Novel:{novel_id}] Превышено время выполнения задачи перевода (48 часов)", novel_id=novel_id)
+        raise
+
+    except Exception as e:
+        novel = Novel.query.get(novel_id)
+        if novel:
+            novel.status = 'translation_error'
+            novel.translation_task_id = None
+            db.session.commit()
+        LogService.log_error(f"❌ [Novel:{novel_id}] Критическая ошибка перевода: {str(e)}", novel_id=novel_id)
+        raise
+
+    finally:
+        # Восстанавливаем старый обработчик сигнала
+        signal.signal(signal.SIGTERM, old_handler)
+
+        # Гарантированно очищаем translation_task_id
+        try:
+            novel = Novel.query.get(novel_id)
+            if novel and novel.translation_task_id == self.request.id:
+                novel.translation_task_id = None
+                db.session.commit()
+        except:
+            pass
 
 
 @celery.task(bind=True, base=CallbackTask, soft_time_limit=172800, time_limit=172800)  # 48 часов
