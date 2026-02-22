@@ -140,15 +140,18 @@
                 </h5>
             </div>
             <div class="card-body">
+                {% set has_active = novel.parsing_task_id or novel.translation_task_id or novel.editing_task_id or novel.alignment_task_id or novel.epub_generation_task_id %}
                 <div class="row">
                     <div class="col-md-3 mb-2">
                         {% if novel.parsing_task_id %}
-                        <!-- Кнопка отмены парсинга -->
                         <button type="button" onclick="cancelParsing({{ novel.id }})" class="btn btn-outline-danger w-100">
                             <i class="bi bi-stop-circle"></i> Отменить парсинг
                         </button>
+                        {% elif has_active %}
+                        <button type="button" class="btn btn-outline-secondary w-100" disabled>
+                            <i class="bi bi-download"></i> Парсинг
+                        </button>
                         {% else %}
-                        <!-- Кнопка запуска парсинга -->
                         <form method="POST" action="{{ url_for('main.start_parsing', novel_id=novel.id) }}" style="display: inline;">
                             <button type="submit" class="btn btn-outline-primary w-100">
                                 <i class="bi bi-download"></i> Парсинг
@@ -158,12 +161,14 @@
                     </div>
                     <div class="col-md-3 mb-2">
                         {% if novel.translation_task_id %}
-                        <!-- Кнопка отмены перевода -->
                         <button type="button" onclick="cancelTranslation({{ novel.id }})" class="btn btn-outline-danger w-100">
                             <i class="bi bi-x-circle"></i> Отменить перевод
                         </button>
+                        {% elif has_active %}
+                        <button type="button" class="btn btn-outline-secondary w-100" disabled>
+                            <i class="bi bi-translate"></i> Перевод
+                        </button>
                         {% else %}
-                        <!-- Кнопка запуска перевода -->
                         <form method="POST" action="{{ url_for('main.start_translation', novel_id=novel.id) }}" style="display: inline;">
                             <button type="submit" class="btn btn-outline-success w-100">
                                 <i class="bi bi-translate"></i> Перевод
@@ -173,23 +178,33 @@
                     </div>
                     <div class="col-md-3 mb-2">
                         {% if novel.editing_task_id %}
-                            <button type="button" class="btn btn-outline-danger w-100" onclick="cancelEditing({{ novel.id }})">
-                                <i class="bi bi-x-circle"></i> Отменить редактуру
-                            </button>
+                        <button type="button" class="btn btn-outline-danger w-100" onclick="cancelEditing({{ novel.id }})">
+                            <i class="bi bi-x-circle"></i> Отменить редактуру
+                        </button>
+                        {% elif has_active %}
+                        <button type="button" class="btn btn-outline-secondary w-100" disabled>
+                            <i class="bi bi-pencil-square"></i> Редактура
+                        </button>
                         {% else %}
-                            <form method="POST" action="{{ url_for('main.start_editing', novel_id=novel.id) }}" style="display: inline;">
-                                <button type="submit" class="btn btn-outline-warning w-100">
-                                    <i class="bi bi-pencil-square"></i> Редактура
-                                </button>
-                            </form>
+                        <form method="POST" action="{{ url_for('main.start_editing', novel_id=novel.id) }}" style="display: inline;">
+                            <button type="submit" class="btn btn-outline-warning w-100">
+                                <i class="bi bi-pencil-square"></i> Редактура
+                            </button>
+                        </form>
                         {% endif %}
                     </div>
                     <div class="col-md-3 mb-2">
+                        {% if has_active %}
+                        <button type="button" class="btn btn-outline-secondary w-100" disabled>
+                            <i class="bi bi-file-earmark-text"></i> EPUB
+                        </button>
+                        {% else %}
                         <form method="POST" action="{{ url_for('main.generate_epub', novel_id=novel.id) }}" style="display: inline;">
                             <button type="submit" class="btn btn-outline-info w-100">
                                 <i class="bi bi-file-earmark-text"></i> EPUB
                             </button>
                         </form>
+                        {% endif %}
                     </div>
                 </div>
 
@@ -197,30 +212,39 @@
                 <div class="row mt-2">
                     <div class="col-md-6 mb-2">
                         {% if novel.alignment_task_id %}
-                            <button type="button" class="btn btn-outline-danger w-100" onclick="cancelAlignment({{ novel.id }})">
-                                <i class="bi bi-x-circle"></i> Отменить сопоставление
-                            </button>
+                        <button type="button" class="btn btn-outline-danger w-100" onclick="cancelAlignment({{ novel.id }})">
+                            <i class="bi bi-x-circle"></i> Отменить сопоставление
+                        </button>
+                        {% elif has_active %}
+                        <button type="button" class="btn btn-outline-secondary w-100" disabled>
+                            <i class="bi bi-diagram-3"></i> Сопоставление с оригиналом
+                        </button>
                         {% else %}
-                            <form method="POST" action="{{ url_for('main.start_alignment', novel_id=novel.id) }}" style="display: inline; width: 100%;">
-                                <button type="submit" class="btn btn-outline-info w-100">
-                                    <i class="bi bi-diagram-3"></i> Сопоставление с оригиналом
-                                </button>
-                            </form>
+                        <form method="POST" action="{{ url_for('main.start_alignment', novel_id=novel.id) }}" style="display: inline; width: 100%;">
+                            <button type="submit" class="btn btn-outline-info w-100">
+                                <i class="bi bi-diagram-3"></i> Сопоставление с оригиналом
+                            </button>
+                        </form>
                         {% endif %}
                     </div>
                     <div class="col-md-6 mb-2">
+                        {% if novel.epub_generation_task_id or novel.status == 'generating_epub' %}
+                        <button type="button" class="btn btn-outline-danger w-100" onclick="cancelEpubGeneration({{ novel.id }})">
+                            <i class="bi bi-x-circle"></i>
+                            <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+                            Отменить генерацию EPUB
+                        </button>
+                        {% elif has_active %}
+                        <button type="button" class="btn btn-outline-secondary w-100" disabled>
+                            <i class="bi bi-book"></i> Двуязычный EPUB (RU + 中文)
+                        </button>
+                        {% else %}
                         <form method="POST" action="{{ url_for('main.generate_bilingual_epub', novel_id=novel.id) }}" style="display: inline;">
-                            <button type="submit" class="btn btn-outline-secondary w-100"
-                                    {% if novel.epub_generation_task_id or novel.status == 'generating_epub' %}disabled{% endif %}>
-                                <i class="bi bi-book"></i>
-                                {% if novel.epub_generation_task_id or novel.status == 'generating_epub' %}
-                                    <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
-                                    Генерируется...
-                                {% else %}
-                                    Двуязычный EPUB (RU + 中文)
-                                {% endif %}
+                            <button type="submit" class="btn btn-outline-secondary w-100">
+                                <i class="bi bi-book"></i> Двуязычный EPUB (RU + 中文)
                             </button>
                         </form>
+                        {% endif %}
                     </div>
                 </div>
 
@@ -1085,23 +1109,29 @@ function updateProgressBar(type, current, total, percentage) {
  * Обновляет кнопки действий (показывает/скрывает кнопки отмены, disabled состояния)
  */
 function updateActionButtons(novelId, tasks) {
+    const hasAnyActive = !!(tasks.parsing || tasks.translation || tasks.editing ||
+                            tasks.alignment || tasks.epub_generation);
+
     // Парсинг
-    updateTaskButton('parsing', tasks.parsing, novelId, 'парсинг', 'Парсинг', 'download');
+    updateTaskButton('parsing', tasks.parsing, novelId, 'парсинг', 'Парсинг', 'download', hasAnyActive);
 
     // Перевод
-    updateTaskButton('translation', tasks.translation, novelId, 'перевод', 'Перевод', 'translate');
+    updateTaskButton('translation', tasks.translation, novelId, 'перевод', 'Перевод', 'translate', hasAnyActive);
 
     // Редактура
-    updateTaskButton('editing', tasks.editing, novelId, 'редактуру', 'Редактура', 'pencil-square');
+    updateTaskButton('editing', tasks.editing, novelId, 'редактуру', 'Редактура', 'pencil-square', hasAnyActive);
 
     // Сопоставление
-    updateTaskButton('alignment', tasks.alignment, novelId, 'сопоставление', 'Сопоставление с оригиналом', 'diagram-3');
+    updateTaskButton('alignment', tasks.alignment, novelId, 'сопоставление', 'Сопоставление с оригиналом', 'diagram-3', hasAnyActive);
+
+    // EPUB и Двуязычный EPUB
+    updateEpubButtons(novelId, tasks.epub_generation, hasAnyActive);
 }
 
 /**
  * Обновляет одну кнопку задачи (парсинг/редактура/сопоставление)
  */
-function updateTaskButton(taskType, taskId, novelId, cancelText, buttonText, iconName) {
+function updateTaskButton(taskType, taskId, novelId, cancelText, buttonText, iconName, hasAnyActive) {
     const cancelFunctions = {
         'parsing': 'cancelParsing',
         'translation': 'cancelTranslation',
@@ -1122,20 +1152,27 @@ function updateTaskButton(taskType, taskId, novelId, cancelText, buttonText, ico
 
     if (!targetContainer) return;
 
-    // Если есть активная задача - показываем кнопку отмены
     if (taskId) {
+        // Активная задача — показываем кнопку отмены
         targetContainer.innerHTML = `
             <button type="button" class="btn btn-outline-danger w-100" onclick="${cancelFunctions[taskType]}(${novelId})">
                 <i class="bi bi-x-circle"></i> Отменить ${cancelText}
             </button>
         `;
+    } else if (hasAnyActive) {
+        // Другая задача активна — disabled кнопка
+        targetContainer.innerHTML = `
+            <button type="button" class="btn btn-outline-secondary w-100" disabled>
+                <i class="bi bi-${iconName}"></i> ${buttonText}
+            </button>
+        `;
     } else {
-        // Если задачи нет - показываем кнопку запуска
+        // Нет активных задач — обычная кнопка запуска
         const routes = {
             'parsing': `/novels/${novelId}/parse`,
             'translation': `/novels/${novelId}/translate`,
-            'editing': `/novels/${novelId}/edit`,
-            'alignment': `/novels/${novelId}/alignment`
+            'editing': `/novels/${novelId}/start-editing`,
+            'alignment': `/novels/${novelId}/start-alignment`
         };
 
         const colors = {
@@ -1152,6 +1189,72 @@ function updateTaskButton(taskType, taskId, novelId, cancelText, buttonText, ico
                 </button>
             </form>
         `;
+    }
+}
+
+/**
+ * Обновляет кнопки EPUB и Двуязычный EPUB при polling
+ */
+function updateEpubButtons(novelId, epubTaskId, hasAnyActive) {
+    // Обычный EPUB
+    const epubButtons = document.querySelectorAll('button, form');
+    let epubContainer = null;
+    let bilingualContainer = null;
+
+    epubButtons.forEach(el => {
+        const text = el.textContent || el.querySelector('button')?.textContent || '';
+        if (text.includes('EPUB') && !text.includes('Двуязычный') && !text.includes('Отменить') && !text.includes('中文')) {
+            epubContainer = el.closest('.col-md-3');
+        }
+        if (text.includes('Двуязычный') || text.includes('中文') || text.includes('Отменить генерацию')) {
+            bilingualContainer = el.closest('.col-md-6');
+        }
+    });
+
+    // Обновляем обычный EPUB
+    if (epubContainer) {
+        if (hasAnyActive) {
+            epubContainer.innerHTML = `
+                <button type="button" class="btn btn-outline-secondary w-100" disabled>
+                    <i class="bi bi-file-earmark-text"></i> EPUB
+                </button>
+            `;
+        } else {
+            epubContainer.innerHTML = `
+                <form method="POST" action="/novels/${novelId}/epub" style="display: inline;">
+                    <button type="submit" class="btn btn-outline-info w-100">
+                        <i class="bi bi-file-earmark-text"></i> EPUB
+                    </button>
+                </form>
+            `;
+        }
+    }
+
+    // Обновляем двуязычный EPUB
+    if (bilingualContainer) {
+        if (epubTaskId) {
+            bilingualContainer.innerHTML = `
+                <button type="button" class="btn btn-outline-danger w-100" onclick="cancelEpubGeneration(${novelId})">
+                    <i class="bi bi-x-circle"></i>
+                    <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+                    Отменить генерацию EPUB
+                </button>
+            `;
+        } else if (hasAnyActive) {
+            bilingualContainer.innerHTML = `
+                <button type="button" class="btn btn-outline-secondary w-100" disabled>
+                    <i class="bi bi-book"></i> Двуязычный EPUB (RU + 中文)
+                </button>
+            `;
+        } else {
+            bilingualContainer.innerHTML = `
+                <form method="POST" action="/novels/${novelId}/epub-bilingual" style="display: inline;">
+                    <button type="submit" class="btn btn-outline-secondary w-100">
+                        <i class="bi bi-book"></i> Двуязычный EPUB (RU + 中文)
+                    </button>
+                </form>
+            `;
+        }
     }
 }
 
