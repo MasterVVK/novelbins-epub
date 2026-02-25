@@ -39,7 +39,7 @@ class CallbackTask(Task):
             return self.run(*args, **kwargs)
 
     def on_failure(self, exc, task_id, args, kwargs, einfo):
-        """Обработка ошибки"""
+        """Обработка ошибки — очистка task_id и статуса"""
         app = create_app()
         with app.app_context():
             novel_id = args[0] if args else kwargs.get('novel_id')
@@ -50,6 +50,9 @@ class CallbackTask(Task):
                     error_statuses = [
                         'parsing_error', 'parsing_timeout', 'parsing_cancelled',
                         'translation_error', 'translation_timeout', 'translation_cancelled',
+                        'editing_error', 'editing_timeout', 'editing_cancelled',
+                        'alignment_error', 'alignment_timeout', 'alignment_cancelled',
+                        'epub_error',
                     ]
                     if novel.status not in error_statuses:
                         novel.status = 'error'
@@ -58,10 +61,16 @@ class CallbackTask(Task):
                         novel.parsing_task_id = None
                     if novel.translation_task_id == task_id:
                         novel.translation_task_id = None
+                    if novel.editing_task_id == task_id:
+                        novel.editing_task_id = None
+                    if novel.alignment_task_id == task_id:
+                        novel.alignment_task_id = None
+                    if novel.epub_generation_task_id == task_id:
+                        novel.epub_generation_task_id = None
                     db.session.commit()
 
 
-@celery.task(bind=True, base=CallbackTask, soft_time_limit=86400, time_limit=86400)  # 24 часа
+@celery.task(bind=True, base=CallbackTask, soft_time_limit=86400, time_limit=86460)  # 24 часа soft + 1 мин на cleanup
 def parse_novel_chapters_task(self, novel_id, start_chapter=None, max_chapters=None, use_xvfb=True):
     """
     Фоновая задача парсинга глав новеллы
@@ -532,7 +541,7 @@ def cancel_parsing_task(self, task_id):
         }
 
 
-@celery.task(bind=True, base=CallbackTask, soft_time_limit=172800, time_limit=172800)  # 48 часов
+@celery.task(bind=True, base=CallbackTask, soft_time_limit=172800, time_limit=172860)  # 48 часов soft + 1 мин на cleanup
 def edit_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
     """
     Фоновая задача редактуры глав новеллы
@@ -923,7 +932,7 @@ def cancel_editing_task(self, task_id):
         }
 
 
-@celery.task(bind=True, base=CallbackTask, soft_time_limit=172800, time_limit=172800)  # 48 часов
+@celery.task(bind=True, base=CallbackTask, soft_time_limit=172800, time_limit=172860)  # 48 часов soft + 1 мин на cleanup
 def translate_novel_chapters_task(self, novel_id, chapter_ids):
     """
     Фоновая задача перевода глав новеллы (последовательно)
@@ -1137,7 +1146,7 @@ def translate_novel_chapters_task(self, novel_id, chapter_ids):
             pass
 
 
-@celery.task(bind=True, base=CallbackTask, soft_time_limit=172800, time_limit=172800)  # 48 часов
+@celery.task(bind=True, base=CallbackTask, soft_time_limit=172800, time_limit=172860)  # 48 часов soft + 1 мин на cleanup
 def align_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
     """
     Фоновая задача билингвального выравнивания глав новеллы
@@ -1436,7 +1445,7 @@ def align_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
             pass  # Игнорируем ошибки при очистке
 
 
-@celery.task(bind=True, base=CallbackTask, soft_time_limit=86400, time_limit=86400)  # 24 часа
+@celery.task(bind=True, base=CallbackTask, soft_time_limit=86400, time_limit=86460)  # 24 часа soft + 1 мин на cleanup
 def generate_bilingual_epub_task(self, novel_id):
     """
     Фоновая задача генерации двуязычного EPUB
