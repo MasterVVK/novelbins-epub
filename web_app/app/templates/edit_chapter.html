@@ -7,16 +7,44 @@
 <div class="card">
     <div class="card-header">
         <h5 class="card-title mb-0">
-            <i class="bi bi-pencil"></i> Редактирование главы
+            <i class="bi bi-pencil"></i> Редактирование главы {{ chapter.chapter_number }}
+            <span class="badge bg-secondary ms-2">{{ chapter.status }}</span>
         </h5>
     </div>
     <div class="card-body">
         <form method="POST">
-            <div class="mb-3">
-                <label for="translated_text" class="form-label">Переведенный текст:</label>
-                <textarea class="form-control" id="translated_text" name="translated_text" rows="20" required>{{ chapter.current_translation.translated_text if chapter.current_translation else '' }}</textarea>
+            <!-- Заголовки -->
+            <div class="row mb-3">
+                <div class="col-md-6">
+                    <label for="original_title" class="form-label">Оригинальный заголовок (中文):</label>
+                    <input type="text" class="form-control" id="original_title" name="original_title"
+                           value="{{ chapter.original_title or '' }}">
+                </div>
+                <div class="col-md-6">
+                    <label for="translated_title" class="form-label">Переведённый заголовок:</label>
+                    <input type="text" class="form-control" id="translated_title" name="translated_title"
+                           value="{{ chapter.translated_title or '' }}">
+                </div>
             </div>
-            
+
+            <!-- Оригинальный текст -->
+            <div class="mb-3">
+                <label for="original_text" class="form-label">Оригинальный текст (中文):</label>
+                <textarea class="form-control" id="original_text" name="original_text" rows="15">{{ chapter.original_text or '' }}</textarea>
+            </div>
+
+            <!-- Перевод -->
+            <div class="mb-3">
+                <label for="translated_text" class="form-label">Перевод:</label>
+                <textarea class="form-control" id="translated_text" name="translated_text" rows="15">{{ chapter.current_translation.translated_text if chapter.current_translation else '' }}</textarea>
+            </div>
+
+            <!-- Отредактированный текст -->
+            <div class="mb-3">
+                <label for="edited_text" class="form-label">Отредактированный текст:</label>
+                <textarea class="form-control" id="edited_text" name="edited_text" rows="15">{{ chapter.edited_translation.translated_text if chapter.edited_translation else '' }}</textarea>
+            </div>
+
             <div class="d-flex justify-content-between">
                 <a href="{{ url_for('main.chapter_detail', chapter_id=chapter.id) }}" class="btn btn-outline-secondary">
                     <i class="bi bi-arrow-left"></i> Назад
@@ -28,4 +56,4 @@
         </form>
     </div>
 </div>
-{% endblock %} 
+{% endblock %}

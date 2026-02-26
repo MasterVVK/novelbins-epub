@@ -1205,26 +1205,81 @@ def api_chapter_prompt_history(chapter_id):
 
 @main_bp.route('/chapters/<int:chapter_id>/edit', methods=['GET', 'POST'])
 def edit_chapter(chapter_id):
-    """Редактирование главы"""
+    """Редактирование главы — все текстовые поля"""
     chapter = Chapter.query.get_or_404(chapter_id)
 
     if request.method == 'POST':
-        translated_text = request.form.get('translated_text')
-        if translated_text:
-            # Создаем новый перевод
-            from app.models import Translation
-            translation = Translation(
-                chapter_id=chapter_id,
-                translated_text=translated_text,
-                translation_type='manual',
-                api_used='manual'
-            )
-            db.session.add(translation)
-            chapter.status = 'edited'
-            db.session.commit()
+        from app.models import Translation
+        changed = False
 
-            flash('Глава отредактирована', 'success')
-            return redirect(url_for('main.chapter_detail', chapter_id=chapter_id))
+        # 1. Заголовки и оригинальный текст (прямые поля Chapter)
+        original_title = request.form.get('original_title', '').strip()
+        if original_title != (chapter.original_title or ''):
+            chapter.original_title = original_title or None
+            changed = True
+
+        original_text = request.form.get('original_text', '')
+        if original_text != (chapter.original_text or ''):
+            chapter.original_text = original_text or None
+            changed = True
+
+        # 2. Перевод (Translation с type != 'edited')
+        translated_text = request.form.get('translated_text', '')
+        translated_title = request.form.get('translated_title', '').strip()
+        current = chapter.current_translation
+
+        if translated_text or translated_title:
+            if current:
+                # Обновляем существующий перевод
+                if translated_text and translated_text != (current.translated_text or ''):
+                    current.translated_text = translated_text
+                    changed = True
+                if translated_title != (current.translated_title or ''):
+                    current.translated_title = translated_title or None
+                    changed = True
+            elif translated_text:
+                # Создаём новый перевод
+                new_translation = Translation(
+                    chapter_id=chapter_id,
+                    translated_text=translated_text,
+                    translated_title=translated_title or None,
+                    translation_type='manual',
+                    api_used='manual'
+                )
+                db.session.add(new_translation)
+                if chapter.status == 'parsed':
+                    chapter.status = 'translated'
+                changed = True
+
+        # 3. Отредактированный текст (Translation с type='edited')
+        edited_text = request.form.get('edited_text', '')
+        edited = chapter.edited_translation
+
+        if edited_text:
+            if edited:
+                if edited_text != (edited.translated_text or ''):
+                    edited.translated_text = edited_text
+                    changed = True
+            else:
+                new_edited = Translation(
+                    chapter_id=chapter_id,
+                    translated_text=edited_text,
+                    translated_title=translated_title or None,
+                    translation_type='edited',
+                    api_used='manual'
+                )
+                db.session.add(new_edited)
+                if chapter.status == 'translated':
+                    chapter.status = 'edited'
+                changed = True
+
+        if changed:
+            db.session.commit()
+            flash('Глава сохранена', 'success')
+        else:
+            flash('Нет изменений', 'info')
+
+        return redirect(url_for('main.chapter_detail', chapter_id=chapter_id))
 
     return render_template('edit_chapter.html', chapter=chapter)
 

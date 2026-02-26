@@ -102,7 +102,7 @@
             <a href="{{ url_for('main.novel_detail', novel_id=chapter.novel.id) }}" class="btn btn-outline-secondary">
                 <i class="bi bi-arrow-left"></i> К новелле
             </a>
-            {% if chapter.status in ['translated', 'edited'] %}
+            {% if chapter.status != 'pending' %}
             <a href="{{ url_for('main.edit_chapter', chapter_id=chapter.id) }}" class="btn btn-warning">
                 <i class="bi bi-pencil"></i> Редактировать
             </a>
