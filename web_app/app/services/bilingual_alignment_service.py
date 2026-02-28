@@ -219,11 +219,21 @@ class BilingualAlignmentService:
                     if not response:
                         raise Exception(f"Ошибка LLM ({ai_model.provider}): пустой ответ")
 
+                    finish_reason = getattr(translator, 'last_finish_reason', 'unknown')
                     LogService.log_info(
-                        f"{log_prefix} LLM запрос завершен за {duration:.1f}с (модель: {ai_model.name})",
+                        f"{log_prefix} LLM запрос завершен за {duration:.1f}с (модель: {ai_model.name}, finish: {finish_reason})",
                         novel_id=chapter.novel_id,
                         chapter_id=chapter.id
                     )
+
+                    # Если ответ обрезан по MAX_TOKENS — retry бесполезен
+                    if finish_reason in ('MAX_TOKENS', 'LENGTH'):
+                        LogService.log_warning(
+                            f"{log_prefix} ⚠️ Ответ обрезан ({finish_reason}) — используем fallback regex",
+                            novel_id=chapter.novel_id,
+                            chapter_id=chapter.id
+                        )
+                        return self._fallback_regex_alignment(russian_text, chinese_text, chapter)
 
                     # Парсинг JSON ответа
                     alignment_result = self._parse_llm_response(response)
