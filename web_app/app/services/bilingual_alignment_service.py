@@ -10,6 +10,7 @@ from datetime import datetime
 from app import db
 from app.models import Chapter, BilingualAlignment, BilingualPromptTemplate, AIModel
 from app.services.universal_llm_translator import UniversalLLMTranslator
+from app.services.original_aware_editor_service import ProhibitedContentError
 from app.services.bilingual_prompt_template_service import BilingualPromptTemplateService
 from app.services.log_service import LogService
 
@@ -233,6 +234,15 @@ class BilingualAlignmentService:
                         chapter_id=chapter.id
                     )
                     break  # Технический успех - выход из retry цикла
+
+                except ProhibitedContentError:
+                    # Контент заблокирован политикой безопасности — пропускаем главу без retry
+                    LogService.log_warning(
+                        f"{log_prefix} ⚠️ PROHIBITED_CONTENT — пропускаем главу (контент заблокирован)",
+                        novel_id=chapter.novel_id,
+                        chapter_id=chapter.id
+                    )
+                    return []
 
                 except Exception as e:
                     error_str = str(e)
