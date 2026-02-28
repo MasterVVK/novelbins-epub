@@ -211,7 +211,7 @@ class BilingualAlignmentService:
 
                     # Проверяем успешность LLM запроса
                     if not result.get('success'):
-                        raise Exception(f"Ошибка Ollama: {result.get('error', 'Unknown error')}")
+                        raise Exception(f"Ошибка LLM ({ai_adapter.model.provider}): {result.get('error', 'Unknown error')}")
 
                     response = result['content']
 

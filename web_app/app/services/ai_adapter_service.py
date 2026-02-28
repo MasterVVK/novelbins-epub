@@ -125,20 +125,24 @@ class AIAdapterService:
     async def _call_gemini(self, system_prompt: str, user_prompt: str,
                           temperature: float, max_tokens: int) -> Dict:
         """Вызов Gemini API"""
-        if not self.model.api_key:
+        # Gemini может хранить ключ в api_key (одиночный) или api_keys (массив с ротацией)
+        api_key = self.model.api_key
+        if not api_key and self.model.api_keys:
+            api_key = self.model.api_keys[0]
+        if not api_key:
             return {'success': False, 'error': 'API ключ не указан'}
 
         # Увеличенный таймаут для Gemini (большие тексты требуют времени)
         async with httpx.AsyncClient(timeout=300.0) as client:
             url = f"{self.model.api_endpoint}/models/{self.model.model_id}:generateContent"
-            
+
             # Логируем параметры запроса
             actual_max_tokens = min(max_tokens, self.model.max_output_tokens)
             LogService.log_info(f"Gemini запрос: {self.model.model_id} | Temperature: {temperature} | Max tokens: {actual_max_tokens:,} / {self.model.max_output_tokens:,}")
 
             response = await client.post(
                 url,
-                params={'key': self.model.api_key},
+                params={'key': api_key},
                 json={
                     'contents': [{
                         'parts': [
