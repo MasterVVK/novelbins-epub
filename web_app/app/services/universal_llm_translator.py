@@ -118,7 +118,7 @@ class UniversalLLMTranslator:
             await asyncio.sleep(30)
             self.reset_failed_keys()
 
-    async def make_request_async(self, system_prompt: str, user_prompt: str, temperature: float = None) -> Optional[str]:
+    async def make_request_async(self, system_prompt: str, user_prompt: str, temperature: float = None, **kwargs) -> Optional[str]:
         """Асинхронный запрос к AI модели с умной ротацией ключей"""
         # Убираем общее логирование чтобы избежать дублирования
         # Каждый адаптер будет логировать свой запрос индивидуально
@@ -163,7 +163,7 @@ class UniversalLLMTranslator:
                     adapter.model = temp_model
                     adapter.chapter_id = self.current_chapter_id
 
-                    result = await adapter.generate_content(system_prompt, user_prompt, temperature, max_tokens)
+                    result = await adapter.generate_content(system_prompt, user_prompt, temperature, max_tokens, **kwargs)
 
                     # Логируем полный результат для отладки
                     LogService.log_info(f"Результат запроса: success={result.get('success')}, error={result.get('error')}, keys={list(result.keys())}")
@@ -237,7 +237,7 @@ class UniversalLLMTranslator:
             # Для других провайдеров или Gemini с одним ключом - обычный запрос
             try:
                 adapter = AIAdapterService(model_id=self.model.id, chapter_id=self.current_chapter_id)
-                result = await adapter.generate_content(system_prompt, user_prompt, temperature, max_tokens)
+                result = await adapter.generate_content(system_prompt, user_prompt, temperature, max_tokens, **kwargs)
 
                 if result['success']:
                     self.last_finish_reason = result.get('finish_reason', 'unknown')
@@ -411,7 +411,7 @@ class UniversalLLMTranslator:
                             LogService.log_info(f"🔄 Повторная попытка {attempt}/{len(retry_delays)} запроса к {self.model.model_id}")
 
                             # Повторяем запрос
-                            retry_result = await adapter.generate_content(system_prompt, user_prompt, temperature, max_tokens)
+                            retry_result = await adapter.generate_content(system_prompt, user_prompt, temperature, max_tokens, **kwargs)
 
                             if retry_result['success']:
                                 LogService.log_info(f"✅ Повторная попытка {attempt} успешна!")
@@ -473,7 +473,7 @@ class UniversalLLMTranslator:
                             await asyncio.sleep(delay_seconds)
 
                             adapter = AIAdapterService(model_id=self.model.id, chapter_id=self.current_chapter_id)
-                            retry_result = await adapter.generate_content(system_prompt, user_prompt, temperature, max_tokens)
+                            retry_result = await adapter.generate_content(system_prompt, user_prompt, temperature, max_tokens, **kwargs)
 
                             if retry_result['success']:
                                 LogService.log_info(f"✅ Успешно после {attempt} попыток ожидания")
@@ -510,7 +510,7 @@ class UniversalLLMTranslator:
                             await asyncio.sleep(delay_seconds)
 
                             adapter = AIAdapterService(model_id=self.model.id, chapter_id=self.current_chapter_id)
-                            retry_result = await adapter.generate_content(system_prompt, user_prompt, temperature, max_tokens)
+                            retry_result = await adapter.generate_content(system_prompt, user_prompt, temperature, max_tokens, **kwargs)
 
                             if retry_result['success']:
                                 LogService.log_info(f"✅ Успешно после {attempt} попыток")
@@ -538,12 +538,12 @@ class UniversalLLMTranslator:
 
                 raise
 
-    def make_request(self, system_prompt: str, user_prompt: str, temperature: float = None) -> Optional[str]:
+    def make_request(self, system_prompt: str, user_prompt: str, temperature: float = None, **kwargs) -> Optional[str]:
         """Синхронная обёртка над асинхронным методом"""
         try:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            return loop.run_until_complete(self.make_request_async(system_prompt, user_prompt, temperature))
+            return loop.run_until_complete(self.make_request_async(system_prompt, user_prompt, temperature, **kwargs))
         finally:
             loop.close()
 

@@ -1,7 +1,6 @@
 """
 Адаптер для работы с разными AI провайдерами через унифицированный интерфейс
 """
-import asyncio
 import httpx
 import json
 import logging
@@ -15,10 +14,6 @@ logger = logging.getLogger(__name__)
 
 class AIAdapterService:
     """Универсальный адаптер для работы с разными AI провайдерами"""
-
-    # Глобальный индекс ключа Gemini для ротации между экземплярами
-    _gemini_key_index = 0
-    _gemini_failed_keys = set()
 
     def __init__(self, model_id: int = None, model_name: str = None, chapter_id: int = None):
         """
@@ -127,92 +122,22 @@ class AIAdapterService:
             error_msg = str(e) if str(e) else f"{type(e).__name__}: {repr(e)}"
             return {'success': False, 'error': error_msg}
 
-    def _get_gemini_keys(self) -> List[str]:
-        """Получить список API ключей Gemini"""
-        if self.model.api_keys:
-            return [k for k in self.model.api_keys if k]
-        if self.model.api_key:
-            return [self.model.api_key]
-        return []
-
     async def _call_gemini(self, system_prompt: str, user_prompt: str,
                           temperature: float, max_tokens: int) -> Dict:
-        """Вызов Gemini API с ротацией ключей (как в UniversalLLMTranslator)"""
-        keys = self._get_gemini_keys()
-        if not keys:
+        """Вызов Gemini API (ротация ключей — в UniversalLLMTranslator)"""
+        # Ключ приходит через self.model.api_key (от UniversalLLMTranslator через temp_model)
+        # Fallback на api_keys[0] для прямого вызова без ротации
+        api_key = self.model.api_key
+        if not api_key and self.model.api_keys:
+            api_key = self.model.api_keys[0]
+        if not api_key:
             return {'success': False, 'error': 'API ключ не указан'}
 
-        # Ротация: используем глобальный индекс
-        key_index = AIAdapterService._gemini_key_index % len(keys)
-        max_attempts = len(keys) * 3
-        failed_keys = set()
-
-        for attempt in range(max_attempts):
-            # Пропускаем неработающие ключи
-            if key_index in failed_keys:
-                key_index = (key_index + 1) % len(keys)
-                if len(failed_keys) >= len(keys):
-                    # Все ключи отказали — сбрасываем и ждём
-                    LogService.log_warning(f"Все {len(keys)} Gemini ключей отказали, сброс через 60 сек")
-                    await asyncio.sleep(60)
-                    failed_keys.clear()
-                continue
-
-            api_key = keys[key_index]
-            result = await self._call_gemini_single(system_prompt, user_prompt, temperature, max_tokens, api_key, key_index, len(keys))
-
-            if result['success']:
-                # Успех — сохраняем индекс глобально
-                AIAdapterService._gemini_key_index = key_index
-                return result
-
-            error = result.get('error', '')
-            error_type = result.get('error_type', 'general')
-            status_code = result.get('status_code', 0)
-
-            # Rate limit или ошибка авторизации — помечаем ключ, переключаемся
-            if status_code == 429 or 'Rate limit' in error or 'Unauthorized' in error or 'API key' in error:
-                failed_keys.add(key_index)
-                key_index = (key_index + 1) % len(keys)
-                AIAdapterService._gemini_key_index = key_index
-                if len(keys) > 1:
-                    LogService.log_warning(f"Gemini ключ #{key_index + 1} отказал ({error}), переключаемся на #{(key_index % len(keys)) + 1}")
-                continue
-
-            # PROHIBITED_CONTENT — нет смысла повторять
-            if 'PROHIBITED_CONTENT' in error:
-                return result
-
-            # Overloaded — ждём и повторяем с тем же ключом
-            if error_type == 'overloaded' or status_code == 503:
-                wait = 30 + attempt * 15
-                LogService.log_warning(f"Gemini перегружен, ждём {wait} сек...")
-                await asyncio.sleep(wait)
-                continue
-
-            # Другие ошибки — возвращаем как есть
-            return result
-
-        return {'success': False, 'error': f'Все {max_attempts} попыток Gemini исчерпаны'}
-
-    async def _call_gemini_single(self, system_prompt: str, user_prompt: str,
-                                   temperature: float, max_tokens: int,
-                                   api_key: str, key_index: int, total_keys: int) -> Dict:
-        """Один вызов Gemini API с конкретным ключом"""
         async with httpx.AsyncClient(timeout=300.0) as client:
             url = f"{self.model.api_endpoint}/models/{self.model.model_id}:generateContent"
 
             actual_max_tokens = min(max_tokens, self.model.max_output_tokens)
-
-            log_prefix = ""
-            if self.chapter_id:
-                from app.models import Chapter
-                chapter = Chapter.query.get(self.chapter_id)
-                if chapter:
-                    log_prefix = f"[Novel:{chapter.novel_id}, Ch:{chapter.chapter_number}] "
-
-            key_info = f" | Key: #{key_index + 1}/{total_keys}" if total_keys > 1 else ""
-            LogService.log_info(f"{log_prefix}Gemini запрос: {self.model.model_id} | Temperature: {temperature} | Max tokens: {actual_max_tokens:,} / {self.model.max_output_tokens:,}{key_info}")
+            LogService.log_info(f"Gemini запрос: {self.model.model_id} | Temperature: {temperature} | Max tokens: {actual_max_tokens:,} / {self.model.max_output_tokens:,}")
 
             response = await client.post(
                 url,

@@ -3,14 +3,13 @@
 """
 import json
 import logging
-import asyncio
 import time
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime
 
 from app import db
-from app.models import Chapter, BilingualAlignment, BilingualPromptTemplate
-from app.services.ai_adapter_service import AIAdapterService
+from app.models import Chapter, BilingualAlignment, BilingualPromptTemplate, AIModel
+from app.services.universal_llm_translator import UniversalLLMTranslator
 from app.services.bilingual_prompt_template_service import BilingualPromptTemplateService
 from app.services.log_service import LogService
 
@@ -144,10 +143,18 @@ class BilingualAlignmentService:
             3: 0.95   # Минимально приемлемо
         }
 
-        ai_adapter = AIAdapterService(
-            model_id=model_id_to_use,
-            chapter_id=chapter.id
-        )
+        ai_model = AIModel.query.get(model_id_to_use)
+        if not ai_model:
+            LogService.log_error(
+                f"{log_prefix} Модель {model_id_to_use} не найдена",
+                novel_id=chapter.novel_id,
+                chapter_id=chapter.id
+            )
+            return self._fallback_regex_alignment(russian_text, chinese_text, chapter)
+        translator = UniversalLLMTranslator(ai_model)
+        translator.current_chapter_id = chapter.id
+        translator.current_prompt_type = 'alignment'
+        translator.set_save_prompt_history(False)
 
         alignment_result = None
         quality_score = 0.0
@@ -195,28 +202,24 @@ class BilingualAlignmentService:
 
                     start_time = datetime.now()
 
-                    # Вызываем асинхронный метод через asyncio.run()
+                    # Используем UniversalLLMTranslator с ротацией ключей
                     # Для alignment нужен увеличенный num_predict (×4, мин 50k),
                     # т.к. выходной JSON содержит оба исходных текста
-                    result = asyncio.run(ai_adapter.generate_content(
-                        system_prompt=template.system_prompt if template.system_prompt else "",
+                    response = translator.make_request(
+                        system_prompt=template.system_prompt or "",
                         user_prompt=prompt,
                         temperature=template.temperature,
-                        max_tokens=template.max_tokens,
                         expected_output_multiplier=4.0,
                         min_output_tokens=50000
-                    ))
+                    )
 
                     duration = (datetime.now() - start_time).total_seconds()
 
-                    # Проверяем успешность LLM запроса
-                    if not result.get('success'):
-                        raise Exception(f"Ошибка LLM ({ai_adapter.model.provider}): {result.get('error', 'Unknown error')}")
-
-                    response = result['content']
+                    if not response:
+                        raise Exception(f"Ошибка LLM ({ai_model.provider}): пустой ответ")
 
                     LogService.log_info(
-                        f"{log_prefix} LLM запрос завершен за {duration:.1f}с (модель: {ai_adapter.model.name})",
+                        f"{log_prefix} LLM запрос завершен за {duration:.1f}с (модель: {ai_model.name})",
                         novel_id=chapter.novel_id,
                         chapter_id=chapter.id
                     )
@@ -363,7 +366,7 @@ class BilingualAlignmentService:
                 coverage_ru=coverage_ru,
                 coverage_zh=coverage_zh,
                 avg_confidence=avg_confidence,
-                model_name=ai_adapter.model.name,
+                model_name=ai_model.name,
                 template_id=template.id
             )
 
