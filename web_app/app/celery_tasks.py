@@ -216,6 +216,12 @@ def parse_novel_chapters_task(self, novel_id, start_chapter=None, max_chapters=N
                 saved_count += 1
                 continue
 
+            # Задержка между запросами из конфига новеллы
+            if i > 1:
+                delay = float(novel.config.get('request_delay', 1.0)) if novel.config else 1.0
+                if delay > 0:
+                    time.sleep(delay)
+
             try:
                 # Загружаем контент
                 content_data = parser.get_chapter_content(ch['url'])

@@ -177,8 +177,6 @@ class TtkanParser(BaseParser):
 
     def get_chapter_content(self, chapter_url: str) -> Dict:
         """Получить содержимое главы"""
-        self._delay_between_requests()
-
         html = self._get_page_content(chapter_url, timeout=15, description="Содержимое главы")
         if not html:
             self.consecutive_errors += 1
