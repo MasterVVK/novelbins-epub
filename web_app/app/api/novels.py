@@ -508,7 +508,7 @@ def get_novel_status(novel_id):
         real_translated = counts_dict.get('translated', 0) + counts_dict.get('edited', 0) + counts_dict.get('aligned', 0)
         real_edited = counts_dict.get('edited', 0) + counts_dict.get('aligned', 0)
         real_aligned = counts_dict.get('aligned', 0)
-        real_total = sum(counts_dict.values())
+        real_total = novel.total_chapters or sum(counts_dict.values())
 
         # Вычисляем проценты
         parsing_pct = round((real_parsed / real_total * 100), 1) if real_total > 0 else 0
