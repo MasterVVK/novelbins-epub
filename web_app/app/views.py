@@ -650,7 +650,10 @@ def novel_detail(novel_id):
 
     # Обновляем счётчики в объекте novel реальными значениями из БД
     # (parsed включает всё, что прошло этап парсинга: parsed, translated, edited, aligned)
-    novel.total_chapters = sum(counts_dict.values())
+    # total_chapters берём из novel (установлен парсером), а не из кол-ва глав в БД
+    real_in_db = sum(counts_dict.values())
+    if not novel.total_chapters or novel.total_chapters < real_in_db:
+        novel.total_chapters = real_in_db
     novel.parsed_chapters = counts_dict.get('parsed', 0) + counts_dict.get('translated', 0) + counts_dict.get('edited', 0) + counts_dict.get('aligned', 0)
     novel.translated_chapters = counts_dict.get('translated', 0) + counts_dict.get('edited', 0) + counts_dict.get('aligned', 0)
     novel.edited_chapters = counts_dict.get('edited', 0) + counts_dict.get('aligned', 0)
