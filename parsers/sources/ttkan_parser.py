@@ -50,7 +50,7 @@ class TtkanParser(BaseParser):
         try:
             if ':' in self.socks_proxy:
                 proxy_host, proxy_port = self.socks_proxy.split(':', 1)
-                proxy_url = f'socks5://{proxy_host}:{proxy_port}'
+                proxy_url = f'socks5h://{proxy_host}:{proxy_port}'
                 self.session.proxies = {
                     'http': proxy_url,
                     'https': proxy_url

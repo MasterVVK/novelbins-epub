@@ -75,7 +75,7 @@ class QidianParser(BaseParser):
             # Проверяем формат прокси
             if ':' in self.socks_proxy:
                 proxy_host, proxy_port = self.socks_proxy.split(':', 1)
-                proxy_url = f'socks5://{proxy_host}:{proxy_port}'
+                proxy_url = f'socks5h://{proxy_host}:{proxy_port}'
                 
                 # Создаем новую сессию с прокси
                 proxies = {
