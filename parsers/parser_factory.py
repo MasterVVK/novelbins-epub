@@ -11,6 +11,7 @@ from .base.base_parser import BaseParser
 from .sources.qidian_parser import QidianParser
 from .sources.epub_parser import EPUBParser
 from .sources.czbooks_parser import CZBooksParser
+from .sources.ttkan_parser import TtkanParser
 
 
 class ParserFactory:
@@ -23,6 +24,7 @@ class ParserFactory:
         'qidian': QidianParser,
         'epub': EPUBParser,
         'czbooks': CZBooksParser,
+        'ttkan': TtkanParser,
     }
     
     # Паттерны URL для автоматического определения парсера
@@ -31,6 +33,7 @@ class ParserFactory:
         r'm\.qidian\.com': 'qidian',
         r'book\.qidian\.com': 'qidian',
         r'czbooks\.net': 'czbooks',
+        r'ttkan\.co': 'ttkan',
         r'\.epub(?:/.*)?$': 'epub',  # Файлы EPUB (включая пути с дополнительными слешами)
         r'epub_files': 'epub',  # Директория с EPUB файлами
     }

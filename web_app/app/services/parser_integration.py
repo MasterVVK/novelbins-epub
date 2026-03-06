@@ -56,6 +56,13 @@ class ParserIntegrationService:
             'example_url': 'https://novelbins.net/novel/...',
             'features': ['Стандартный парсер']
         },
+        'ttkan': {
+            'name': 'TTKan (天天看小說)',
+            'description': 'Китайская платформа веб-новелл (традиционные иероглифы)',
+            'supported_languages': ['zh'],
+            'example_url': 'https://ttkan.co/novel/chapters/xuezhonghandaoxing-fenghuoxizhuhou',
+            'features': ['Автоопределение', 'HTTP парсер']
+        },
         'epub': {
             'name': 'EPUB файл',
             'description': 'Локальный EPUB файл для импорта',
