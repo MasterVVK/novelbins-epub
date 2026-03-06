@@ -2,7 +2,7 @@
 
 # Скрипт остановки Celery worker и VNC сервисов
 
-set -e
+# НЕ используем set -e — нужно продолжать остановку даже при ошибках
 
 # Цвета для вывода
 GREEN='\033[0;32m'
@@ -46,6 +46,22 @@ if [ -n "$XVFB_PIDS" ]; then
     echo -e "${GREEN}✅ Xvfb остановлен${NC}"
 else
     echo -e "${YELLOW}⚠️  Xvfb не запущен${NC}"
+fi
+echo
+
+# Остановка Chrome/chromedriver (остаются после Selenium парсинга)
+echo -e "${YELLOW}Остановка Chrome/chromedriver...${NC}"
+CHROME_PIDS=$(pgrep -f "(chrome|chromedriver)" || true)
+if [ -n "$CHROME_PIDS" ]; then
+    echo "$CHROME_PIDS" | xargs kill -TERM 2>/dev/null || true
+    sleep 2
+    CHROME_PIDS=$(pgrep -f "(chrome|chromedriver)" || true)
+    if [ -n "$CHROME_PIDS" ]; then
+        echo "$CHROME_PIDS" | xargs kill -9 2>/dev/null || true
+    fi
+    echo -e "${GREEN}✅ Chrome/chromedriver остановлен${NC}"
+else
+    echo -e "${YELLOW}⚠️  Chrome/chromedriver не запущен${NC}"
 fi
 echo
 
