@@ -180,12 +180,20 @@ class TtkanParser(BaseParser):
         print(f"📑 TTKan: найдено {len(chapters)} глав для {novel_id}")
         return chapters
 
-    def get_chapter_content(self, chapter_url: str) -> Dict:
+    def get_chapter_content(self, chapter_url: str, max_retries: int = 3) -> Dict:
         """Получить содержимое главы"""
-        html = self._get_page_content(chapter_url, timeout=15, description="Содержимое главы")
-        if not html:
+        html = None
+        for attempt in range(max_retries):
+            html = self._get_page_content(chapter_url, timeout=20, description="Содержимое главы")
+            if html:
+                break
             self.consecutive_errors += 1
-            raise Exception(f"Не удалось получить содержимое главы: {chapter_url}")
+            wait = min(5 * (attempt + 1), 30)
+            print(f"⏳ TTKan: retry {attempt + 1}/{max_retries}, ожидание {wait}с...")
+            time.sleep(wait)
+
+        if not html:
+            raise Exception(f"Не удалось получить содержимое главы после {max_retries} попыток: {chapter_url}")
 
         self.consecutive_errors = 0
         soup = BeautifulSoup(html, 'html.parser')
