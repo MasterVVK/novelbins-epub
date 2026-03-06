@@ -148,12 +148,17 @@ class TtkanParser(BaseParser):
             chapter_links = [a for a in chapter_links if novel_id in a.get('href', '')]
 
         chapters = []
-        for i, link in enumerate(chapter_links, 1):
+        seen_urls = set()
+        for link in chapter_links:
             href = link.get('href', '')
             title = link.get_text(strip=True)
 
-            if not href or not title:
+            # Нормализуем href для дедупликации (сайт дублирует список:
+            # первый раз относительные /novel/pagea/..., второй — абсолютные https://www.ttkan.co/novel/pagea/...)
+            normalized = re.sub(r'^https?://[^/]+', '', href)
+            if not href or not title or normalized in seen_urls:
                 continue
+            seen_urls.add(normalized)
 
             # Абсолютный URL
             if href.startswith('/'):
@@ -163,10 +168,10 @@ class TtkanParser(BaseParser):
 
             # Извлекаем номер главы из URL
             chapter_match = re.search(r'_(\d+)\.html', href)
-            chapter_number = int(chapter_match.group(1)) if chapter_match else i
+            chapter_number = int(chapter_match.group(1)) if chapter_match else len(chapters) + 1
 
             chapters.append({
-                'number': i,
+                'number': len(chapters) + 1,
                 'title': title,
                 'url': full_url,
                 'chapter_id': str(chapter_number),
