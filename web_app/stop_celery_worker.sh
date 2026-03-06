@@ -33,6 +33,22 @@ else
 fi
 echo
 
+# Остановка Xvfb процессов (остаются после парсинга)
+echo -e "${YELLOW}Остановка Xvfb...${NC}"
+XVFB_PIDS=$(pgrep -f "Xvfb" || true)
+if [ -n "$XVFB_PIDS" ]; then
+    echo "$XVFB_PIDS" | xargs kill -TERM 2>/dev/null || true
+    sleep 1
+    XVFB_PIDS=$(pgrep -f "Xvfb" || true)
+    if [ -n "$XVFB_PIDS" ]; then
+        echo "$XVFB_PIDS" | xargs kill -9 2>/dev/null || true
+    fi
+    echo -e "${GREEN}✅ Xvfb остановлен${NC}"
+else
+    echo -e "${YELLOW}⚠️  Xvfb не запущен${NC}"
+fi
+echo
+
 # Остановка websockify
 echo -e "${YELLOW}Остановка websockify...${NC}"
 WEBSOCKIFY_PIDS=$(pgrep -f "websockify.*6080" || true)
