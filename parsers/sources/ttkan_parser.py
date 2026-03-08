@@ -29,11 +29,19 @@ class TtkanParser(BaseParser):
         self.socks_proxy = socks_proxy
         self.consecutive_errors = 0
 
+        self.user_agents = [
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
+        ]
+
         if socks_proxy:
             self._setup_proxy_session()
 
         self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'User-Agent': random.choice(self.user_agents),
             'Accept-Language': 'zh-TW,zh;q=0.9,en;q=0.8',
             'Referer': 'https://ttkan.co/',
         })
@@ -182,6 +190,9 @@ class TtkanParser(BaseParser):
 
     def get_chapter_content(self, chapter_url: str, max_retries: int = 3) -> Dict:
         """Получить содержимое главы"""
+        # Ротация User-Agent при каждом запросе
+        self.session.headers['User-Agent'] = random.choice(self.user_agents)
+
         html = None
         for attempt in range(max_retries):
             html = self._get_page_content(chapter_url, timeout=20, description="Содержимое главы")

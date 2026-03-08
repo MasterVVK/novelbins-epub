@@ -4,6 +4,7 @@ Celery задачи для фоновой обработки
 import sys
 import os
 import signal
+import random
 
 # Добавляем пути для импорта парсеров
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
@@ -216,11 +217,13 @@ def parse_novel_chapters_task(self, novel_id, start_chapter=None, max_chapters=N
                 saved_count += 1
                 continue
 
-            # Задержка между запросами из конфига новеллы
+            # Задержка между запросами из конфига новеллы (±50% рандом)
             if i > 1:
                 delay = float(novel.config.get('request_delay', 1.0)) if novel.config else 1.0
                 if delay > 0:
-                    time.sleep(delay)
+                    jitter = delay * random.uniform(-0.5, 0.5)
+                    actual_delay = max(0.1, delay + jitter)
+                    time.sleep(actual_delay)
 
             try:
                 # Загружаем контент
