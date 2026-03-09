@@ -310,6 +310,22 @@ def parse_novel_chapters_task(self, novel_id, start_chapter=None, max_chapters=N
                     'chapter_data': ch,
                     'error': str(e)
                 })
+
+                # Если 3+ глав подряд не удалось — вероятно бан по IP, останавливаем
+                consecutive_fails = 0
+                for fc in reversed(failed_chapters):
+                    if fc['chapter_number'] == chapter_number - consecutive_fails:
+                        consecutive_fails += 1
+                    else:
+                        break
+                if consecutive_fails >= 3:
+                    LogService.log_warning(
+                        f"🛑 [Novel:{novel_id}] {consecutive_fails} ошибок подряд — вероятен бан по IP. "
+                        f"Парсинг приостановлен на главе {chapter_number}. Сохранено {saved_count} глав.",
+                        novel_id=novel_id
+                    )
+                    break
+
                 continue
 
         # ========== ВТОРОЙ ПРОХОД: Повторный парсинг пропущенных глав ==========
