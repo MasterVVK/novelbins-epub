@@ -28,6 +28,8 @@ class TtkanParser(BaseParser):
         self.auth_cookies = auth_cookies
         self.socks_proxy = socks_proxy
         self.consecutive_errors = 0
+        self.chapter_request_count = 0
+        self.batch_size = 50  # Сброс сессии каждые N глав
 
         self.user_agents = [
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -188,10 +190,50 @@ class TtkanParser(BaseParser):
         print(f"📑 TTKan: найдено {len(chapters)} глав для {novel_id}")
         return chapters
 
+    def reset_session(self):
+        """Сброс HTTP сессии — новые TCP соединения, новый UA, чистые cookies"""
+        self.session.close()
+
+        import requests
+        self.session = requests.Session()
+
+        if self.socks_proxy:
+            self._setup_proxy_session()
+
+        self.session.headers.update({
+            'User-Agent': random.choice(self.user_agents),
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'zh-TW,zh;q=0.9,en;q=0.8',
+            'Accept-Encoding': 'gzip, deflate',
+            'Connection': 'keep-alive',
+            'Referer': 'https://ttkan.co/',
+        })
+
+        if self.auth_cookies:
+            for cookie in self.auth_cookies.split(';'):
+                cookie = cookie.strip()
+                if '=' in cookie:
+                    name, value = cookie.split('=', 1)
+                    self.session.cookies.set(name.strip(), value.strip())
+
+        self.consecutive_errors = 0
+        print(f"🔄 TTKan: сессия сброшена (новый UA, новые соединения)")
+
     def get_chapter_content(self, chapter_url: str, max_retries: int = 3) -> Dict:
         """Получить содержимое главы"""
+        self.chapter_request_count += 1
+
+        # Сброс сессии каждые batch_size глав
+        if self.chapter_request_count > 1 and self.chapter_request_count % self.batch_size == 1:
+            batch_pause = random.uniform(180, 360)  # 3-6 минут
+            print(f"⏸️ TTKan: батч-пауза {batch_pause:.0f}с после {self.chapter_request_count - 1} глав...")
+            time.sleep(batch_pause)
+            self.reset_session()
+
         # Ротация User-Agent при каждом запросе
         self.session.headers['User-Agent'] = random.choice(self.user_agents)
+        # Referer как при чтении — предыдущая глава или список
+        self.session.headers['Referer'] = chapter_url.rsplit('_', 1)[0] + '_' + str(max(1, int(re.search(r'_(\d+)\.html', chapter_url).group(1)) - 1)) + '.html' if re.search(r'_(\d+)\.html', chapter_url) else 'https://ttkan.co/'
 
         html = None
         for attempt in range(max_retries):
@@ -199,9 +241,11 @@ class TtkanParser(BaseParser):
             if html:
                 break
             self.consecutive_errors += 1
-            wait = min(5 * (attempt + 1), 30)
-            print(f"⏳ TTKan: retry {attempt + 1}/{max_retries}, ожидание {wait}с...")
+            # Экспоненциальный backoff: 30с, 120с, 300с
+            wait = min(30 * (2 ** attempt), 300)
+            print(f"⏳ TTKan: retry {attempt + 1}/{max_retries}, ожидание {wait}с + сброс сессии...")
             time.sleep(wait)
+            self.reset_session()
 
         if not html:
             raise Exception(f"Не удалось получить содержимое главы после {max_retries} попыток: {chapter_url}")
