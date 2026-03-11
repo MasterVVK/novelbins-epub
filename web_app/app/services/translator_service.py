@@ -2091,8 +2091,8 @@ class TranslatorService:
     
     def is_valid_term(self, eng: str, rus: str) -> bool:
         """Проверка валидности термина"""
-        # Слишком длинные термины (больше 50 символов)
-        if len(eng) > 50 or len(rus) > 50:
+        # Слишком длинные термины
+        if len(eng) > 50 or len(rus) > 80:
             return False
         
         # Слишком короткие термины (меньше 2 символов)
@@ -2105,7 +2105,7 @@ class TranslatorService:
             return False
         
         # Проверка на предложения (содержат много пробелов)
-        if eng.count(' ') > 5 or rus.count(' ') > 5:
+        if eng.count(' ') > 5 or rus.count(' ') > 8:
             return False
         
         # Проверка на числа и специальные символы
