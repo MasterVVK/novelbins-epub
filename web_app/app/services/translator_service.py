@@ -2114,8 +2114,123 @@ class TranslatorService:
         
         return True
 
+    def _find_glossary_conflicts(self, new_terms: Dict, novel_id: int) -> list:
+        """
+        Поиск конфликтов: новый составной термин содержит базовый термин,
+        но русский перевод не согласован.
+        Пример: 赤母 = Красная Матерь, но 赤母凡蛻 = Поземный линяк Червонной Матери
+        """
+        # Загружаем все существующие термины
+        existing_items = GlossaryItem.query.filter_by(
+            novel_id=novel_id, is_active=True
+        ).all()
+
+        existing_map = {}  # chinese_normalized → russian
+        for item in existing_items:
+            existing_map[normalize_chinese(item.english_term)] = item.russian_term
+
+        conflicts = []
+
+        for category, terms in new_terms.items():
+            for eng, rus in terms.items():
+                eng_norm = normalize_chinese(eng)
+
+                # Ищем базовые термины, которые являются подстрокой нового
+                for base_zh, base_ru in existing_map.items():
+                    if len(base_zh) >= len(eng_norm):
+                        continue  # Базовый не короче нового — не подстрока
+                    if base_zh not in eng_norm:
+                        continue  # Базовый не входит в новый
+
+                    # Базовый термин найден в составном — проверяем консистентность
+                    # Берём корень русского перевода (первые 4+ символа) для нечёткого сравнения
+                    base_ru_stem = base_ru[:min(len(base_ru), max(4, len(base_ru) // 2))]
+                    if base_ru_stem.lower() not in rus.lower():
+                        conflicts.append({
+                            'compound_zh': eng,
+                            'compound_ru': rus,
+                            'base_zh': base_zh,
+                            'base_ru': base_ru,
+                            'category': category,
+                        })
+                        break  # Один конфликт на термин достаточно
+
+        return conflicts
+
+    def _fix_conflicts_via_llm(self, conflicts: list) -> Dict[str, str]:
+        """
+        Отправляет конфликтные термины в LLM для исправления.
+        Возвращает dict: compound_zh → исправленный русский перевод.
+        """
+        if not conflicts:
+            return {}
+
+        lines = ["Исправь переводы составных терминов, чтобы они были согласованы с базовыми терминами из глоссария.", ""]
+        lines.append("БАЗОВЫЕ ТЕРМИНЫ (эталон):")
+        seen_base = set()
+        for c in conflicts:
+            key = c['base_zh']
+            if key not in seen_base:
+                lines.append(f"- {c['base_zh']} = {c['base_ru']}")
+                seen_base.add(key)
+
+        lines.append("")
+        lines.append("СОСТАВНЫЕ ТЕРМИНЫ ДЛЯ ИСПРАВЛЕНИЯ:")
+        for c in conflicts:
+            lines.append(f"- {c['compound_zh']} = {c['compound_ru']}")
+
+        lines.append("")
+        lines.append("Верни исправленные переводы в формате:")
+        lines.append("- 中文 = Исправленный русский перевод")
+        lines.append("")
+        lines.append("Сохрани общий смысл составного термина, но замени часть, конфликтующую с базовым термином.")
+
+        system_prompt = "Ты помощник по согласованию глоссария. Исправь переводы составных терминов, чтобы они использовали те же переводы базовых терминов, что указаны в эталоне."
+        user_prompt = "\n".join(lines)
+
+        logger.info(f"🔧 Исправляем {len(conflicts)} конфликтных терминов через LLM")
+
+        result = self.make_request(system_prompt, user_prompt, temperature=0.1)
+        if not result:
+            logger.warning("❌ LLM не вернула результат для исправления конфликтов")
+            return {}
+
+        # Парсим ответ
+        fixes = {}
+        for line in result.split('\n'):
+            line = line.strip()
+            if line.startswith('- ') and ' = ' in line:
+                parts = line[2:].split(' = ', 1)
+                if len(parts) == 2:
+                    zh, ru = parts[0].strip(), parts[1].strip()
+                    if zh and ru:
+                        fixes[zh] = ru
+
+        logger.info(f"✅ LLM исправила {len(fixes)} терминов")
+        for zh, ru in fixes.items():
+            logger.info(f"  {zh} → {ru}")
+
+        return fixes
+
     def save_new_terms(self, new_terms: Dict, novel_id: int, chapter_number: int):
-        """Сохранение новых терминов в глоссарий с нормализацией китайского"""
+        """Сохранение новых терминов в глоссарий с нормализацией китайского и проверкой консистентности"""
+        # Проверяем конфликты с существующими базовыми терминами
+        conflicts = self._find_glossary_conflicts(new_terms, novel_id)
+        if conflicts:
+            logger.info(f"⚠️ Найдено {len(conflicts)} конфликтов с базовыми терминами:")
+            for c in conflicts:
+                logger.info(f"  {c['compound_zh']}={c['compound_ru']} конфликтует с {c['base_zh']}={c['base_ru']}")
+
+            fixes = self._fix_conflicts_via_llm(conflicts)
+            # Применяем исправления к new_terms
+            for c in conflicts:
+                fixed_ru = fixes.get(c['compound_zh'])
+                if fixed_ru and c['category'] in new_terms:
+                    old_ru = new_terms[c['category']].get(c['compound_zh'])
+                    if old_ru:
+                        new_terms[c['category']][c['compound_zh']] = fixed_ru
+                        logger.info(f"🔧 Исправлен: {c['compound_zh']}: '{old_ru}' → '{fixed_ru}'")
+
         total_saved = 0
         for category, terms in new_terms.items():
             logger.info(f"📝 Обрабатываем категорию {category}: {len(terms)} терминов")
@@ -2153,7 +2268,7 @@ class TranslatorService:
                     logger.info(f"✅ Сохранен новый термин: {eng_normalized} = {rus} (категория: {category})")
                 else:
                     logger.info(f"ℹ️ Термин уже существует: {eng_normalized}")
-        
+
         db.session.commit()
         logger.info(f"📚 Всего сохранено новых терминов: {total_saved}")
         print(f"   📚 Сохранено {total_saved} новых терминов") 
