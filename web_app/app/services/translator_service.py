@@ -2190,7 +2190,7 @@ class TranslatorService:
 
         logger.info(f"🔧 Исправляем {len(conflicts)} конфликтных терминов через LLM")
 
-        result = self.make_request(system_prompt, user_prompt, temperature=0.1)
+        result = self.translator.make_request(system_prompt, user_prompt, temperature=0.1)
         if not result:
             logger.warning("❌ LLM не вернула результат для исправления конфликтов")
             return {}
