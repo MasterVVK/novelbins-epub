@@ -86,14 +86,23 @@ class TtkanParser(BaseParser):
         novel_id = self._extract_novel_id(book_url)
         return f"{self.base_url}/novel/chapters/{novel_id}"
 
-    def get_book_info(self, book_url: str) -> Dict:
+    def get_book_info(self, book_url: str, max_retries: int = 3) -> Dict:
         """Получить информацию о книге"""
         novel_id = self._extract_novel_id(book_url)
         chapters_url = self._build_chapters_url(book_url)
 
-        html = self._get_page_content(chapters_url, timeout=300, description=f"Информация о книге {novel_id}")
+        html = None
+        for attempt in range(max_retries):
+            html = self._get_page_content(chapters_url, timeout=300, description=f"Информация о книге {novel_id}")
+            if html:
+                break
+            wait = 30 * (attempt + 1)
+            print(f"⏳ TTKan: retry инфо книги {attempt + 1}/{max_retries}, ожидание {wait}с...")
+            time.sleep(wait)
+            self.reset_session()
+
         if not html:
-            raise Exception(f"Не удалось получить страницу книги: {chapters_url}")
+            raise Exception(f"Не удалось получить страницу книги после {max_retries} попыток: {chapters_url}")
 
         soup = BeautifulSoup(html, 'html.parser')
 
@@ -138,14 +147,23 @@ class TtkanParser(BaseParser):
             'total_chapters': total_chapters
         }
 
-    def get_chapter_list(self, book_url: str) -> List[Dict]:
+    def get_chapter_list(self, book_url: str, max_retries: int = 3) -> List[Dict]:
         """Получить список глав книги"""
         novel_id = self._extract_novel_id(book_url)
         chapters_url = self._build_chapters_url(book_url)
 
-        html = self._get_page_content(chapters_url, timeout=300, description=f"Список глав {novel_id}")
+        html = None
+        for attempt in range(max_retries):
+            html = self._get_page_content(chapters_url, timeout=300, description=f"Список глав {novel_id}")
+            if html:
+                break
+            wait = 30 * (attempt + 1)
+            print(f"⏳ TTKan: retry список глав {attempt + 1}/{max_retries}, ожидание {wait}с...")
+            time.sleep(wait)
+            self.reset_session()
+
         if not html:
-            raise Exception(f"Не удалось получить список глав: {chapters_url}")
+            raise Exception(f"Не удалось получить список глав после {max_retries} попыток: {chapters_url}")
 
         soup = BeautifulSoup(html, 'html.parser')
 
