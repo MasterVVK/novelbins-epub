@@ -91,7 +91,7 @@ class TtkanParser(BaseParser):
         novel_id = self._extract_novel_id(book_url)
         chapters_url = self._build_chapters_url(book_url)
 
-        html = self._get_page_content(chapters_url, timeout=60, description=f"Информация о книге {novel_id}")
+        html = self._get_page_content(chapters_url, timeout=300, description=f"Информация о книге {novel_id}")
         if not html:
             raise Exception(f"Не удалось получить страницу книги: {chapters_url}")
 
@@ -143,7 +143,7 @@ class TtkanParser(BaseParser):
         novel_id = self._extract_novel_id(book_url)
         chapters_url = self._build_chapters_url(book_url)
 
-        html = self._get_page_content(chapters_url, timeout=60, description=f"Список глав {novel_id}")
+        html = self._get_page_content(chapters_url, timeout=300, description=f"Список глав {novel_id}")
         if not html:
             raise Exception(f"Не удалось получить список глав: {chapters_url}")
 
