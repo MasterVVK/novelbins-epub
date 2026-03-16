@@ -75,18 +75,19 @@ def novels():
     query = Novel.query.filter_by(is_active=True)
 
     # Применяем фильтр по автору если указан
+    # Используем func.trim() чтобы лишние пробелы в БД не мешали сравнению
     if author_filter:
-        query = query.filter(Novel.author == author_filter)
+        query = query.filter(db.func.trim(Novel.author) == author_filter)
 
     novels = query.order_by(Novel.created_at.desc()).all()
 
-    # Получаем уникальных авторов для списка фильтра
-    authors = db.session.query(Novel.author).filter(
+    # Получаем уникальных авторов для списка фильтра (с дедупликацией после trim)
+    authors_raw = db.session.query(Novel.author).filter(
         Novel.is_active == True,
         Novel.author.isnot(None),
         Novel.author != ''
-    ).distinct().order_by(Novel.author).all()
-    authors = [a[0] for a in authors]
+    ).distinct().all()
+    authors = sorted(set(a[0].strip() for a in authors_raw if a[0] and a[0].strip()))
 
     return render_template('novels.html', novels=novels, authors=authors, author_filter=author_filter)
 
