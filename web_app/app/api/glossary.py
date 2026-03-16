@@ -139,18 +139,23 @@ def delete_term(term_id):
 
 @glossary_bp.route('/novels/<int:novel_id>/glossary/search', methods=['GET'])
 def search_terms(novel_id):
-    """Поиск терминов"""
+    """Поиск терминов с пагинацией"""
     try:
-        # Проверяем существование новеллы
         novel = Novel.query.get(novel_id)
         if not novel:
             return jsonify({'success': False, 'error': 'Новелла не найдена'}), 404
-        
+
         query = request.args.get('q', '')
-        category = request.args.get('category')
-        
-        terms = GlossaryService.search_terms(novel_id, query, category)
-        
+        category = request.args.get('category', '')
+        page = request.args.get('page', 1, type=int)
+        per_page = request.args.get('per_page', 50, type=int)
+
+        per_page = max(10, min(per_page, 200))
+
+        result = GlossaryService.search_terms_paginated(
+            novel_id, query, category or None, page, per_page
+        )
+
         return jsonify({
             'success': True,
             'terms': [{
@@ -162,7 +167,15 @@ def search_terms(novel_id):
                 'first_appearance_chapter': term.first_appearance_chapter,
                 'usage_count': term.usage_count,
                 'is_auto_generated': term.is_auto_generated
-            } for term in terms]
+            } for term in result['items']],
+            'pagination': {
+                'total': result['total'],
+                'page': result['page'],
+                'per_page': result['per_page'],
+                'pages': result['pages'],
+                'has_prev': result['has_prev'],
+                'has_next': result['has_next']
+            }
         })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500

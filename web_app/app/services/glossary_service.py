@@ -123,7 +123,45 @@ class GlossaryService:
             )
         
         return GlossaryItem.query.filter(*filters).order_by(GlossaryItem.english_term).all()
-    
+
+    @staticmethod
+    def search_terms_paginated(novel_id: int, query: str = '', category: str = None,
+                               page: int = 1, per_page: int = 50) -> Dict:
+        """Поиск терминов с пагинацией"""
+        filters = [
+            GlossaryItem.novel_id == novel_id,
+            GlossaryItem.is_active == True
+        ]
+
+        if category:
+            filters.append(GlossaryItem.category == category)
+
+        if query:
+            filters.append(
+                db.or_(
+                    GlossaryItem.english_term.ilike(f'%{query}%'),
+                    GlossaryItem.russian_term.ilike(f'%{query}%'),
+                    GlossaryItem.description.ilike(f'%{query}%')
+                )
+            )
+
+        pagination = GlossaryItem.query.filter(
+            *filters
+        ).order_by(
+            GlossaryItem.category,
+            GlossaryItem.english_term
+        ).paginate(page=page, per_page=per_page, error_out=False)
+
+        return {
+            'items': pagination.items,
+            'total': pagination.total,
+            'page': pagination.page,
+            'per_page': pagination.per_page,
+            'pages': pagination.pages,
+            'has_prev': pagination.has_prev,
+            'has_next': pagination.has_next
+        }
+
     @staticmethod
     def get_terms_by_category(novel_id: int, category: str) -> List[GlossaryItem]:
         """Получение терминов по категории"""

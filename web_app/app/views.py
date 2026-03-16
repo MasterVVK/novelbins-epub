@@ -1633,18 +1633,8 @@ def bilingual_templates():
 @main_bp.route('/novels/<int:novel_id>/glossary')
 def novel_glossary(novel_id):
     """Страница глоссария новеллы"""
-    from app.services.glossary_service import GlossaryService
-    
     novel = Novel.query.get_or_404(novel_id)
-    glossary = GlossaryService.get_glossary_for_novel(novel_id)
-    stats = GlossaryService.get_term_statistics(novel_id)
-    categories = GlossaryService.get_categories()
-    
-    return render_template('novel_glossary.html', 
-                         novel=novel,
-                         glossary=glossary,
-                         stats=stats,
-                         categories=categories)
+    return render_template('novel_glossary.html', novel=novel)
 
 
 @main_bp.route('/novels/<int:novel_id>/glossary/add', methods=['GET', 'POST'])
