@@ -1125,19 +1125,50 @@ def translate_novel_chapters_task(self, novel_id, chapter_ids):
         }
 
     except Terminated:
-        # Отмена через сигнал
+        # Проверяем: отмена пользователем или крах инфраструктуры?
         novel = Novel.query.get(novel_id)
         if novel:
-            novel.status = 'translation_cancelled'
-            novel.translation_task_id = None
-            db.session.commit()
-        LogService.log_warning(f"🛑 [Novel:{novel_id}] Перевод прерван по сигналу SIGTERM", novel_id=novel_id)
-        return {
-            'status': 'cancelled',
-            'message': 'Перевод отменён пользователем',
-            'translated_chapters': success_count,
-            'total_chapters': total_chapters
-        }
+            db.session.refresh(novel)
+
+            if novel.status == 'translation_cancelled':
+                # Пользователь отменил через API (статус уже установлен cancel endpoint'ом)
+                novel.translation_task_id = None
+                db.session.commit()
+                LogService.log_warning(f"🛑 [Novel:{novel_id}] Перевод отменён пользователем", novel_id=novel_id)
+                return {
+                    'status': 'cancelled',
+                    'message': 'Перевод отменён пользователем',
+                    'translated_chapters': success_count,
+                    'total_chapters': total_chapters
+                }
+            else:
+                # Крах инфраструктуры (перезапуск Ollama, убийство worker'а и т.д.)
+                max_task_retries = 3
+                retry_num = self.request.retries + 1
+                LogService.log_warning(
+                    f"⚠️ [Novel:{novel_id}] Перевод прерван (SIGTERM, не по запросу пользователя). "
+                    f"Автоперезапуск {retry_num}/{max_task_retries} через 60 сек...",
+                    novel_id=novel_id
+                )
+                # Очищаем task_id старой задачи, новая задача установит свой
+                novel.translation_task_id = None
+                db.session.commit()
+                try:
+                    self.retry(countdown=60, max_retries=max_task_retries)
+                except self.MaxRetriesExceededError:
+                    novel = Novel.query.get(novel_id)
+                    if novel:
+                        novel.status = 'translation_error'
+                        novel.translation_task_id = None
+                        db.session.commit()
+                    LogService.log_error(
+                        f"❌ [Novel:{novel_id}] Перевод прерван. "
+                        f"Исчерпаны все {max_task_retries} попытки автоматического перезапуска.",
+                        novel_id=novel_id
+                    )
+                    raise
+        else:
+            LogService.log_error(f"❌ [Novel:{novel_id}] Перевод прерван, новелла не найдена", novel_id=novel_id)
 
     except SoftTimeLimitExceeded:
         novel = Novel.query.get(novel_id)
