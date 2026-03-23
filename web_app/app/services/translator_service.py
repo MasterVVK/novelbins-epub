@@ -1481,7 +1481,11 @@ class TranslatorService:
             return True
             
         except Exception as e:
-            LogService.log_error(f"Ошибка перевода главы {chapter.chapter_number}: {e}", 
+            # Пропускаем Terminated (отмена Celery задачи) — должен дойти до celery_tasks
+            from celery.exceptions import Terminated
+            if isinstance(e, Terminated):
+                raise
+            LogService.log_error(f"Ошибка перевода главы {chapter.chapter_number}: {e}",
                                novel_id=chapter.novel_id, chapter_id=chapter.id)
             print(f"   ❌ Ошибка перевода главы {chapter.chapter_number}: {e}")
             db.session.rollback()

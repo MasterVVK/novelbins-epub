@@ -221,6 +221,10 @@ class UniversalLLMTranslator:
                     raise
 
                 except Exception as e:
+                    # Пропускаем Terminated (отмена Celery задачи)
+                    from celery.exceptions import Terminated
+                    if isinstance(e, Terminated):
+                        raise
                     LogService.log_error(f"Исключение при запросе: {e}")
                     import traceback
                     LogService.log_error(f"Traceback: {traceback.format_exc()}")

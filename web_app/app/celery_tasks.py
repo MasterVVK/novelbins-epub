@@ -1080,7 +1080,12 @@ def translate_novel_chapters_task(self, novel_id, chapter_ids):
                     else:
                         raise Exception("translate_chapter вернул False")
 
+                except Terminated:
+                    raise
                 except Exception as e:
+                    # Если задача отменена — не ждём, выходим сразу
+                    if _cancel_requested:
+                        break
                     if attempt < max_attempts - 1:
                         delay_seconds = retry_delays[attempt + 1]
                         delay_minutes = delay_seconds // 60

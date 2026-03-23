@@ -672,6 +672,10 @@ class AIAdapterService:
                 'error_type': 'connection'
             }
         except Exception as e:
+            # Пропускаем Terminated (отмена Celery задачи)
+            from celery.exceptions import Terminated
+            if isinstance(e, Terminated):
+                raise
             error_msg = f'Неожиданная ошибка при запросе к Ollama: {type(e).__name__}: {str(e)}'
             logger.error(error_msg)
             import traceback
@@ -875,6 +879,10 @@ class AIAdapterService:
                 'error_type': 'connection'
             }
         except Exception as e:
+            # Пропускаем Terminated (отмена Celery задачи)
+            from celery.exceptions import Terminated
+            if isinstance(e, Terminated):
+                raise
             error_msg = f'Неожиданная ошибка при запросе к OpenRouter: {type(e).__name__}: {str(e)}'
             logger.error(error_msg)
             import traceback
