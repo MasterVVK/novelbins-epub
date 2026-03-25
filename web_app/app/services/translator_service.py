@@ -924,7 +924,7 @@ class TranslatorService:
 
             # Форматируем промпты с данными новеллы (подстановка {novel_title}, {novel_author}, {genre})
             formatted_translation_prompt = format_prompt_with_novel_context(
-                formatted_translation_prompt, chapter.novel
+                prompt_template.translation_prompt, chapter.novel
             )
             formatted_summary_prompt = format_prompt_with_novel_context(
                 prompt_template.summary_prompt, chapter.novel
