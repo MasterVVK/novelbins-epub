@@ -919,9 +919,20 @@ class TranslatorService:
                 print("❌ Не найден шаблон промпта")
                 return False
             
-            LogService.log_info(f"Шаблон промпта получен: {prompt_template.name}", 
+            LogService.log_info(f"Шаблон промпта получен: {prompt_template.name}",
                               novel_id=chapter.novel_id, chapter_id=chapter.id)
-            
+
+            # Форматируем промпты с данными новеллы (подстановка {novel_title}, {novel_author}, {genre})
+            formatted_translation_prompt = format_prompt_with_novel_context(
+                formatted_translation_prompt, chapter.novel
+            )
+            formatted_summary_prompt = format_prompt_with_novel_context(
+                prompt_template.summary_prompt, chapter.novel
+            ) if prompt_template.summary_prompt else None
+            formatted_terms_prompt = format_prompt_with_novel_context(
+                prompt_template.terms_extraction_prompt, chapter.novel
+            ) if prompt_template.terms_extraction_prompt else None
+
             # Создаем контекст перевода с оригинальным текстом для контекстной фильтрации глоссария
             LogService.log_info(f"Создаем контекст перевода для главы {chapter.chapter_number}",
                               novel_id=chapter.novel_id, chapter_id=chapter.id)
@@ -976,7 +987,7 @@ class TranslatorService:
                                   novel_id=chapter.novel_id, chapter_id=chapter.id)
                 translated_part = self.translator.translate_text(
                     part, 
-                    prompt_template.translation_prompt,
+                    formatted_translation_prompt,
                     context_prompt,
                     chapter.id,
                     temperature=translation_temperature
@@ -1057,7 +1068,7 @@ class TranslatorService:
                         
                         sub_translation = self.translator.translate_text(
                             sub_part,
-                            prompt_template.translation_prompt,
+                            formatted_translation_prompt,
                             context_prompt,
                             chapter.id,
                             temperature=translation_temperature
@@ -1108,7 +1119,7 @@ class TranslatorService:
                     
                     translated_part = self.translator.translate_text(
                         part, 
-                        prompt_template.translation_prompt,
+                        formatted_translation_prompt,
                         context_prompt,
                         chapter.id,
                         temperature=translation_temperature
@@ -1133,7 +1144,7 @@ class TranslatorService:
                         for k, ultra_part in enumerate(ultra_parts):
                             ultra_translation = self.translator.translate_text(
                                 ultra_part,
-                                prompt_template.translation_prompt,
+                                formatted_translation_prompt,
                                 context_prompt,
                                 chapter.id,
                                 temperature=translation_temperature
@@ -1294,7 +1305,7 @@ class TranslatorService:
 
                         translated_part = self.translator.translate_text(
                             part,
-                            prompt_template.translation_prompt,
+                            formatted_translation_prompt,
                             context_prompt,
                             chapter.id,
                             temperature=retry_temperature
@@ -1352,7 +1363,7 @@ class TranslatorService:
 
                                 translated_part = self.translator.translate_text(
                                     part,
-                                    prompt_template.translation_prompt,
+                                    formatted_translation_prompt,
                                     context_prompt,
                                     chapter.id,
                                     temperature=third_retry_temperature
@@ -1434,12 +1445,12 @@ class TranslatorService:
             
             # Генерируем резюме с контекстным глоссарием для консистентности терминов
             summary = None
-            if prompt_template.summary_prompt:
+            if formatted_summary_prompt:
                 LogService.log_info(f"Генерируем резюме для главы {chapter.chapter_number}",
                                   novel_id=chapter.novel_id, chapter_id=chapter.id)
                 # Передаём контекстный глоссарий для правильных имён в резюме
                 glossary_for_summary = context._format_context_glossary() if hasattr(context, '_format_context_glossary') else None
-                summary = self.translator.generate_summary(content, prompt_template.summary_prompt, chapter.id, glossary_for_summary)
+                summary = self.translator.generate_summary(content, formatted_summary_prompt, chapter.id, glossary_for_summary)
                 if summary:
                     LogService.log_info(f"Резюме сгенерировано, длина: {len(summary)} символов", 
                                       novel_id=chapter.novel_id, chapter_id=chapter.id)
@@ -1448,11 +1459,11 @@ class TranslatorService:
                                          novel_id=chapter.novel_id, chapter_id=chapter.id)
             
             # Извлекаем новые термины с контекстной фильтрацией глоссария
-            if prompt_template.terms_extraction_prompt:
+            if formatted_terms_prompt:
                 LogService.log_info(f"Извлекаем новые термины из главы {chapter.chapter_number}",
                                   novel_id=chapter.novel_id, chapter_id=chapter.id)
                 # Используем исходный китайский текст для извлечения терминов и фильтрации глоссария
-                new_terms = self.extract_new_terms(chapter.original_text, prompt_template.terms_extraction_prompt, context.glossary, chapter.id, chapter.original_text)
+                new_terms = self.extract_new_terms(chapter.original_text, formatted_terms_prompt, context.glossary, chapter.id, chapter.original_text)
                 if new_terms:
                     total_terms = sum(len(terms) for terms in new_terms.values())
                     LogService.log_info(f"Найдено {total_terms} новых терминов",
