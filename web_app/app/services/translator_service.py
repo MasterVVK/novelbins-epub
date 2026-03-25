@@ -32,6 +32,46 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+class SafeDict(dict):
+    """Словарь для str.format_map(), возвращающий плейсхолдер при отсутствии ключа.
+    Обеспечивает обратную совместимость: неизвестные {key} остаются как есть.
+    """
+    def __missing__(self, key):
+        return '{' + key + '}'
+
+
+def format_prompt_with_novel_context(prompt_text: str, novel) -> str:
+    """Форматирование промпта с подстановкой данных новеллы.
+
+    Плейсхолдеры: {novel_title}, {original_title}, {novel_author}, {genre}.
+    Все прочие {плейсхолдеры} остаются без изменений (SafeDict).
+    """
+    if not prompt_text or not novel:
+        return prompt_text or ""
+
+    genre = ''
+    if novel.prompt_template_id:
+        template = PromptTemplate.query.get(novel.prompt_template_id)
+        if template and template.category:
+            genre_map = {
+                'xianxia': 'сянься',
+                'wuxia': 'уся',
+                'modern': 'современный роман',
+                'fantasy': 'фэнтези',
+                'scifi': 'научная фантастика',
+                'romance': 'романтика',
+                'general': 'общий',
+            }
+            genre = genre_map.get(template.category, template.category)
+
+    return prompt_text.format_map(SafeDict(
+        novel_title=novel.title or '',
+        original_title=novel.original_title or novel.title or '',
+        novel_author=novel.author or '',
+        genre=genre,
+    ))
+
+
 def preprocess_chapter_text(text: str) -> str:
     """Предобработка текста главы для избежания проблем с токенизацией"""
     
