@@ -354,9 +354,8 @@ class AIAdapterService:
                     logger.info(f"num_ctx ({num_ctx:,}) меньше минимального ({min_context_size:,}), устанавливаем минимум")
                     num_ctx = min_context_size
 
-                # num_predict = num_ctx × 2 (обычные модели)
-                # Для reasoning моделей: num_ctx × 6 (требуют больше токенов для внутреннего мышления)
-                # + минимум 80000 токенов чтобы thinking не съело весь бюджет
+                # num_predict = num_ctx × 2 (обычные и reasoning модели)
+                # Для reasoning моделей: минимум 80000 токенов чтобы thinking не съело весь бюджет
                 # Для alignment и других задач с большим выходом: используем переданный множитель
                 if expected_output_multiplier:
                     # Явно переданный множитель (например, для alignment ×4)
@@ -366,8 +365,8 @@ class AIAdapterService:
                     num_predict = min(num_predict, self.model.max_output_tokens)
                     logger.info(f"  📤 Увеличенный выход: num_predict = max(num_ctx × {predict_multiplier}, {min_predict:,})")
                 elif hasattr(self.model, 'enable_thinking') and self.model.enable_thinking:
-                    predict_multiplier = 6  # Reasoning модели (увеличено с 4 до 6)
-                    min_predict_for_reasoning = 80000  # Минимум для reasoning моделей (увеличено с 40k)
+                    predict_multiplier = 2  # Reasoning модели: ×2 + минимум 80k для thinking
+                    min_predict_for_reasoning = 80000  # Минимум для reasoning моделей
                     logger.info(f"  ✅ enable_thinking=True для {self.model.model_id}")
                     num_predict = max(num_ctx * predict_multiplier, min_predict_for_reasoning)
                     num_predict = min(num_predict, self.model.max_output_tokens)
