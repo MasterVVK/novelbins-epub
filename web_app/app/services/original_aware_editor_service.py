@@ -848,9 +848,11 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
 
         if original_text:
             # Контекстная фильтрация - только персонажи из этой главы
+            original_normalized = normalize_chinese(original_text)
             result.append("ПЕРСОНАЖИ:")
             for chinese, russian in characters.items():
-                if chinese in original_text:
+                chinese_normalized = normalize_chinese(chinese)
+                if chinese in original_text or chinese_normalized in original_normalized:
                     result.append(f"  {chinese} = {russian}")
         else:
             # Fallback - первые 100 персонажей
