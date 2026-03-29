@@ -1797,8 +1797,18 @@ class TranslatorService:
         """
         LogService.log_info(f"Отдельный перевод названия: '{original_title}'", chapter_id=chapter_id)
 
-        # Формируем специальный промпт для названия с глоссарием
-        glossary_text = self._format_glossary_for_prompt(glossary)
+        # Контекстная фильтрация глоссария — только термины из заголовка
+        title_normalized = normalize_chinese(original_title)
+        filtered_glossary = {}
+        for category, terms in glossary.items():
+            filtered = {}
+            for chinese, russian in terms.items():
+                chinese_normalized = normalize_chinese(chinese)
+                if chinese in original_title or chinese_normalized in title_normalized:
+                    filtered[chinese] = russian
+            if filtered:
+                filtered_glossary[category] = filtered
+        glossary_text = self._format_glossary_for_prompt(filtered_glossary)
 
         title_prompt = f"""Ты профессиональный переводчик китайских веб-новелл жанра сянься.
 
