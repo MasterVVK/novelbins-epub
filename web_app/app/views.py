@@ -33,7 +33,7 @@ def get_active_task_for_novel(novel):
         task_id = getattr(novel, field)
         if task_id:
             result = AsyncResult(task_id, app=celery)
-            if result.state in ['PENDING', 'STARTED', 'PROGRESS']:
+            if result.state in ['PENDING', 'STARTED', 'PROGRESS', 'RETRY']:
                 return task_name, task_id
             else:
                 # Stale task_id — задача завершена, очищаем

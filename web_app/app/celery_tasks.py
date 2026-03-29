@@ -978,6 +978,7 @@ def translate_novel_chapters_task(self, novel_id, chapter_ids):
 
     success_count = 0
     total_chapters = 0
+    _retrying = False
 
     try:
         # Получаем новеллу
@@ -989,6 +990,18 @@ def translate_novel_chapters_task(self, novel_id, chapter_ids):
         prompt_template = novel.get_prompt_template()
         if not prompt_template:
             raise ValueError(f"Не найден шаблон промпта для новеллы {novel_id}")
+
+        # Проверка на дубль: если другая задача уже переводит эту новеллу
+        if novel.translation_task_id and novel.translation_task_id != self.request.id:
+            from celery.result import AsyncResult
+            existing = AsyncResult(novel.translation_task_id, app=celery)
+            if existing.state in ['PENDING', 'STARTED', 'PROGRESS', 'RETRY']:
+                LogService.log_warning(
+                    f"⚠️ [Novel:{novel_id}] Задача {self.request.id[:8]} отменена: "
+                    f"уже выполняется задача {novel.translation_task_id[:8]}",
+                    novel_id=novel_id
+                )
+                return {'status': 'aborted', 'message': 'Another translation is already running'}
 
         # Обновляем статус
         novel.status = 'translating'
@@ -1155,9 +1168,9 @@ def translate_novel_chapters_task(self, novel_id, chapter_ids):
                     f"Автоперезапуск {retry_num}/{max_task_retries} через 60 сек...",
                     novel_id=novel_id
                 )
-                # Очищаем task_id старой задачи, новая задача установит свой
-                novel.translation_task_id = None
-                db.session.commit()
+                # НЕ очищаем task_id — retry сохраняет тот же id,
+                # task_id в БД блокирует запуск дублей
+                _retrying = True
                 try:
                     self.retry(countdown=60, max_retries=max_task_retries)
                 except self.MaxRetriesExceededError:
@@ -1197,14 +1210,15 @@ def translate_novel_chapters_task(self, novel_id, chapter_ids):
         # Восстанавливаем старый обработчик сигнала
         signal.signal(signal.SIGTERM, old_handler)
 
-        # Гарантированно очищаем translation_task_id
-        try:
-            novel = Novel.query.get(novel_id)
-            if novel and novel.translation_task_id == self.request.id:
-                novel.translation_task_id = None
-                db.session.commit()
-        except:
-            pass
+        # Гарантированно очищаем translation_task_id (кроме retry — там id остаётся)
+        if not _retrying:
+            try:
+                novel = Novel.query.get(novel_id)
+                if novel and novel.translation_task_id == self.request.id:
+                    novel.translation_task_id = None
+                    db.session.commit()
+            except:
+                pass
 
 
 @celery.task(bind=True, base=CallbackTask, soft_time_limit=172800, time_limit=172860)  # 48 часов soft + 1 мин на cleanup
