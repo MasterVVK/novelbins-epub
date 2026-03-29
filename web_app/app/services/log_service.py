@@ -248,7 +248,7 @@ class LogService:
         ).order_by(desc(LogEntry.created_at)).limit(limit).all()
     
     @staticmethod
-    def clear_old_logs(days: int = 30) -> int:
+    def clear_old_logs(days: int = 7) -> int:
         """Очистка старых логов"""
         cutoff_date = datetime.utcnow() - timedelta(days=days)
         deleted = LogEntry.query.filter(LogEntry.created_at < cutoff_date).delete()

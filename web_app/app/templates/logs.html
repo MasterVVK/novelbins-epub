@@ -410,14 +410,14 @@ function toggleAutoRefresh() {
 
 // Очистка старых логов
 function clearOldLogs() {
-    if (!confirm('Удалить логи старше 30 дней?')) return;
-    
+    if (!confirm('Удалить логи старше 7 дней?')) return;
+
     fetch('/api/logs/clear', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ days: 30 })
+        body: JSON.stringify({ days: 7 })
     })
     .then(response => response.json())
     .then(data => {

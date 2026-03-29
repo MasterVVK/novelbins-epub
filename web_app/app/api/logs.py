@@ -203,7 +203,7 @@ def get_log_stats():
 def clear_old_logs():
     """Очистка старых логов"""
     try:
-        days = request.json.get('days', 30) if request.is_json else 30
+        days = request.json.get('days', 7) if request.is_json else 7
         
         deleted_count = LogService.clear_old_logs(days=days)
         

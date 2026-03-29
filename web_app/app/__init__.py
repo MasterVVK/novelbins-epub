@@ -164,6 +164,15 @@ def create_app(config_name=None):
     with app.app_context():
         setup_sqlite_wal(app)
 
+        # Автоматическая очистка логов старше 7 дней
+        try:
+            from .services.log_service import LogService
+            deleted = LogService.clear_old_logs(days=7)
+            if deleted:
+                app.logger.info(f'Очистка логов: удалено {deleted} записей старше 7 дней')
+        except Exception as e:
+            app.logger.warning(f'Не удалось очистить старые логи: {e}')
+
     # Настройка Celery - ВАЖНО: нужно установить до регистрации задач
     celery.conf.broker_url = app.config['CELERY_BROKER_URL']
     celery.conf.result_backend = app.config['CELERY_RESULT_BACKEND']
