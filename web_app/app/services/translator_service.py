@@ -1182,7 +1182,7 @@ class TranslatorService:
             # ========== НОВАЯ ЛОГИКА: Проверка и коррекция названия ==========
             # Проверяем настройку в конфиге новеллы
             novel_config = chapter.novel.config or {}
-            validate_title_glossary = novel_config.get('validate_title_glossary', True)
+            validate_title_glossary = novel_config.get('validate_title_glossary', False)
             translate_title_separately = novel_config.get('translate_title_separately', False)
 
             if title and validate_title_glossary:
