@@ -1233,7 +1233,7 @@ class TranslatorService:
                             novel_id=chapter.novel_id,
                             chapter_id=chapter.id
                         )
-            elif not title and chapter.original_title and translate_title_separately:
+            elif not title and chapter.original_title:
                 # Название не извлечено, но есть оригинал - переводим отдельно
                 LogService.log_info(
                     f"Название не извлечено из перевода. Переводим '{chapter.original_title}' отдельно.",
