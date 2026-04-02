@@ -622,6 +622,18 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
 
             # Ищем название среди всех переводов главы (от новых к старым)
             existing_title = chapter.translated_title  # Уже использует умную логику поиска
+            if not existing_title and chapter.original_title:
+                try:
+                    existing_title = self.translator.translate_title_with_glossary(
+                        chapter.original_title, glossary, chapter.id
+                    )
+                    if existing_title:
+                        LogService.log_info(
+                            f"Переведено название главы при редактуре: '{chapter.original_title}' → '{existing_title}'",
+                            chapter_id=chapter.id
+                        )
+                except Exception as e:
+                    LogService.log_warning(f"Не удалось перевести название главы: {e}", chapter_id=chapter.id)
             if not existing_title:
                 existing_title = f"Глава {chapter.chapter_number}"
 
