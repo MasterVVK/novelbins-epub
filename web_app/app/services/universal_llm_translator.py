@@ -4,7 +4,9 @@
 import time
 import logging
 import asyncio
-from typing import Optional, List
+import random
+import threading
+from typing import Optional, List, Dict
 from app.models import AIModel
 from app.services.ai_adapter_service import AIAdapterService
 from app.services.log_service import LogService
@@ -26,6 +28,71 @@ except ImportError:
         return text
 
 logger = logging.getLogger(__name__)
+
+
+class AdaptiveConcurrencyLimiter:
+    """
+    Адаптивный лимитер параллельности для Ollama endpoints.
+    Уменьшает параллельность при 429, увеличивает при серии успехов.
+    Работает между потоками ThreadPoolExecutor.
+    """
+
+    def __init__(self, max_concurrent: int):
+        self.max_concurrent = max_concurrent
+        self.current_limit = max_concurrent
+        self._active = 0
+        self._cond = threading.Condition()
+        self._success_streak = 0
+
+    def acquire(self, timeout: float = 300) -> bool:
+        """Захватить слот. Блокирует поток пока active >= current_limit."""
+        with self._cond:
+            deadline = time.monotonic() + timeout
+            while self._active >= self.current_limit:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                self._cond.wait(timeout=remaining)
+            self._active += 1
+            return True
+
+    def release(self):
+        """Освободить слот."""
+        with self._cond:
+            self._active -= 1
+            self._cond.notify()
+
+    def report_success(self):
+        """Сообщить об успешном запросе. После 5 успехов подряд увеличивает лимит."""
+        with self._cond:
+            self._success_streak += 1
+            if self._success_streak >= 5 and self.current_limit < self.max_concurrent:
+                self.current_limit += 1
+                self._success_streak = 0
+                logger.info(f"📈 Адаптивный лимит увеличен до {self.current_limit}/{self.max_concurrent}")
+                self._cond.notify()
+
+    def report_429(self):
+        """Сообщить о 429 ошибке. Уменьшает лимит (минимум 1)."""
+        with self._cond:
+            self._success_streak = 0
+            if self.current_limit > 1:
+                self.current_limit -= 1
+                logger.warning(f"📉 Адаптивный лимит уменьшен до {self.current_limit}/{self.max_concurrent}")
+
+
+# Глобальный registry лимитеров per endpoint
+_limiters: Dict[str, AdaptiveConcurrencyLimiter] = {}
+_limiter_lock = threading.Lock()
+
+
+def _get_limiter(endpoint: str, max_concurrent: int) -> AdaptiveConcurrencyLimiter:
+    """Получить или создать лимитер для endpoint."""
+    with _limiter_lock:
+        if endpoint not in _limiters:
+            _limiters[endpoint] = AdaptiveConcurrencyLimiter(max_concurrent)
+            logger.info(f"Создан адаптивный лимитер для {endpoint}: max_concurrent={max_concurrent}")
+        return _limiters[endpoint]
 
 
 class UniversalLLMTranslator:
@@ -286,8 +353,56 @@ class UniversalLLMTranslator:
                         # Кидаем исключение чтобы остановить всю задачу
                         raise RateLimitError(f"Достигнут {limit_type} лимит: {error}")
 
-                    # Специальная обработка для Ollama server error (500), upstream error (502), service unavailable (503), upstream timeout (504), timeout, unexpected error и concurrent_slot (429) с короткими повторами
-                    if self.model.provider == 'ollama' and error_type in ['upstream_error', 'upstream_timeout', 'server_error', 'service_unavailable', 'timeout', 'unexpected', 'concurrent_slot']:
+                    # Специальная обработка concurrent_slot (429) — быстрые retry с jitter
+                    if self.model.provider == 'ollama' and error_type == 'concurrent_slot':
+                        LogService.log_warning(f"⚠️ Слоты Ollama заняты (429) для модели {self.model.model_id}")
+                        LogService.log_warning(f"   Текст ошибки: {error}")
+
+                        # Сигнализируем адаптивному лимитеру
+                        endpoint = getattr(self.model, 'api_endpoint', '')
+                        if endpoint and endpoint in _limiters:
+                            _limiters[endpoint].report_429()
+
+                        # Быстрые retry с jitter (до 15 попыток, ~2-3 мин суммарно)
+                        max_retries_429 = 15
+                        for attempt_429 in range(1, max_retries_429 + 1):
+                            delay = random.uniform(1, 5) * (1 + attempt_429 * 0.3)
+                            LogService.log_info(f"⏳ Retry {attempt_429}/{max_retries_429}: ожидание {delay:.1f}с...")
+                            await asyncio.sleep(delay)
+
+                            retry_result = await adapter.generate_content(system_prompt, user_prompt, temperature, max_tokens)
+
+                            if retry_result['success']:
+                                LogService.log_info(f"✅ Retry {attempt_429} успешен после 429!")
+                                self.last_finish_reason = retry_result.get('finish_reason', 'unknown')
+
+                                if endpoint and endpoint in _limiters:
+                                    _limiters[endpoint].report_success()
+
+                                if self.save_prompt_history and self.current_chapter_id:
+                                    self._save_prompt_history(system_prompt, user_prompt, retry_result['content'], retry_result, True)
+
+                                return retry_result['content']
+
+                            retry_error_type = retry_result.get('error_type', 'general')
+                            if retry_error_type == 'concurrent_slot':
+                                if endpoint and endpoint in _limiters:
+                                    _limiters[endpoint].report_429()
+                                continue
+                            else:
+                                # Другая ошибка — прекращаем retry
+                                LogService.log_error(f"❌ Тип ошибки изменился: {retry_error_type}")
+                                if self.save_prompt_history and self.current_chapter_id:
+                                    self._save_prompt_history(system_prompt, user_prompt, None, retry_result, False, retry_result.get('error', ''))
+                                return None
+
+                        LogService.log_error(f"❌ Все {max_retries_429} быстрых retry исчерпаны для 429")
+                        if self.save_prompt_history and self.current_chapter_id:
+                            self._save_prompt_history(system_prompt, user_prompt, None, result, False, f"429 concurrent_slot после {max_retries_429} попыток")
+                        return None
+
+                    # Специальная обработка для Ollama server error (500), upstream error (502), service unavailable (503), upstream timeout (504), timeout, unexpected error с длинными повторами
+                    if self.model.provider == 'ollama' and error_type in ['upstream_error', 'upstream_timeout', 'server_error', 'service_unavailable', 'timeout', 'unexpected']:
                         if error_type == 'server_error':
                             error_name = 'внутренняя ошибка сервера (500)'
                         elif error_type == 'service_unavailable':
@@ -298,8 +413,6 @@ class UniversalLLMTranslator:
                             error_name = 'таймаут клиента (>20 минут)'
                         elif error_type == 'unexpected':
                             error_name = 'неожиданная ошибка сети (RemoteProtocolError и др.)'
-                        elif error_type == 'concurrent_slot':
-                            error_name = 'слоты Ollama заняты (429 concurrent request slot)'
                         else:
                             error_name = 'upstream error (502)'
 
@@ -357,10 +470,14 @@ class UniversalLLMTranslator:
                                 LogService.log_warning(f"   Тип ошибки: {retry_error_type}")
                                 LogService.log_warning(f"   Текст ошибки: {retry_error}")
 
-                                # Если это всё ещё server/upstream error/service_unavailable/timeout/unexpected/concurrent_slot, продолжаем повторы
-                                if retry_error_type in ['upstream_error', 'upstream_timeout', 'server_error', 'service_unavailable', 'timeout', 'unexpected', 'concurrent_slot']:
+                                # Если это всё ещё server/upstream error, продолжаем повторы
+                                if retry_error_type in ['upstream_error', 'upstream_timeout', 'server_error', 'service_unavailable', 'timeout', 'unexpected']:
                                     LogService.log_warning(f"   → Продолжаем повторы ({retry_error_type})")
                                     continue
+                                elif retry_error_type == 'concurrent_slot':
+                                    # 429 — переключаемся на быстрые retry
+                                    LogService.log_warning(f"   → Ошибка сменилась на 429, используем быстрые retry")
+                                    break
                                 else:
                                     # Если другая ошибка - прерываем повторы
                                     LogService.log_error(f"❌ Тип ошибки изменился на {retry_error_type}")
@@ -543,7 +660,30 @@ class UniversalLLMTranslator:
                 raise
 
     def make_request(self, system_prompt: str, user_prompt: str, temperature: float = None, **kwargs) -> Optional[str]:
-        """Синхронная обёртка над асинхронным методом"""
+        """Синхронная обёртка над асинхронным методом с адаптивным контролем параллельности"""
+        endpoint = getattr(self.model, 'api_endpoint', '')
+        limiter = None
+
+        # Адаптивный лимитер только для Ollama
+        if self.model.provider == 'ollama' and endpoint:
+            limiter = _get_limiter(endpoint, max_concurrent=10)
+
+        if limiter:
+            if not limiter.acquire(timeout=300):
+                LogService.log_error("Таймаут ожидания слота адаптивного лимитера (5 мин)")
+                return None
+
+        try:
+            result = self._execute_request(system_prompt, user_prompt, temperature, **kwargs)
+            if limiter and result is not None:
+                limiter.report_success()
+            return result
+        finally:
+            if limiter:
+                limiter.release()
+
+    def _execute_request(self, system_prompt: str, user_prompt: str, temperature: float = None, **kwargs) -> Optional[str]:
+        """Выполнение запроса через event loop"""
         try:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
