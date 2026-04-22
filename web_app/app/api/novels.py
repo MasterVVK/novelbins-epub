@@ -15,9 +15,11 @@ logger = logging.getLogger(__name__)
 _DEAD_TASK_STATES = {'FAILURE', 'REVOKED', 'SUCCESS'}
 # Статусы новеллы, при которых PENDING task_id считается потерянным
 _TERMINAL_NOVEL_STATUSES = {
-    'parsed', 'translated', 'edited', 'aligned',
-    'parsing_cancelled', 'translation_cancelled', 'editing_cancelled', 'alignment_cancelled',
-    'parsing_error', 'translation_error', 'editing_error', 'alignment_error',
+    'parsed', 'translated', 'edited', 'aligned', 'epub_generated',
+    'parsing_cancelled', 'translation_cancelled', 'editing_cancelled',
+    'alignment_cancelled', 'epub_generation_cancelled',
+    'parsing_error', 'translation_error', 'editing_error',
+    'alignment_error', 'epub_generation_error', 'epub_error',
     'parsing_timeout', 'translation_timeout', 'editing_timeout',
 }
 
