@@ -783,8 +783,9 @@ def start_translation(novel_id):
             queue='llm_queue'
         )
 
-        # Сохраняем ID задачи в новелле
+        # Сохраняем ID задачи и обновляем статус
         novel.translation_task_id = task.id
+        novel.status = 'translating'
         db.session.commit()
 
         logger.info(f"✅ Task ID: {task.id}, State: {task.state}")
@@ -853,8 +854,9 @@ def start_editing(novel_id):
             queue='llm_queue'
         )
 
-        # Сохраняем ID задачи в новелле
+        # Сохраняем ID задачи и обновляем статус (чтобы не был terminal пока задача в очереди)
         novel.editing_task_id = task.id
+        novel.status = 'editing'
         db.session.commit()
 
         logger.info(f"✅ Task ID: {task.id}, State: {task.state}")
@@ -927,8 +929,9 @@ def start_alignment(novel_id):
             queue='llm_queue'
         )
 
-        # Сохраняем ID задачи в новелле
+        # Сохраняем ID задачи и обновляем статус (чтобы не был terminal пока задача в очереди)
         novel.alignment_task_id = task.id
+        novel.status = 'aligning'
         db.session.commit()
 
         logger.info(f"✅ Task ID: {task.id}, State: {task.state}")
