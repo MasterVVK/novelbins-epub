@@ -62,16 +62,8 @@ def _cleanup_stale_tasks(novel):
         result = celery.AsyncResult(task_id)
         state = result.state
 
-        should_clean = False
-
         if state in _DEAD_TASK_STATES:
             # Задача завершилась (упала, отменена, выполнена) — task_id не был очищен
-            should_clean = True
-        elif state == 'PENDING' and novel.status in _TERMINAL_NOVEL_STATUSES:
-            # PENDING + терминальный статус новеллы = задача потеряна
-            should_clean = True
-
-        if should_clean:
             setattr(novel, field, None)
             cleaned.append(f"{field}={task_id[:8]}... (Celery state={state})")
 
