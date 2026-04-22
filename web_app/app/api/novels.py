@@ -5,8 +5,77 @@ from flask import Blueprint, request, jsonify, render_template_string
 from app.models import Novel
 from app import db
 import re
+import logging
 
 novels_bp = Blueprint('novels', __name__)
+logger = logging.getLogger(__name__)
+
+
+# Статусы задач, при которых task_id считается мёртвым
+_DEAD_TASK_STATES = {'FAILURE', 'REVOKED', 'SUCCESS'}
+# Статусы новеллы, при которых PENDING task_id считается потерянным
+_TERMINAL_NOVEL_STATUSES = {
+    'parsed', 'translated', 'edited', 'aligned',
+    'parsing_cancelled', 'translation_cancelled', 'editing_cancelled', 'alignment_cancelled',
+    'parsing_error', 'translation_error', 'editing_error', 'alignment_error',
+    'parsing_timeout', 'translation_timeout', 'editing_timeout',
+}
+
+
+_last_cleanup_check: dict = {}  # novel_id -> timestamp последней проверки
+_CLEANUP_INTERVAL = 1800  # 30 минут между проверками
+
+
+def _cleanup_stale_tasks(novel):
+    """
+    Проверяет Celery задачи по task_id и очищает зависшие.
+    Вызывается при polling статуса, но не чаще раз в 30 минут per novel.
+    """
+    import time as _time
+    now = _time.time()
+    last = _last_cleanup_check.get(novel.id, 0)
+    if now - last < _CLEANUP_INTERVAL:
+        return
+    _last_cleanup_check[novel.id] = now
+
+    try:
+        from celery_app import celery
+    except Exception:
+        return
+
+    task_fields = [
+        'parsing_task_id',
+        'translation_task_id',
+        'editing_task_id',
+        'alignment_task_id',
+        'epub_generation_task_id',
+    ]
+
+    cleaned = []
+    for field in task_fields:
+        task_id = getattr(novel, field, None)
+        if not task_id:
+            continue
+
+        result = celery.AsyncResult(task_id)
+        state = result.state
+
+        should_clean = False
+
+        if state in _DEAD_TASK_STATES:
+            # Задача завершилась (упала, отменена, выполнена) — task_id не был очищен
+            should_clean = True
+        elif state == 'PENDING' and novel.status in _TERMINAL_NOVEL_STATUSES:
+            # PENDING + терминальный статус новеллы = задача потеряна
+            should_clean = True
+
+        if should_clean:
+            setattr(novel, field, None)
+            cleaned.append(f"{field}={task_id[:8]}... (Celery state={state})")
+
+    if cleaned:
+        db.session.commit()
+        logger.info(f"🧹 [Novel:{novel.id}] Очищены зависшие задачи: {', '.join(cleaned)}")
 
 
 @novels_bp.route('/novels', methods=['GET'])
@@ -478,6 +547,9 @@ def get_novel_status(novel_id):
                 'success': False,
                 'error': 'Новелла не найдена'
             }), 404
+
+        # Автоматическая очистка зависших Celery задач
+        _cleanup_stale_tasks(novel)
 
         # Проверяем наличие активных задач
         has_active_tasks = bool(
