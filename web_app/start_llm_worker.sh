@@ -60,7 +60,7 @@ echo
 echo -e "📊 ${YELLOW}Параметры запуска:${NC}"
 echo "  • Redis: localhost:6379/1"
 echo "  • Queue: llm_queue (перевод, редактура, сопоставление, EPUB)"
-echo "  • Concurrency: 8 (до 8 новелл параллельно)"
+echo "  • Concurrency: 12 (до 12 новелл параллельно)"
 echo "  • Pool: prefork"
 echo "  • Loglevel: INFO"
 echo
@@ -73,7 +73,7 @@ echo
 
 celery -A celery_app.celery worker \
     --loglevel=INFO \
-    --concurrency=8 \
+    --concurrency=12 \
     --pool=prefork \
     --queues=llm_queue \
     --hostname=worker-llm@%h
