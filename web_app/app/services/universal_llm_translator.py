@@ -428,6 +428,7 @@ class UniversalLLMTranslator:
                             (1200, "20 минут")
                         ]
 
+                        switched_to_429 = False
                         for attempt, (delay_seconds, delay_text) in enumerate(retry_delays, 1):
                             LogService.log_warning(f"⏳ Попытка {attempt}/{len(retry_delays)}: Ожидание {delay_text} перед повторным запросом...")
 
@@ -476,7 +477,8 @@ class UniversalLLMTranslator:
                                     continue
                                 elif retry_error_type == 'concurrent_slot':
                                     # 429 — переключаемся на быстрые retry
-                                    LogService.log_warning(f"   → Ошибка сменилась на 429, используем быстрые retry")
+                                    LogService.log_warning(f"   → Ошибка сменилась на 429, переключаемся на быстрые retry")
+                                    switched_to_429 = True
                                     break
                                 else:
                                     # Если другая ошибка - прерываем повторы
@@ -486,7 +488,46 @@ class UniversalLLMTranslator:
                                         self._save_prompt_history(system_prompt, user_prompt, None, retry_result, False, retry_error)
                                     return None
 
-                        # Если все попытки исчерпаны
+                        if switched_to_429:
+                            # Переключаемся на быстрые retry для 429
+                            endpoint = getattr(self.model, 'api_endpoint', '')
+                            if endpoint and endpoint in _limiters:
+                                _limiters[endpoint].report_429()
+
+                            max_retries_429 = 15
+                            for attempt_429 in range(1, max_retries_429 + 1):
+                                delay = random.uniform(1, 5) * (1 + attempt_429 * 0.3)
+                                LogService.log_info(f"⏳ Fast retry {attempt_429}/{max_retries_429}: ожидание {delay:.1f}с...")
+                                await asyncio.sleep(delay)
+
+                                retry_result = await adapter.generate_content(system_prompt, user_prompt, temperature, max_tokens)
+
+                                if retry_result['success']:
+                                    LogService.log_info(f"✅ Fast retry {attempt_429} успешен!")
+                                    self.last_finish_reason = retry_result.get('finish_reason', 'unknown')
+                                    if endpoint and endpoint in _limiters:
+                                        _limiters[endpoint].report_success()
+                                    if self.save_prompt_history and self.current_chapter_id:
+                                        self._save_prompt_history(system_prompt, user_prompt, retry_result['content'], retry_result, True)
+                                    return retry_result['content']
+
+                                retry_error_type = retry_result.get('error_type', 'general')
+                                if retry_error_type == 'concurrent_slot':
+                                    if endpoint and endpoint in _limiters:
+                                        _limiters[endpoint].report_429()
+                                    continue
+                                else:
+                                    LogService.log_error(f"❌ Тип ошибки изменился: {retry_error_type}")
+                                    if self.save_prompt_history and self.current_chapter_id:
+                                        self._save_prompt_history(system_prompt, user_prompt, None, retry_result, False, retry_result.get('error', ''))
+                                    return None
+
+                            LogService.log_error(f"❌ Все {max_retries_429} быстрых retry исчерпаны после переключения с {error_name}")
+                            if self.save_prompt_history and self.current_chapter_id:
+                                self._save_prompt_history(system_prompt, user_prompt, None, result, False, f"429 после {max_retries_429} попыток")
+                            return None
+
+                        # Все попытки исчерпаны без переключения
                         LogService.log_error(f"❌ Все {len(retry_delays)} попыток исчерпаны, {error_name} сохраняется")
                         LogService.log_error(f"🛑 Остановка перевода. Попробуйте позже")
 
@@ -669,8 +710,8 @@ class UniversalLLMTranslator:
             limiter = _get_limiter(endpoint, max_concurrent=10)
 
         if limiter:
-            if not limiter.acquire(timeout=300):
-                LogService.log_error("Таймаут ожидания слота адаптивного лимитера (5 мин)")
+            if not limiter.acquire(timeout=600):
+                LogService.log_error("Таймаут ожидания слота адаптивного лимитера (10 мин)")
                 return None
 
         try:
