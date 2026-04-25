@@ -195,7 +195,7 @@ class AIAdapterService:
                             content_parts.append(part['text'])
                     content = ''.join(content_parts)
                     if not content:
-                        logger.warning(f"Gemini вернул пустой content. Parts: {len(parts)}, структура: {[{k: type(v).__name__ for k, v in p.items()} for p in parts[:3]]}")
+                        logger.warning(f"{self.model.name} вернул пустой content. Parts: {len(parts)}, структура: {[{k: type(v).__name__ for k, v in p.items()} for p in parts[:3]]}")
                     return {
                         'success': True,
                         'content': content,
