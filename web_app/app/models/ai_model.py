@@ -67,6 +67,40 @@ class AIModel(db.Model):
     def __repr__(self):
         return f'<AIModel {self.name} ({self.provider})>'
 
+    def get_api_keys_list(self) -> list:
+        """Получить список API ключей с fallback на .env
+
+        Приоритет:
+        1. Поле api_keys (JSON список, для ротации)
+        2. Поле api_key (единичный ключ)
+        3. Для Gemini: GEMINI_API_KEYS из .env
+        """
+        # 1. Из поля api_keys (JSON список)
+        if self.api_keys and isinstance(self.api_keys, list):
+            keys = [k.strip() for k in self.api_keys if k and k.strip()]
+            if keys:
+                return keys
+
+        # 2. Из поля api_key (единичный ключ)
+        if self.api_key and self.api_key.strip():
+            return [self.api_key.strip()]
+
+        # 3. Fallback: Gemini → GEMINI_API_KEYS из .env
+        if self.provider == 'gemini':
+            try:
+                from flask import current_app
+                env_keys = current_app.config.get('GEMINI_API_KEYS', [])
+                if env_keys:
+                    return env_keys
+            except RuntimeError:
+                # Нет Flask app context (Celery worker)
+                import os
+                env_str = os.environ.get('GEMINI_API_KEYS', '')
+                if env_str:
+                    return [k.strip() for k in env_str.split(',') if k.strip()]
+
+        return []
+
     def to_dict(self):
         """Преобразование в словарь для API"""
         return {

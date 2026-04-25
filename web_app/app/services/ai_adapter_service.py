@@ -203,6 +203,10 @@ class AIAdapterService:
                     error_type = 'service_unavailable'
                 elif response.status_code == 500:
                     error_type = 'server_error'
+                elif response.status_code == 400 and ('api key not valid' in error_lower or 'api_key_invalid' in error_lower):
+                    error_type = 'invalid_api_key'
+                elif response.status_code == 403 or 'permission_denied' in error_lower:
+                    error_type = 'invalid_api_key'
 
                 return {
                     'success': False,

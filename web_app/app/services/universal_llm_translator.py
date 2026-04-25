@@ -124,6 +124,13 @@ class UniversalLLMTranslator:
         self.current_prompt_type = 'translation'
         self.request_start_time = time.time()
 
+        # Для Gemini: если в модели нет ключей — подгружаем через fallback (.env)
+        if self.model.provider == 'gemini' and not self.model.api_keys:
+            fallback_keys = self.model.get_api_keys_list()
+            if fallback_keys:
+                self.model.api_keys = fallback_keys
+                logger.info(f"Загружены {len(fallback_keys)} Gemini ключей из fallback (.env)")
+
         logger.info(f"Инициализирован UniversalLLMTranslator для модели: {model.name} ({model.provider})")
 
     @property
@@ -262,8 +269,11 @@ class UniversalLLMTranslator:
                         LogService.log_warning(f"Rate limit для ключа #{self.current_key_index + 1}")
                         self.mark_key_as_failed()
                         self.switch_to_next_key()
-                    elif 'API ключ не указан' in error or 'Unauthorized' in error:
-                        # Проблема с ключом
+                    elif ('API ключ не указан' in error or 'Unauthorized' in error
+                          or 'API key not valid' in error or 'PERMISSION_DENIED' in error
+                          or result.get('error_type') == 'invalid_api_key'):
+                        # Проблема с ключом (невалидный, отсутствует, нет прав)
+                        LogService.log_warning(f"Невалидный ключ #{self.current_key_index + 1}: {error[:100]}")
                         self.mark_key_as_failed()
                         self.switch_to_next_key()
                     elif error_type == 'overloaded':
