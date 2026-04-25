@@ -509,24 +509,24 @@ class BilingualAlignmentService:
             response = response[:-3]
         response = response.strip()
 
-        # Обрезаем лишний текст после последней } (LLM иногда добавляет комментарии)
-        last_brace = response.rfind('}')
-        if last_brace != -1 and last_brace < len(response) - 1:
-            trailing = response[last_brace + 1:].strip()
-            if trailing:
-                logger.info(f"Обрезан лишний текст после JSON ({len(trailing)} символов)")
-                response = response[:last_brace + 1]
-
         # Попытка 1: Прямой парсинг JSON
         try:
             result = json.loads(response)
-
-            # Проверяем структуру — поддерживаем альтернативные ключи
             result = self._normalize_alignment_result(result)
-
             return result
 
         except json.JSONDecodeError as e:
+            # Попытка 1.5: raw_decode — парсит первый JSON-объект, игнорирует лишний текст после
+            if 'Extra data' in str(e):
+                try:
+                    decoder = json.JSONDecoder()
+                    result, end_idx = decoder.raw_decode(response)
+                    logger.info(f"raw_decode: JSON извлечён ({end_idx} символов), обрезано {len(response) - end_idx} лишних символов")
+                    result = self._normalize_alignment_result(result)
+                    return result
+                except (json.JSONDecodeError, ValueError):
+                    pass
+
             logger.warning(f"Прямой парсинг JSON не удался: {e}")
 
             # Попытка 2: Исправляем типичные ошибки JSON от LLM
