@@ -86,13 +86,15 @@ class AIAdapterService:
     async def generate_content(self, system_prompt: str, user_prompt: str,
                               temperature: float = None, max_tokens: int = None,
                               expected_output_multiplier: float = None,
-                              min_output_tokens: int = None) -> Dict:
+                              min_output_tokens: int = None,
+                              disable_thinking: bool = False) -> Dict:
         """
         Генерация контента через выбранную модель
 
         Args:
             expected_output_multiplier: Множитель для num_predict (для случаев когда выход содержит входные тексты, например alignment)
             min_output_tokens: Минимальное количество токенов для генерации (для больших ответов)
+            disable_thinking: Отключить режим thinking для Gemini (экономия токенов на задачах без рассуждений)
 
         Returns:
             Dict с результатом: {'success': bool, 'content': str, 'error': str}
@@ -102,7 +104,8 @@ class AIAdapterService:
 
         try:
             if self.model.provider == 'gemini':
-                return await self._call_gemini(system_prompt, user_prompt, temperature, max_tokens)
+                return await self._call_gemini(system_prompt, user_prompt, temperature, max_tokens,
+                                               disable_thinking=disable_thinking)
             elif self.model.provider == 'openai':
                 return await self._call_openai(system_prompt, user_prompt, temperature, max_tokens)
             elif self.model.provider == 'anthropic':
@@ -123,7 +126,8 @@ class AIAdapterService:
             return {'success': False, 'error': error_msg}
 
     async def _call_gemini(self, system_prompt: str, user_prompt: str,
-                          temperature: float, max_tokens: int) -> Dict:
+                          temperature: float, max_tokens: int,
+                          disable_thinking: bool = False) -> Dict:
         """Вызов Gemini API (ротация ключей — в UniversalLLMTranslator)"""
         # Ключ приходит через self.model.api_key (от UniversalLLMTranslator через temp_model)
         # Fallback на api_keys[0] для прямого вызова без ротации
@@ -137,12 +141,10 @@ class AIAdapterService:
             url = f"{self.model.api_endpoint}/models/{self.model.model_id}:generateContent"
 
             actual_max_tokens = min(max_tokens, self.model.max_output_tokens)
-            LogService.log_info(f"Gemini запрос: {self.model.model_id} | Temperature: {temperature} | Max tokens: {actual_max_tokens:,} / {self.model.max_output_tokens:,}")
+            thinking_info = " | Thinking: OFF" if disable_thinking else ""
+            LogService.log_info(f"Gemini запрос: {self.model.model_id} | Temperature: {temperature} | Max tokens: {actual_max_tokens:,} / {self.model.max_output_tokens:,}{thinking_info}")
 
-            response = await client.post(
-                url,
-                params={'key': api_key},
-                json={
+            request_body = {
                     'contents': [{
                         'parts': [
                             {'text': system_prompt},
@@ -162,6 +164,14 @@ class AIAdapterService:
                         {'category': 'HARM_CATEGORY_DANGEROUS_CONTENT', 'threshold': 'BLOCK_NONE'}
                     ]
                 }
+
+            if disable_thinking:
+                request_body['generationConfig']['thinkingConfig'] = {'thinkingBudget': 0}
+
+            response = await client.post(
+                url,
+                params={'key': api_key},
+                json=request_body
             )
 
             if response.status_code == 200:

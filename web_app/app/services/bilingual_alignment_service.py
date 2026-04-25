@@ -211,7 +211,8 @@ class BilingualAlignmentService:
                         user_prompt=prompt,
                         temperature=template.temperature,
                         expected_output_multiplier=4.0,
-                        min_output_tokens=50000
+                        min_output_tokens=50000,
+                        disable_thinking=True
                     )
 
                     duration = (datetime.now() - start_time).total_seconds()
