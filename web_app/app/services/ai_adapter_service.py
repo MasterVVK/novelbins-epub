@@ -185,7 +185,17 @@ class AIAdapterService:
 
                 candidates = data.get('candidates', [])
                 if candidates:
-                    content = candidates[0].get('content', {}).get('parts', [{}])[0].get('text', '')
+                    parts = candidates[0].get('content', {}).get('parts', [])
+                    # Собираем текст из всех non-thought частей
+                    content_parts = []
+                    for part in parts:
+                        if part.get('thought'):
+                            continue  # Пропускаем thinking-части
+                        if 'text' in part:
+                            content_parts.append(part['text'])
+                    content = ''.join(content_parts)
+                    if not content:
+                        logger.warning(f"Gemini вернул пустой content. Parts: {len(parts)}, структура: {[{k: type(v).__name__ for k, v in p.items()} for p in parts[:3]]}")
                     return {
                         'success': True,
                         'content': content,
