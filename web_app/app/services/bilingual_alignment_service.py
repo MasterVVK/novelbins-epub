@@ -447,6 +447,27 @@ class BilingualAlignmentService:
             logger.error(f"Шаблон промпта (первые 500 символов): {template.alignment_prompt[:500]}")
             raise
 
+    def _normalize_alignment_result(self, result) -> Dict:
+        """Нормализация JSON ответа — поддержка альтернативных ключей"""
+        # Уже есть alignments — OK
+        if isinstance(result, dict) and 'alignments' in result:
+            return result
+
+        # LLM вернул массив напрямую (без обёртки)
+        if isinstance(result, list):
+            logger.info(f"JSON: массив на верхнем уровне ({len(result)} элементов), оборачиваем")
+            return {'alignments': result}
+
+        # Альтернативные ключи
+        if isinstance(result, dict):
+            for alt_key in ('alignment', 'pairs', 'data', 'results'):
+                if alt_key in result and isinstance(result[alt_key], list):
+                    logger.info(f"JSON: найден ключ '{alt_key}' вместо 'alignments', переименовываем")
+                    result['alignments'] = result.pop(alt_key)
+                    return result
+
+        raise ValueError("Отсутствует поле 'alignments' в JSON ответе")
+
     def _fix_json_errors(self, json_str: str) -> str:
         """Исправление типичных ошибок JSON от LLM"""
         import re
@@ -488,13 +509,20 @@ class BilingualAlignmentService:
             response = response[:-3]
         response = response.strip()
 
+        # Обрезаем лишний текст после последней } (LLM иногда добавляет комментарии)
+        last_brace = response.rfind('}')
+        if last_brace != -1 and last_brace < len(response) - 1:
+            trailing = response[last_brace + 1:].strip()
+            if trailing:
+                logger.info(f"Обрезан лишний текст после JSON ({len(trailing)} символов)")
+                response = response[:last_brace + 1]
+
         # Попытка 1: Прямой парсинг JSON
         try:
             result = json.loads(response)
 
-            # Проверяем структуру
-            if 'alignments' not in result:
-                raise ValueError("Отсутствует поле 'alignments' в JSON ответе")
+            # Проверяем структуру — поддерживаем альтернативные ключи
+            result = self._normalize_alignment_result(result)
 
             return result
 
@@ -523,9 +551,7 @@ class BilingualAlignmentService:
 
                 try:
                     result = json.loads(json_candidate)
-
-                    if 'alignments' not in result:
-                        raise ValueError("Отсутствует поле 'alignments' в найденном JSON")
+                    result = self._normalize_alignment_result(result)
 
                     logger.info(f"JSON успешно извлечен через regex (длина: {len(json_candidate)} символов)")
                     return result
@@ -536,9 +562,9 @@ class BilingualAlignmentService:
                     if fixed_candidate != json_candidate:
                         try:
                             result = json.loads(fixed_candidate)
-                            if 'alignments' in result:
-                                logger.info(f"JSON успешно распарсен после regex + исправления ошибок")
-                                return result
+                            result = self._normalize_alignment_result(result)
+                            logger.info(f"JSON успешно распарсен после regex + исправления ошибок")
+                            return result
                         except json.JSONDecodeError:
                             pass
 
