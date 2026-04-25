@@ -967,6 +967,7 @@ def translate_novel_chapters_task(self, novel_id, chapter_ids):
         chapter_ids: Список ID глав для перевода
     """
     from app.services.translator_service import TranslatorService
+    from app.services.original_aware_editor_service import RateLimitError
     from app.services.log_service import LogService
 
     # Флаг для отслеживания отмены
@@ -1094,6 +1095,13 @@ def translate_novel_chapters_task(self, novel_id, chapter_ids):
                         raise Exception("translate_chapter вернул False")
 
                 except Terminated:
+                    raise
+                except RateLimitError as e:
+                    # Достигнут лимит API (недельный/дневной) — ОСТАНАВЛИВАЕМ ВСЮ ЗАДАЧУ
+                    LogService.log_error(f"🛑 [Novel:{novel_id}, Ch:{chapter.chapter_number}] {e}", novel_id=novel_id)
+                    LogService.log_error(f"🛑 [Novel:{novel_id}] ОСТАНОВКА ПЕРЕВОДА: достигнут лимит API", novel_id=novel_id)
+                    novel.status = 'translation_error'
+                    db.session.commit()
                     raise
                 except Exception as e:
                     # Если задача отменена — не ждём, выходим сразу
@@ -1232,6 +1240,7 @@ def align_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
         parallel_threads: Количество параллельных потоков (из конфига новеллы)
     """
     from app.services.bilingual_alignment_service import BilingualAlignmentService
+    from app.services.original_aware_editor_service import RateLimitError
     from app.services.log_service import LogService
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from threading import Lock
@@ -1377,6 +1386,18 @@ def align_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
                             processed_count += 1
                         return False
 
+                except RateLimitError as e:
+                    LogService.log_error(
+                        f"🛑 [Novel:{novel_id}, Ch:{chapter.chapter_number}] {e}",
+                        novel_id=novel_id,
+                        chapter_id=chapter_id
+                    )
+                    LogService.log_error(
+                        f"🛑 [Novel:{novel_id}] ОСТАНОВКА СОПОСТАВЛЕНИЯ: достигнут лимит API",
+                        novel_id=novel_id
+                    )
+                    return 'RATE_LIMIT_STOP'
+
                 except Exception as e:
                     LogService.log_error(
                         f"❌ [Novel:{novel_id}, Ch:{chapter.chapter_number}] Ошибка выравнивания: {e}",
@@ -1437,6 +1458,18 @@ def align_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
 
                     try:
                         result = future.result()
+
+                        # Проверяем на RATE_LIMIT_STOP
+                        if result == 'RATE_LIMIT_STOP':
+                            LogService.log_error(
+                                f"🛑 [Novel:{novel_id}] Остановка всех потоков из-за достижения лимита API",
+                                novel_id=novel_id
+                            )
+                            for f in futures:
+                                f.cancel()
+                            pending_ids.clear()
+                            cancelled = True
+                            break
 
                         # Обновляем прогресс
                         progress = int((processed_count / total_chapters) * 100)
