@@ -400,7 +400,7 @@
                         <div class="text-muted">
                             Показано {{ chapters_pagination.first }} - {{ chapters_pagination.last }} из {{ chapters_pagination.total }} глав
                         </div>
-                        <ul class="pagination pagination-sm mb-0">
+                        <ul class="pagination pagination-sm mb-0 flex-grow-1 justify-content-around ms-3">
                             <!-- Кнопка "Предыдущая" -->
                             {% if chapters_pagination.has_prev %}
                             <li class="page-item">
@@ -415,7 +415,7 @@
                             {% endif %}
 
                             <!-- Номера страниц -->
-                            {% for page_num in chapters_pagination.iter_pages(left_edge=2, left_current=2, right_current=3, right_edge=2) %}
+                            {% for page_num in chapters_pagination.iter_pages(left_edge=2, left_current=5, right_current=5, right_edge=2) %}
                                 {% if page_num %}
                                     {% if page_num != chapters_pagination.page %}
                                     <li class="page-item">
@@ -538,7 +538,7 @@
                         <div class="text-muted">
                             Показано {{ chapters_pagination.first }} - {{ chapters_pagination.last }} из {{ chapters_pagination.total }} глав
                         </div>
-                        <ul class="pagination pagination-sm mb-0">
+                        <ul class="pagination pagination-sm mb-0 flex-grow-1 justify-content-around ms-3">
                             <!-- Кнопка "Предыдущая" -->
                             {% if chapters_pagination.has_prev %}
                             <li class="page-item">
@@ -553,7 +553,7 @@
                             {% endif %}
                             
                             <!-- Номера страниц -->
-                            {% for page_num in chapters_pagination.iter_pages(left_edge=2, left_current=2, right_current=3, right_edge=2) %}
+                            {% for page_num in chapters_pagination.iter_pages(left_edge=2, left_current=5, right_current=5, right_edge=2) %}
                                 {% if page_num %}
                                     {% if page_num != chapters_pagination.page %}
                                     <li class="page-item">
