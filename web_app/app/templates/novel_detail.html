@@ -360,16 +360,33 @@
                 </h5>
                 
                 <!-- Настройки пагинации -->
-                {% if chapters_pagination and chapters_pagination.total > 0 %}
-                <div class="d-flex align-items-center">
-                    <label for="per_page" class="form-label me-2 mb-0">Глав на странице:</label>
-                    <select id="per_page" class="form-select form-select-sm" style="width: auto;" onchange="changePerPage(this.value)">
-                        <option value="10" {{ 'selected' if per_page == 10 else '' }}>10</option>
-                        <option value="25" {{ 'selected' if per_page == 25 else '' }}>25</option>
-                        <option value="50" {{ 'selected' if per_page == 50 else '' }}>50</option>
-                        <option value="100" {{ 'selected' if per_page == 100 else '' }}>100</option>
-                        <option value="200" {{ 'selected' if per_page == 200 else '' }}>200</option>
-                    </select>
+                {% set total_chapters_in_db = (counts_dict.values()|sum) if counts_dict else 0 %}
+                {% if total_chapters_in_db > 0 %}
+                <div class="d-flex align-items-center gap-3">
+                    <!-- Фильтр по статусу -->
+                    <div class="d-flex align-items-center">
+                        <label for="status_filter" class="form-label me-2 mb-0">Статус:</label>
+                        <select id="status_filter" class="form-select form-select-sm" style="width: auto;" onchange="changeStatus(this.value)">
+                            <option value=""           {{ 'selected' if not status_filter           else '' }}>Все ({{ total_chapters_in_db }})</option>
+                            <option value="pending"    {{ 'selected' if status_filter == 'pending'    else '' }}>В ожидании ({{ counts_dict.get('pending', 0) }})</option>
+                            <option value="parsed"     {{ 'selected' if status_filter == 'parsed'     else '' }}>Спарсено ({{ counts_dict.get('parsed', 0) }})</option>
+                            <option value="translated" {{ 'selected' if status_filter == 'translated' else '' }}>Переведено ({{ counts_dict.get('translated', 0) }})</option>
+                            <option value="edited"     {{ 'selected' if status_filter == 'edited'     else '' }}>Отредактировано ({{ counts_dict.get('edited', 0) }})</option>
+                            <option value="aligned"    {{ 'selected' if status_filter == 'aligned'    else '' }}>Сопоставлено ({{ counts_dict.get('aligned', 0) }})</option>
+                            <option value="error"      {{ 'selected' if status_filter == 'error'      else '' }}>Ошибка ({{ counts_dict.get('error', 0) }})</option>
+                        </select>
+                    </div>
+                    <!-- Кол-во глав на странице -->
+                    <div class="d-flex align-items-center">
+                        <label for="per_page" class="form-label me-2 mb-0">Глав на странице:</label>
+                        <select id="per_page" class="form-select form-select-sm" style="width: auto;" onchange="changePerPage(this.value)">
+                            <option value="10" {{ 'selected' if per_page == 10 else '' }}>10</option>
+                            <option value="25" {{ 'selected' if per_page == 25 else '' }}>25</option>
+                            <option value="50" {{ 'selected' if per_page == 50 else '' }}>50</option>
+                            <option value="100" {{ 'selected' if per_page == 100 else '' }}>100</option>
+                            <option value="200" {{ 'selected' if per_page == 200 else '' }}>200</option>
+                        </select>
+                    </div>
                 </div>
                 {% endif %}
             </div>
@@ -387,7 +404,7 @@
                             <!-- Кнопка "Предыдущая" -->
                             {% if chapters_pagination.has_prev %}
                             <li class="page-item">
-                                <a class="page-link" href="{{ url_for('main.novel_detail', novel_id=novel.id, page=chapters_pagination.prev_num, per_page=per_page) }}">
+                                <a class="page-link" href="{{ url_for('main.novel_detail', novel_id=novel.id, page=chapters_pagination.prev_num, per_page=per_page, status=status_filter or None) }}">
                                     <i class="bi bi-chevron-left"></i>
                                 </a>
                             </li>
@@ -402,7 +419,7 @@
                                 {% if page_num %}
                                     {% if page_num != chapters_pagination.page %}
                                     <li class="page-item">
-                                        <a class="page-link" href="{{ url_for('main.novel_detail', novel_id=novel.id, page=page_num, per_page=per_page) }}">
+                                        <a class="page-link" href="{{ url_for('main.novel_detail', novel_id=novel.id, page=page_num, per_page=per_page, status=status_filter or None) }}">
                                             {{ page_num }}
                                         </a>
                                     </li>
@@ -421,7 +438,7 @@
                             <!-- Кнопка "Следующая" -->
                             {% if chapters_pagination.has_next %}
                             <li class="page-item">
-                                <a class="page-link" href="{{ url_for('main.novel_detail', novel_id=novel.id, page=chapters_pagination.next_num, per_page=per_page) }}">
+                                <a class="page-link" href="{{ url_for('main.novel_detail', novel_id=novel.id, page=chapters_pagination.next_num, per_page=per_page, status=status_filter or None) }}">
                                     <i class="bi bi-chevron-right"></i>
                                 </a>
                             </li>
@@ -525,7 +542,7 @@
                             <!-- Кнопка "Предыдущая" -->
                             {% if chapters_pagination.has_prev %}
                             <li class="page-item">
-                                <a class="page-link" href="{{ url_for('main.novel_detail', novel_id=novel.id, page=chapters_pagination.prev_num, per_page=per_page) }}">
+                                <a class="page-link" href="{{ url_for('main.novel_detail', novel_id=novel.id, page=chapters_pagination.prev_num, per_page=per_page, status=status_filter or None) }}">
                                     <i class="bi bi-chevron-left"></i>
                                 </a>
                             </li>
@@ -540,7 +557,7 @@
                                 {% if page_num %}
                                     {% if page_num != chapters_pagination.page %}
                                     <li class="page-item">
-                                        <a class="page-link" href="{{ url_for('main.novel_detail', novel_id=novel.id, page=page_num, per_page=per_page) }}">
+                                        <a class="page-link" href="{{ url_for('main.novel_detail', novel_id=novel.id, page=page_num, per_page=per_page, status=status_filter or None) }}">
                                             {{ page_num }}
                                         </a>
                                     </li>
@@ -559,7 +576,7 @@
                             <!-- Кнопка "Следующая" -->
                             {% if chapters_pagination.has_next %}
                             <li class="page-item">
-                                <a class="page-link" href="{{ url_for('main.novel_detail', novel_id=novel.id, page=chapters_pagination.next_num, per_page=per_page) }}">
+                                <a class="page-link" href="{{ url_for('main.novel_detail', novel_id=novel.id, page=chapters_pagination.next_num, per_page=per_page, status=status_filter or None) }}">
                                     <i class="bi bi-chevron-right"></i>
                                 </a>
                             </li>
@@ -576,8 +593,15 @@
                 {% else %}
                 <div class="text-center py-4">
                     <i class="bi bi-file-text text-muted fs-1"></i>
-                    <p class="text-muted mt-2">Главы не найдены</p>
-                    <p class="text-muted">Запустите парсинг для получения глав</p>
+                    {% if status_filter %}
+                        <p class="text-muted mt-2">Нет глав со статусом «{{ status_filter|status_text('chapter') }}»</p>
+                        <p class="text-muted">
+                            <a href="{{ url_for('main.novel_detail', novel_id=novel.id, per_page=per_page) }}">Сбросить фильтр</a>
+                        </p>
+                    {% else %}
+                        <p class="text-muted mt-2">Главы не найдены</p>
+                        <p class="text-muted">Запустите парсинг для получения глав</p>
+                    {% endif %}
                 </div>
                 {% endif %}
             </div>
@@ -710,6 +734,19 @@ function changePerPage(perPage) {
     urlParams.set('page', '1'); // Всегда переходим на первую страницу при изменении количества
 
     // Перенаправляем на новую страницу
+    window.location.href = window.location.pathname + '?' + urlParams.toString();
+}
+
+function changeStatus(status) {
+    // Меняем фильтр по статусу глав, сбрасывая страницу на первую
+    const urlParams = new URLSearchParams(window.location.search);
+    if (status) {
+        urlParams.set('status', status);
+    } else {
+        urlParams.delete('status');
+    }
+    urlParams.set('page', '1');
+
     window.location.href = window.location.pathname + '?' + urlParams.toString();
 }
 

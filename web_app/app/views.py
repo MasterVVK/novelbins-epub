@@ -631,6 +631,12 @@ def novel_detail(novel_id):
     elif per_page < 10:
         per_page = 10
 
+    # Фильтр по статусу главы (опционально)
+    status_filter = request.args.get('status', '').strip()
+    valid_statuses = {'pending', 'parsed', 'translated', 'edited', 'aligned', 'error'}
+    if status_filter not in valid_statuses:
+        status_filter = ''
+
     # Принудительно получаем свежие данные из базы без кеширования
     db.session.expire_all()
 
@@ -660,8 +666,11 @@ def novel_detail(novel_id):
     novel.edited_chapters = counts_dict.get('edited', 0) + counts_dict.get('aligned', 0)
     novel.aligned_chapters = counts_dict.get('aligned', 0)
 
-    # Получаем главы с пагинацией
-    chapters_query = Chapter.query.filter_by(novel_id=novel_id).order_by(Chapter.chapter_number)
+    # Получаем главы с пагинацией (опционально фильтруем по статусу)
+    chapters_query = Chapter.query.filter_by(novel_id=novel_id)
+    if status_filter:
+        chapters_query = chapters_query.filter_by(status=status_filter)
+    chapters_query = chapters_query.order_by(Chapter.chapter_number)
     chapters_pagination = chapters_query.paginate(
         page=page,
         per_page=per_page,
@@ -678,7 +687,9 @@ def novel_detail(novel_id):
                          chapters_pagination=chapters_pagination,
                          tasks=tasks,
                          current_page=page,
-                         per_page=per_page)
+                         per_page=per_page,
+                         status_filter=status_filter,
+                         counts_dict=counts_dict)
 
 
 @main_bp.route('/novels/<int:novel_id>/parse', methods=['POST'])
