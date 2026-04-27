@@ -415,7 +415,7 @@
                             {% endif %}
 
                             <!-- Номера страниц -->
-                            {% for page_num in chapters_pagination.iter_pages(left_edge=2, left_current=5, right_current=5, right_edge=2) %}
+                            {% for page_num in chapters_pagination.iter_pages(left_edge=2, left_current=10, right_current=10, right_edge=2) %}
                                 {% if page_num %}
                                     {% if page_num != chapters_pagination.page %}
                                     <li class="page-item">
@@ -553,7 +553,7 @@
                             {% endif %}
                             
                             <!-- Номера страниц -->
-                            {% for page_num in chapters_pagination.iter_pages(left_edge=2, left_current=5, right_current=5, right_edge=2) %}
+                            {% for page_num in chapters_pagination.iter_pages(left_edge=2, left_current=10, right_current=10, right_edge=2) %}
                                 {% if page_num %}
                                     {% if page_num != chapters_pagination.page %}
                                     <li class="page-item">
