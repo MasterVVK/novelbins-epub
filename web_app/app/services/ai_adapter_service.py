@@ -110,7 +110,7 @@ class AIAdapterService:
                 return await self._call_openai(system_prompt, user_prompt, temperature, max_tokens)
             elif self.model.provider == 'anthropic':
                 return await self._call_anthropic(system_prompt, user_prompt, temperature, max_tokens)
-            elif self.model.provider == 'ollama':
+            elif self.model.provider in ('ollama', 'ollama_turbo'):
                 return await self._call_ollama(system_prompt, user_prompt, temperature, max_tokens,
                                                expected_output_multiplier, min_output_tokens)
             elif self.model.provider == 'openrouter':
@@ -335,12 +335,16 @@ class AIAdapterService:
                            expected_output_multiplier: float = None,
                            min_output_tokens: int = None) -> Dict:
         """Вызов Ollama API с динамическим расчетом размера контекста на основе параметров модели"""
+        # Bearer-авторизация для Ollama Cloud (provider='ollama_turbo') либо если api_key явно задан
+        headers = {}
+        if self.model.provider == 'ollama_turbo' or self.model.api_key:
+            headers['Authorization'] = f'Bearer {self.model.api_key}'
         # Увеличенный таймаут для Ollama (большие модели требуют времени на загрузку и обработку)
         try:
             async with httpx.AsyncClient(timeout=1800.0) as client:  # 30 минут
                 # Сначала проверяем доступность модели
                 try:
-                    models_response = await client.get(f"{self.model.api_endpoint.rstrip('/api')}/api/tags")
+                    models_response = await client.get(f"{self.model.api_endpoint.rstrip('/api')}/api/tags", headers=headers)
                     if models_response.status_code == 200:
                         models_data = models_response.json()
                         available_models = [m['name'] for m in models_data.get('models', [])]
@@ -467,7 +471,8 @@ class AIAdapterService:
                     # Делаем запрос к модели с упрощенными параметрами контекста
                     response = await client.post(
                         f"{self.model.api_endpoint}/generate",
-                        json=request_json
+                        json=request_json,
+                        headers=headers
                     )
 
                     if response.status_code == 400:

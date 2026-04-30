@@ -1951,11 +1951,12 @@ def api_fetch_ollama_models():
     try:
         data = request.json
         endpoint = data.get('endpoint', 'http://localhost:11434/api')
+        api_key = data.get('api_key') or None  # Опциональный Bearer для Ollama Cloud
 
         # Запускаем асинхронную функцию
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        models = loop.run_until_complete(AIModelService.fetch_ollama_models(endpoint))
+        models = loop.run_until_complete(AIModelService.fetch_ollama_models(endpoint, api_key))
         return jsonify(models)
     except Exception as e:
         logger.error(f"Ошибка получения моделей Ollama: {e}")
@@ -1972,6 +1973,7 @@ def api_get_ollama_model_info():
         data = request.json
         endpoint = data.get('endpoint', 'http://localhost:11434/api')
         model_name = data.get('model_name')
+        api_key = data.get('api_key') or None  # Опциональный Bearer для Ollama Cloud
 
         if not model_name:
             return jsonify({'error': 'model_name is required'}), 400
@@ -1979,7 +1981,7 @@ def api_get_ollama_model_info():
         # Запускаем асинхронную функцию
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        model_info = loop.run_until_complete(AIModelService.get_ollama_model_info(endpoint, model_name))
+        model_info = loop.run_until_complete(AIModelService.get_ollama_model_info(endpoint, model_name, api_key))
 
         if model_info:
             return jsonify(model_info)

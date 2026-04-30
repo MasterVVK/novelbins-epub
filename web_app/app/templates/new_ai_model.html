@@ -24,6 +24,7 @@
                             <option value="anthropic">Anthropic (Claude)</option>
                             <option value="openrouter">OpenRouter (400+ моделей)</option>
                             <option value="ollama">Ollama (Локальные модели)</option>
+                            <option value="ollama_turbo">Ollama Turbo (Облачный API)</option>
                             <option value="custom">Другой провайдер</option>
                         </select>
                         <div class="form-text">Выберите API провайдера для модели</div>
@@ -287,6 +288,14 @@ function updateProviderFields() {
             document.getElementById('cost_rating').value = '5'; // Бесплатная
             break;
 
+        case 'ollama_turbo':
+            apiEndpoint.value = 'https://ollama.com/api';
+            apiKeySection.style.display = 'block';
+            fetchModelsBtn.style.display = 'block';
+            document.getElementById('description').value = 'Облачный Ollama API (https://ollama.com)';
+            document.getElementById('cost_rating').value = '3';
+            break;
+
         case 'custom':
             apiEndpoint.value = '';
             apiKeySection.style.display = 'block';
@@ -345,11 +354,12 @@ async function fetchAvailableModels() {
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({api_key: apiKey})
             });
-        } else if (provider === 'ollama') {
+        } else if (provider === 'ollama' || provider === 'ollama_turbo') {
+            const apiKey = document.getElementById('api_key').value;
             response = await fetch('/api/ollama/models', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({endpoint: endpoint})
+                body: JSON.stringify({endpoint: endpoint, api_key: apiKey})
             });
         } else {
             availableModelsDiv.innerHTML = '<div class="alert alert-warning">Получение списка моделей не поддерживается для этого провайдера</div>';
@@ -516,8 +526,8 @@ async function fetchAvailableModels() {
                     `;
                     html += modelItem;
                 }
-            } else if (provider === 'ollama') {
-                // Отображение моделей Ollama (существующий код)
+            } else if (provider === 'ollama' || provider === 'ollama_turbo') {
+                // Отображение моделей Ollama (local или cloud)
                 for (const model of models) {
                     // Сохраняем информацию о лимитах токенов в data атрибутах
                     const maxInput = model.recommended_max_input || 8192;
@@ -537,6 +547,8 @@ async function fetchAvailableModels() {
         } else {
             if (provider === 'ollama') {
                 availableModelsDiv.innerHTML = '<div class="alert alert-warning">Модели не найдены. Проверьте, что Ollama запущен.</div>';
+            } else if (provider === 'ollama_turbo') {
+                availableModelsDiv.innerHTML = '<div class="alert alert-warning">Модели не найдены. Проверьте API ключ и доступ к ollama.com.</div>';
             } else if (provider === 'openrouter') {
                 availableModelsDiv.innerHTML = '<div class="alert alert-warning">Не удалось получить список моделей OpenRouter. Проверьте подключение к интернету.</div>';
             } else {
@@ -631,7 +643,8 @@ async function selectOllamaModel(modelId, modelName, maxInput, maxOutput) {
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
                 endpoint: document.getElementById('api_endpoint').value,
-                model_name: modelId
+                model_name: modelId,
+                api_key: document.getElementById('api_key').value
             })
         });
 

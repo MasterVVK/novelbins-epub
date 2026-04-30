@@ -35,6 +35,8 @@
                         <i class="bi bi-robot"></i> Anthropic
                     {% elif provider == 'ollama' %}
                         <i class="bi bi-pc-display"></i> Ollama (Локальные)
+                    {% elif provider == 'ollama_turbo' %}
+                        <i class="bi bi-cloud"></i> Ollama Turbo (Облачный API)
                     {% else %}
                         <i class="bi bi-cloud"></i> {{ provider | title }}
                     {% endif %}

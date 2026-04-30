@@ -364,7 +364,7 @@ class UniversalLLMTranslator:
                         raise RateLimitError(f"Достигнут {limit_type} лимит: {error}")
 
                     # Специальная обработка concurrent_slot (429) — быстрые retry с jitter
-                    if self.model.provider == 'ollama' and error_type == 'concurrent_slot':
+                    if self.model.provider in ('ollama', 'ollama_turbo') and error_type == 'concurrent_slot':
                         LogService.log_warning(f"⚠️ Слоты Ollama заняты (429) для модели {self.model.model_id}")
                         LogService.log_warning(f"   Текст ошибки: {error}")
 
@@ -412,7 +412,7 @@ class UniversalLLMTranslator:
                         return None
 
                     # Специальная обработка для Ollama server error (500), upstream error (502), service unavailable (503), upstream timeout (504), timeout, unexpected error с длинными повторами
-                    if self.model.provider == 'ollama' and error_type in ['upstream_error', 'upstream_timeout', 'server_error', 'service_unavailable', 'timeout', 'unexpected']:
+                    if self.model.provider in ('ollama', 'ollama_turbo') and error_type in ['upstream_error', 'upstream_timeout', 'server_error', 'service_unavailable', 'timeout', 'unexpected']:
                         if error_type == 'server_error':
                             error_name = 'внутренняя ошибка сервера (500)'
                         elif error_type == 'service_unavailable':
@@ -548,7 +548,7 @@ class UniversalLLMTranslator:
                         return None
 
                     # Специальная обработка для Ollama HOURLY rate limit с прогрессивными повторами
-                    if self.model.provider == 'ollama' and error_type == 'rate_limit':
+                    if self.model.provider in ('ollama', 'ollama_turbo') and error_type == 'rate_limit':
                         LogService.log_warning(f"⚠️ Достигнут часовой лимит использования модели {self.model.model_id}")
                         LogService.log_warning(f"   Текст ошибки: {error}")
 
@@ -716,7 +716,7 @@ class UniversalLLMTranslator:
         limiter = None
 
         # Адаптивный лимитер только для Ollama
-        if self.model.provider == 'ollama' and endpoint:
+        if self.model.provider in ('ollama', 'ollama_turbo') and endpoint:
             limiter = _get_limiter(endpoint, max_concurrent=10)
 
         if limiter:

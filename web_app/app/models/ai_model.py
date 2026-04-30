@@ -18,7 +18,7 @@ class AIModel(db.Model):
     description = db.Column(db.Text)
 
     # Провайдер API
-    provider = db.Column(db.String(50), nullable=False)  # gemini, openai, anthropic, ollama, etc.
+    provider = db.Column(db.String(50), nullable=False)  # gemini, openai, anthropic, ollama, ollama_turbo, openrouter, etc.
     api_type = db.Column(db.String(50))  # google-ai, google-vertex, openai-compatible, etc.
 
     # Настройки подключения

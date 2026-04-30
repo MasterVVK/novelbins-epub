@@ -247,8 +247,8 @@ class AIModelService:
             # Тестовый промпт
             test_prompt = "Переведи на русский: Hello, world!"
 
-            if model.provider == 'ollama':
-                # Тест Ollama
+            if model.provider in ('ollama', 'ollama_turbo'):
+                # Тест Ollama (local или cloud)
                 result = await AIModelService._test_ollama(model, test_prompt)
             elif model.provider == 'gemini':
                 # Тест Gemini
@@ -279,17 +279,21 @@ class AIModelService:
 
     @staticmethod
     async def _test_ollama(model: AIModel, prompt: str) -> Dict:
-        """Тестировать Ollama модель"""
+        """Тестировать Ollama модель (local или cloud)"""
+        # Bearer-авторизация для Ollama Cloud либо если api_key явно задан
+        headers = {}
+        if model.provider == 'ollama_turbo' or model.api_key:
+            headers['Authorization'] = f'Bearer {model.api_key}'
         try:
             # Увеличенный таймаут для Ollama (большие модели загружаются долго)
             async with httpx.AsyncClient(timeout=180.0) as client:
                 # Проверяем доступность Ollama
-                response = await client.get(f"{model.api_endpoint.rstrip('/api')}")
+                response = await client.get(f"{model.api_endpoint.rstrip('/api')}", headers=headers)
                 if response.status_code != 200:
                     return {'success': False, 'error': 'Ollama сервер недоступен'}
 
                 # Получаем список моделей
-                models_response = await client.get(f"{model.api_endpoint.rstrip('/api')}/api/tags")
+                models_response = await client.get(f"{model.api_endpoint.rstrip('/api')}/api/tags", headers=headers)
                 if models_response.status_code == 200:
                     models_data = models_response.json()
                     available_models = [m['name'] for m in models_data.get('models', [])]
@@ -321,7 +325,8 @@ class AIModelService:
                                 'temperature': 0
                             }
                         },
-                        timeout=load_timeout
+                        timeout=load_timeout,
+                        headers=headers
                     )
                 except httpx.TimeoutException:
                     logger.error(f"Таймаут при загрузке модели {model.model_id} (ждали {load_timeout} секунд)")
@@ -347,7 +352,8 @@ class AIModelService:
                             'num_predict': 100
                         }
                     },
-                    timeout=60.0  # Для уже загруженной модели достаточно 60 секунд
+                    timeout=60.0,  # Для уже загруженной модели достаточно 60 секунд
+                    headers=headers
                 )
 
                 if response.status_code == 200:
@@ -534,11 +540,17 @@ class AIModelService:
             return {'success': False, 'error': str(e)}
 
     @staticmethod
-    async def fetch_ollama_models(api_endpoint: str) -> List[Dict]:
-        """Получить список доступных моделей из Ollama"""
+    async def fetch_ollama_models(api_endpoint: str, api_key: str = None) -> List[Dict]:
+        """Получить список доступных моделей из Ollama (local или cloud).
+
+        Args:
+            api_endpoint: URL Ollama API (http://localhost:11434/api или https://ollama.com/api)
+            api_key: опциональный Bearer token для Ollama Cloud
+        """
+        headers = {'Authorization': f'Bearer {api_key}'} if api_key else {}
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.get(f"{api_endpoint.rstrip('/api')}/api/tags")
+                response = await client.get(f"{api_endpoint.rstrip('/api')}/api/tags", headers=headers)
                 if response.status_code == 200:
                     data = response.json()
                     models = []
@@ -592,14 +604,22 @@ class AIModelService:
             return []
 
     @staticmethod
-    async def get_ollama_model_info(api_endpoint: str, model_name: str) -> Dict:
-        """Получить детальную информацию о конкретной модели Ollama"""
+    async def get_ollama_model_info(api_endpoint: str, model_name: str, api_key: str = None) -> Dict:
+        """Получить детальную информацию о конкретной модели Ollama (local или cloud).
+
+        Args:
+            api_endpoint: URL Ollama API
+            model_name: имя модели
+            api_key: опциональный Bearer token для Ollama Cloud
+        """
+        headers = {'Authorization': f'Bearer {api_key}'} if api_key else {}
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 # Получаем информацию через API /show
                 response = await client.post(
                     f"{api_endpoint}/show",
-                    json={"name": model_name}
+                    json={"name": model_name},
+                    headers=headers
                 )
 
                 if response.status_code == 200:
