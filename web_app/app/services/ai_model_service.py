@@ -280,10 +280,14 @@ class AIModelService:
     @staticmethod
     async def _test_ollama(model: AIModel, prompt: str) -> Dict:
         """Тестировать Ollama модель (local или cloud)"""
-        # Bearer-авторизация для Ollama Cloud либо если api_key явно задан
+        # Bearer-авторизация: api_key модели → fallback на глобальный ollama_api_key из настроек (только для ollama_turbo)
+        api_key = model.api_key
+        if not api_key and model.provider == 'ollama_turbo':
+            from app.services.settings_service import SettingsService
+            api_key = SettingsService.get_ollama_api_key()
         headers = {}
-        if model.provider == 'ollama_turbo' or model.api_key:
-            headers['Authorization'] = f'Bearer {model.api_key}'
+        if api_key:
+            headers['Authorization'] = f'Bearer {api_key}'
         try:
             # Увеличенный таймаут для Ollama (большие модели загружаются долго)
             async with httpx.AsyncClient(timeout=180.0) as client:

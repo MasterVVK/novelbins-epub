@@ -335,10 +335,15 @@ class AIAdapterService:
                            expected_output_multiplier: float = None,
                            min_output_tokens: int = None) -> Dict:
         """Вызов Ollama API с динамическим расчетом размера контекста на основе параметров модели"""
-        # Bearer-авторизация для Ollama Cloud (provider='ollama_turbo') либо если api_key явно задан
+        # Bearer-авторизация для Ollama Cloud (provider='ollama_turbo') либо если api_key явно задан.
+        # Для ollama_turbo с пустым ключом — fallback на глобальный ollama_api_key из настроек.
+        api_key = self.model.api_key
+        if not api_key and self.model.provider == 'ollama_turbo':
+            from app.services.settings_service import SettingsService
+            api_key = SettingsService.get_ollama_api_key()
         headers = {}
-        if self.model.provider == 'ollama_turbo' or self.model.api_key:
-            headers['Authorization'] = f'Bearer {self.model.api_key}'
+        if api_key:
+            headers['Authorization'] = f'Bearer {api_key}'
         # Увеличенный таймаут для Ollama (большие модели требуют времени на загрузку и обработку)
         try:
             async with httpx.AsyncClient(timeout=1800.0) as client:  # 30 минут

@@ -27,7 +27,13 @@
                         <input type="password" class="form-control" id="openai_api_key" name="openai_api_key" placeholder="sk-..." value="{{ settings.get('openai_api_key', '') }}">
                         <div class="form-text">Ключ для OpenAI API</div>
                     </div>
-                    
+
+                    <div class="mb-3">
+                        <label for="ollama_api_key" class="form-label">Ollama API ключ (для Ollama Cloud / Turbo)</label>
+                        <input type="password" class="form-control" id="ollama_api_key" name="ollama_api_key" placeholder="ollama-..." value="{{ settings.get('ollama_api_key', '') }}">
+                        <div class="form-text">Глобальный ключ для https://ollama.com. Используется по умолчанию для всех моделей провайдера <code>ollama_turbo</code>, у которых поле API ключа оставлено пустым.</div>
+                    </div>
+
                     <hr>
                     
                     <h6 class="mb-3">Настройки перевода</h6>

@@ -63,6 +63,15 @@ class SettingsService:
         return SystemSettings.get_setting('openai_api_key')
     
     @staticmethod
+    def get_ollama_api_key() -> Optional[str]:
+        """Получить глобальный API ключ для Ollama Cloud (https://ollama.com).
+
+        Используется как fallback для моделей provider='ollama_turbo' с пустым api_key.
+        """
+        key = SystemSettings.get_setting('ollama_api_key')
+        return key.strip() if key else None
+
+    @staticmethod
     def get_default_model() -> str:
         """Получить модель по умолчанию
 

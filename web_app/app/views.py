@@ -1476,6 +1476,7 @@ def settings():
         settings_data = {
             'gemini_api_keys': request.form.get('gemini_api_keys', ''),
             'openai_api_key': request.form.get('openai_api_key', ''),
+            'ollama_api_key': request.form.get('ollama_api_key', ''),
             'default_translation_model': request.form.get('default_translation_model'),
             'default_translation_temperature': translation_temperature,
             'default_translation_accuracy_mode': translation_accuracy_mode,
@@ -1952,6 +1953,10 @@ def api_fetch_ollama_models():
         data = request.json
         endpoint = data.get('endpoint', 'http://localhost:11434/api')
         api_key = data.get('api_key') or None  # Опциональный Bearer для Ollama Cloud
+        # Fallback на глобальный ключ из настроек (только если endpoint указывает на ollama.com)
+        if not api_key and 'ollama.com' in endpoint:
+            from app.services.settings_service import SettingsService
+            api_key = SettingsService.get_ollama_api_key()
 
         # Запускаем асинхронную функцию
         loop = asyncio.new_event_loop()
@@ -1974,6 +1979,10 @@ def api_get_ollama_model_info():
         endpoint = data.get('endpoint', 'http://localhost:11434/api')
         model_name = data.get('model_name')
         api_key = data.get('api_key') or None  # Опциональный Bearer для Ollama Cloud
+        # Fallback на глобальный ключ из настроек (только если endpoint указывает на ollama.com)
+        if not api_key and 'ollama.com' in endpoint:
+            from app.services.settings_service import SettingsService
+            api_key = SettingsService.get_ollama_api_key()
 
         if not model_name:
             return jsonify({'error': 'model_name is required'}), 400

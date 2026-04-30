@@ -93,7 +93,7 @@
                                     <i class="bi bi-eye" id="api-key-toggle"></i>
                                 </button>
                             </div>
-                            <div class="form-text">API ключ для авторизации (оставьте пустым для Ollama)</div>
+                            <div class="form-text" id="api-key-help">API ключ для авторизации (оставьте пустым для Ollama)</div>
                         </div>
 
                         <!-- Параметры модели -->
@@ -247,6 +247,12 @@ function updateProviderFields() {
     geminiApiType.style.display = 'none';
     fetchModelsBtn.style.display = 'none';
 
+    // Сбрасываем подсказку API ключа на дефолт
+    const apiKeyHelp = document.getElementById('api-key-help');
+    if (apiKeyHelp) {
+        apiKeyHelp.textContent = 'API ключ для авторизации (оставьте пустым для Ollama)';
+    }
+
     // Настраиваем поля в зависимости от провайдера
     switch(provider) {
         case 'gemini':
@@ -294,6 +300,9 @@ function updateProviderFields() {
             fetchModelsBtn.style.display = 'block';
             document.getElementById('description').value = 'Облачный Ollama API (https://ollama.com)';
             document.getElementById('cost_rating').value = '3';
+            if (apiKeyHelp) {
+                apiKeyHelp.innerHTML = 'Можно оставить пустым — будет использован глобальный ключ из <a href="/settings" target="_blank">настроек</a>. Заполните только если для этой модели нужен отдельный ключ.';
+            }
             break;
 
         case 'custom':
