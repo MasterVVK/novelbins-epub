@@ -608,6 +608,46 @@ class AIModelService:
             return []
 
     @staticmethod
+    async def probe_ollama_max_output_tokens(api_endpoint: str, model_name: str, api_key: str = None) -> Optional[int]:
+        """Узнать реальный max_output_tokens модели через зонд /api/generate.
+
+        Ollama Cloud не публикует лимиты per-model. Способ их выяснить — отправить
+        запрос с заведомо превышающим num_predict (1_000_000) и распарсить 400-ошибку
+        вида "max_tokens (X) exceeds model's maximum output tokens (Y)".
+
+        Сам запрос не запускает генерацию: 400 возвращается до выполнения.
+
+        Returns:
+            Точный лимит в токенах или None если зонд не определил.
+        """
+        headers = {'Authorization': f'Bearer {api_key}'} if api_key else {}
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                response = await client.post(
+                    f"{api_endpoint}/generate",
+                    json={
+                        'model': model_name,
+                        'prompt': 'x',
+                        'stream': False,
+                        'options': {'num_predict': 1_000_000}
+                    },
+                    headers=headers
+                )
+                if response.status_code == 400:
+                    error_msg = response.json().get('error', '')
+                    import re
+                    match = re.search(r"exceeds model's maximum output tokens \((\d+)\)", error_msg)
+                    if match:
+                        limit = int(match.group(1))
+                        logger.info(f"Probe: реальный max_output для {model_name} = {limit:,}")
+                        return limit
+                logger.warning(f"Probe: лимит для {model_name} не определён (HTTP {response.status_code})")
+                return None
+        except Exception as e:
+            logger.warning(f"Probe для {model_name} завершился ошибкой: {e}")
+            return None
+
+    @staticmethod
     async def get_ollama_model_info(api_endpoint: str, model_name: str, api_key: str = None) -> Dict:
         """Получить детальную информацию о конкретной модели Ollama (local или cloud).
 
@@ -662,6 +702,14 @@ class AIModelService:
                     # Фактический размер будет рассчитываться динамически при запросе
                     recommended_max_input = context_length
                     recommended_max_output = context_length
+
+                    # Для Ollama Cloud зондируем реальный лимит выхода:
+                    # cloud накладывает per-model max_output_tokens, который нигде не публикуется,
+                    # но возвращается в 400-ответе при превышении num_predict.
+                    if 'ollama.com' in api_endpoint:
+                        probed = await AIModelService.probe_ollama_max_output_tokens(api_endpoint, model_name, api_key)
+                        if probed:
+                            recommended_max_output = probed
 
                     return {
                         'success': True,
