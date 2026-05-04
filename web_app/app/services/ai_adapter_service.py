@@ -112,7 +112,8 @@ class AIAdapterService:
                 return await self._call_anthropic(system_prompt, user_prompt, temperature, max_tokens)
             elif self.model.provider in ('ollama', 'ollama_turbo'):
                 return await self._call_ollama(system_prompt, user_prompt, temperature, max_tokens,
-                                               expected_output_multiplier, min_output_tokens)
+                                               expected_output_multiplier, min_output_tokens,
+                                               disable_thinking=disable_thinking)
             elif self.model.provider == 'openrouter':
                 return await self._call_openrouter(system_prompt, user_prompt, temperature, max_tokens)
             else:
@@ -330,10 +331,34 @@ class AIAdapterService:
                     'error': error_data.get('error', {}).get('message', f'HTTP {response.status_code}')
                 }
 
+    def _resolve_ollama_think_param(self, disable_thinking: bool = False):
+        """Вычислить значение параметра `think` для Ollama API.
+
+        Возвращает:
+            None  — параметр НЕ должен отправляться (thinking off);
+            True  — обычный thinking (think=true);
+            "high" — Max thinking (think="high", для DeepSeek-V4-Pro и др.).
+
+        Семантика трёх режимов:
+            disable_thinking=True              → None (hard kill switch)
+            enable_thinking=False              → None
+            enable_thinking=True, mode in (None, 'on') → True
+            enable_thinking=True, mode='high'  → "high"
+        """
+        if disable_thinking:
+            return None
+        if not getattr(self.model, 'enable_thinking', False):
+            return None
+        mode = getattr(self.model, 'thinking_mode', None)
+        if mode == 'high':
+            return 'high'
+        return True
+
     async def _call_ollama(self, system_prompt: str, user_prompt: str,
                            temperature: float, max_tokens: int,
                            expected_output_multiplier: float = None,
-                           min_output_tokens: int = None) -> Dict:
+                           min_output_tokens: int = None,
+                           disable_thinking: bool = False) -> Dict:
         """Вызов Ollama API с динамическим расчетом размера контекста на основе параметров модели"""
         # Bearer-авторизация для Ollama Cloud (provider='ollama_turbo') либо если api_key явно задан.
         # Для ollama_turbo с пустым ключом — fallback на глобальный ollama_api_key из настроек.
@@ -467,11 +492,15 @@ class AIAdapterService:
                         }
                     }
 
-                    # Включаем thinking mode если он активирован для модели
-                    if hasattr(self.model, 'enable_thinking') and self.model.enable_thinking:
-                        request_json['think'] = True
+                    # Включаем thinking mode (None = off, True = обычный, "high" = Max)
+                    think_value = self._resolve_ollama_think_param(disable_thinking=disable_thinking)
+                    if think_value is not None:
+                        request_json['think'] = think_value
                         if thinking_retry == 0:
-                            logger.info(f"🧠 Thinking mode активирован для {self.model.model_id}")
+                            mode_label = 'high' if think_value == 'high' else 'on'
+                            logger.info(f"🧠 Thinking mode активирован для {self.model.model_id} (режим: {mode_label})")
+                    elif thinking_retry == 0 and getattr(self.model, 'enable_thinking', False) and disable_thinking:
+                        logger.info(f"🧠 Thinking mode у модели {self.model.model_id} принудительно подавлен (disable_thinking=True)")
 
                     # Делаем запрос к модели с упрощенными параметрами контекста
                     response = await client.post(

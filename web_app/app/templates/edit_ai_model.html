@@ -131,6 +131,30 @@
                                 <div class="form-text">Глубокий анализ с пошаговыми рассуждениями (для DeepSeek, DeepSeek-R1 и других reasoning моделей)</div>
                             </label>
                         </div>
+
+                        <div id="thinkingModeWrapper" class="ms-4 mb-3" style="display: none;">
+                            <label class="form-label"><strong>Уровень thinking</strong></label>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="thinking_mode_radio"
+                                       id="thinkingModeOn" value="on"
+                                       {% if not model.thinking_mode or model.thinking_mode == 'on' %}checked{% endif %}>
+                                <label class="form-check-label" for="thinkingModeOn">
+                                    Обычный thinking
+                                    <div class="form-text">Стандартный режим рассуждений (think=true)</div>
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="thinking_mode_radio"
+                                       id="thinkingModeHigh" value="high"
+                                       {% if model.thinking_mode == 'high' %}checked{% endif %}>
+                                <label class="form-check-label" for="thinkingModeHigh">
+                                    Max thinking
+                                    <div class="form-text">Углублённые рассуждения (think="high", для DeepSeek-V4-Pro и аналогов)</div>
+                                </label>
+                            </div>
+                            <input type="hidden" name="thinking_mode" id="thinkingModeHidden"
+                                   value="{{ model.thinking_mode or '' }}">
+                        </div>
                     </div>
 
                     <!-- Рейтинги и рекомендации -->
@@ -276,6 +300,13 @@ document.getElementById('editModelForm').addEventListener('submit', async functi
     if (!formData.has('supports_system_prompt')) data.supports_system_prompt = false;
     if (!formData.has('enable_thinking')) data.enable_thinking = false;
 
+    // Нормализация thinking_mode: имеет смысл только при enable_thinking=true
+    if (!data.enable_thinking) {
+        data.thinking_mode = null;
+    } else if (!data.thinking_mode) {
+        data.thinking_mode = 'on';
+    }
+
     try {
         const response = await fetch(this.action, {
             method: 'PUT',
@@ -295,6 +326,39 @@ document.getElementById('editModelForm').addEventListener('submit', async functi
         alert('Ошибка сохранения: ' + error.message);
     }
 });
+
+// Управление блоком "Уровень thinking"
+(function() {
+    const enableCheckbox = document.getElementById('enable_thinking');
+    const wrapper = document.getElementById('thinkingModeWrapper');
+    const hidden = document.getElementById('thinkingModeHidden');
+    const radios = document.querySelectorAll('input[name="thinking_mode_radio"]');
+
+    if (!enableCheckbox || !wrapper || !hidden) return;
+
+    function syncWrapperVisibility() {
+        wrapper.style.display = enableCheckbox.checked ? '' : 'none';
+        if (!enableCheckbox.checked) {
+            hidden.value = '';
+        } else if (!hidden.value) {
+            // По умолчанию — обычный thinking
+            const onRadio = document.getElementById('thinkingModeOn');
+            if (onRadio) {
+                onRadio.checked = true;
+                hidden.value = 'on';
+            }
+        }
+    }
+
+    enableCheckbox.addEventListener('change', syncWrapperVisibility);
+    radios.forEach(radio => {
+        radio.addEventListener('change', function(e) {
+            hidden.value = e.target.value;
+        });
+    });
+
+    syncWrapperVisibility();
+})();
 
 async function testModel() {
     const testButton = event.target.closest('button');

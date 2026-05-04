@@ -36,6 +36,9 @@ class AIModel(db.Model):
 
     # Thinking mode (для DeepSeek и других reasoning моделей)
     enable_thinking = db.Column(db.Boolean, default=False, nullable=False)
+    # Уровень thinking для Ollama API (имеет смысл при enable_thinking=True)
+    # Допустимые значения: None / 'on' (обычный, think=true) / 'high' (Max, think="high")
+    thinking_mode = db.Column(db.String(20), nullable=True, default=None)
 
     # Настройки для конкретных провайдеров
     provider_config = db.Column(db.JSON, default={})
@@ -120,6 +123,7 @@ class AIModel(db.Model):
             'supports_temperature': self.supports_temperature,
             'default_temperature': self.default_temperature,
             'enable_thinking': self.enable_thinking,
+            'thinking_mode': self.thinking_mode,
             'provider_config': self.provider_config or {},
             'speed_rating': self.speed_rating,
             'quality_rating': self.quality_rating,
