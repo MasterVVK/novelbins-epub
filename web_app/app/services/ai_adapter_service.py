@@ -500,38 +500,45 @@ class AIAdapterService:
                     chunks_with_reasoning = 0
                     first_chunks_logged = 0
 
-                    async for line in response.aiter_lines():
-                        if not line or not line.startswith('data:'):
-                            continue
-                        payload = line[5:].strip()
-                        if payload == '[DONE]':
-                            break
-                        try:
-                            chunk = json.loads(payload)
-                        except json.JSONDecodeError:
-                            continue
-                        chunks_total += 1
-                        if first_chunks_logged < 2:
-                            logger.info(f"{log_prefix}NVIDIA chunk #{chunks_total} raw: {payload[:500]}")
-                            first_chunks_logged += 1
-                        choices = chunk.get('choices') or []
-                        if choices:
-                            delta = choices[0].get('delta') or {}
-                            piece = delta.get('content')
-                            if piece:
-                                content_parts.append(piece)
-                                chunks_with_content += 1
-                            # NVIDIA / DeepSeek могут отдавать reasoning в отдельном поле
-                            reasoning_piece = delta.get('reasoning_content') or delta.get('reasoning')
-                            if reasoning_piece:
-                                reasoning_parts.append(reasoning_piece)
-                                chunks_with_reasoning += 1
-                            fr = choices[0].get('finish_reason')
-                            if fr:
-                                finish_reason = fr
-                        chunk_usage = chunk.get('usage')
-                        if chunk_usage:
-                            usage = chunk_usage
+                    # Явно держим async generator в переменной и закрываем в finally —
+                    # иначе при break Python оставляет его pending и Celery логирует
+                    # "Task was destroyed but it is pending!" (косметический warning).
+                    line_iter = response.aiter_lines()
+                    try:
+                        async for line in line_iter:
+                            if not line or not line.startswith('data:'):
+                                continue
+                            payload = line[5:].strip()
+                            if payload == '[DONE]':
+                                break
+                            try:
+                                chunk = json.loads(payload)
+                            except json.JSONDecodeError:
+                                continue
+                            chunks_total += 1
+                            if first_chunks_logged < 2:
+                                logger.info(f"{log_prefix}NVIDIA chunk #{chunks_total} raw: {payload[:500]}")
+                                first_chunks_logged += 1
+                            choices = chunk.get('choices') or []
+                            if choices:
+                                delta = choices[0].get('delta') or {}
+                                piece = delta.get('content')
+                                if piece:
+                                    content_parts.append(piece)
+                                    chunks_with_content += 1
+                                # NVIDIA / DeepSeek могут отдавать reasoning в отдельном поле
+                                reasoning_piece = delta.get('reasoning_content') or delta.get('reasoning')
+                                if reasoning_piece:
+                                    reasoning_parts.append(reasoning_piece)
+                                    chunks_with_reasoning += 1
+                                fr = choices[0].get('finish_reason')
+                                if fr:
+                                    finish_reason = fr
+                            chunk_usage = chunk.get('usage')
+                            if chunk_usage:
+                                usage = chunk_usage
+                    finally:
+                        await line_iter.aclose()
 
                     content = ''.join(content_parts)
                     reasoning_text = ''.join(reasoning_parts)
