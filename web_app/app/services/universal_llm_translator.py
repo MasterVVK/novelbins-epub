@@ -10,7 +10,7 @@ from typing import Optional, List, Dict
 from app.models import AIModel
 from app.services.ai_adapter_service import AIAdapterService
 from app.services.log_service import LogService
-from app.services.original_aware_editor_service import RateLimitError, ProhibitedContentError
+from app.services.original_aware_editor_service import RateLimitError, ProhibitedContentError, LengthLimitError
 
 # Для нормализации традиционного/упрощённого китайского
 try:
@@ -264,6 +264,11 @@ class UniversalLLMTranslator:
                     if 'PROHIBITED_CONTENT' in error:
                         raise ProhibitedContentError(f"Контент заблокирован: {error}")
 
+                    # finish_reason='length' — модель упёрлась в max_tokens API.
+                    # Повторы с тем же провайдером бесполезны.
+                    if error_type == 'length':
+                        raise LengthLimitError(error)
+
                     if 'Rate limit' in error or result.get('retry_after'):
                         # Rate limit - помечаем ключ и переключаемся
                         LogService.log_warning(f"Rate limit для ключа #{self.current_key_index + 1}")
@@ -339,6 +344,14 @@ class UniversalLLMTranslator:
                     # Нет смысла повторять - сразу пропускаем главу
                     if 'PROHIBITED_CONTENT' in error:
                         raise ProhibitedContentError(f"Контент заблокирован: {error}")
+
+                    # finish_reason='length' — модель упёрлась в max_tokens API.
+                    # Повторы с тем же провайдером бесполезны (тот же бюджет).
+                    # Сигнализируем editor_service, чтобы он переключился на fallback-модель.
+                    if error_type == 'length':
+                        if self.save_prompt_history and self.current_chapter_id:
+                            self._save_prompt_history(system_prompt, user_prompt, result.get('truncated_content'), result, False, error)
+                        raise LengthLimitError(error)
 
                     # Проверяем на НЕДЕЛЬНЫЙ лимит - повторы бессмысленны, нужно остановить задачу
                     # ЧАСОВОЙ лимит (rate_limit) обрабатывается НИЖЕ с прогрессивными повторами

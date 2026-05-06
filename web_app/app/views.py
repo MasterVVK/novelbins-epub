@@ -425,6 +425,7 @@ def edit_novel(novel_id):
         editing_quality_mode = request.form.get('editing_quality_mode', 'balanced')
         editing_threads = request.form.get('editing_threads')
         alignment_threads = request.form.get('alignment_threads')
+        fallback_editing_model = (request.form.get('fallback_editing_model') or '').strip() or None
 
         # Определяем температуру редактирования
         if editing_quality_mode == 'custom':
@@ -475,6 +476,7 @@ def edit_novel(novel_id):
             'editing_quality_mode': editing_quality_mode or 'balanced',
             'editing_threads': int(editing_threads) if editing_threads else 3,
             'alignment_threads': int(alignment_threads) if alignment_threads else 3,
+            'fallback_editing_model': fallback_editing_model,
             'filter_text': request.form.get('filter_text', '').strip()
         }
         

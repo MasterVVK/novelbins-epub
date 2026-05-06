@@ -462,6 +462,32 @@
                         </div>
                     </div>
 
+                    <div class="row mt-3">
+                        <div class="col-md-12">
+                            <div class="mb-3">
+                                <label for="fallback_editing_model" class="form-label">
+                                    Резервная модель для редактуры
+                                    <i class="bi bi-info-circle" data-bs-toggle="tooltip" title="Если основная модель упрётся в лимит токенов на каком-то этапе (например, NVIDIA NIM с reasoning_effort=high), этап повторится через резервную модель. Полезно для длинных глав."></i>
+                                </label>
+                                <select class="form-select" id="fallback_editing_model" name="fallback_editing_model">
+                                    <option value="">— Не использовать (отключено) —</option>
+                                    {% if ai_models %}
+                                        {% for model in ai_models %}
+                                            <option value="{{ model.model_id }}"
+                                                    {{ 'selected' if novel.config and novel.config.fallback_editing_model == model.model_id else '' }}>
+                                                {{ model.name }} ({{ model.provider|upper }})
+                                            </option>
+                                        {% endfor %}
+                                    {% endif %}
+                                </select>
+                                <div class="form-text">
+                                    Срабатывает только при ошибке <code>error_type=length</code> (исчерпан бюджет max_tokens).
+                                    Рекомендуется выбрать модель с большим лимитом выхода — например ту же DeepSeek-V4-Pro через Ollama Cloud (65k токенов).
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="d-flex justify-content-between">
                         <a href="{{ url_for('main.novel_detail', novel_id=novel.id) }}" class="btn btn-outline-secondary">
                             <i class="bi bi-arrow-left"></i> Назад

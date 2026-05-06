@@ -609,12 +609,26 @@ def edit_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
 
         # Инициализируем сервисы
         config = {}
+        fallback_model_name = None
         if novel.config:
             config['model_name'] = novel.config.get('translation_model')
             config['temperature'] = novel.config.get('editing_temperature', novel.config.get('translation_temperature'))
+            fallback_model_name = novel.config.get('fallback_editing_model')
+
+        # Fallback-модель для редактуры — переключение при error_type='length' (NVIDIA NIM
+        # упёрся в max_tokens=16384 и т.п.). Если не задано — fallback не активен.
+        fallback_translator_service = None
+        if fallback_model_name:
+            fallback_config = dict(config)
+            fallback_config['model_name'] = fallback_model_name
+            fallback_translator_service = TranslatorService(config=fallback_config)
+            LogService.log_info(
+                f"📝 [Novel:{novel_id}] Резервная модель для редактуры: {fallback_model_name}",
+                novel_id=novel_id
+            )
 
         translator_service = TranslatorService(config=config)
-        editor_service = OriginalAwareEditorService(translator_service)
+        editor_service = OriginalAwareEditorService(translator_service, fallback_translator=fallback_translator_service)
 
         # Получаем главы
         from app.models import Chapter
@@ -685,7 +699,12 @@ def edit_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
 
                         # Создаем отдельный editor_service для этого потока
                         thread_translator = TranslatorService(config=config)
-                        thread_editor = OriginalAwareEditorService(thread_translator)
+                        thread_fallback = None
+                        if fallback_model_name:
+                            t_fb_config = dict(config)
+                            t_fb_config['model_name'] = fallback_model_name
+                            thread_fallback = TranslatorService(config=t_fb_config)
+                        thread_editor = OriginalAwareEditorService(thread_translator, fallback_translator=thread_fallback)
 
                         result = thread_editor.edit_chapter(chapter)
 

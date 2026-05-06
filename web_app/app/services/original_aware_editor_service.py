@@ -66,6 +66,12 @@ class ProhibitedContentError(EditingError):
     pass
 
 
+class LengthLimitError(EditingError):
+    """Ответ модели обрезан по лимиту max_tokens (finish_reason='length').
+    Сигнализирует верхнему слою попробовать fallback-модель с большим лимитом выхода."""
+    pass
+
+
 class OriginalAwareEditorService(GlossaryAwareEditorService):
     """
     Продвинутый сервис редактуры с использованием оригинального текста и глоссария.
@@ -76,11 +82,53 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
     MAX_TEXT_EXPANSION_RATIO = 6.0  # Максимальное расширение текста (6x от оригинала)
     MAX_LENGTH_RETRIES = 2  # Максимум retry при превышении лимита длины
 
-    def __init__(self, translator_service: TranslatorService):
+    def __init__(self, translator_service: TranslatorService,
+                 fallback_translator: TranslatorService = None):
         super().__init__(translator_service)
         self.translator = translator_service
+        self.fallback_translator = fallback_translator
         self.template_service = PromptTemplateService
         self.glossary_service = GlossaryService
+
+    def _translate_with_fallback(self, translated_text: str, prompt: str, chapter_id: int,
+                                 prompt_type: str, stage_name: str) -> str:
+        """Универсальная обёртка вокруг translator.translate_text с fallback на резервную модель.
+
+        Если основная модель возвращает LengthLimitError (NVIDIA NIM упёрся в max_tokens=16384) —
+        повторяем тот же запрос через self.fallback_translator. Используется в каждом из 4 этапов
+        редактуры. При отсутствии fallback_translator или повторной LengthLimitError — пробрасываем
+        исключение наверх (текущий этап будет помечен как failed, редактура продолжит со следующим).
+        """
+        # Первая попытка через основной translator
+        if self.translator.translator.current_chapter_id is None:
+            self.translator.translator.current_chapter_id = chapter_id
+        self.translator.translator.current_prompt_type = prompt_type
+        self.translator.translator.request_start_time = time.time()
+
+        try:
+            return self.translator.translator.translate_text(
+                translated_text, prompt, "", chapter_id,
+                temperature=self.translator.temperature
+            )
+        except LengthLimitError as e:
+            if not self.fallback_translator:
+                LogService.log_error(
+                    f"⚠️ Этап {stage_name}: ответ обрезан по length, fallback не настроен — пропускаем этап",
+                    chapter_id=chapter_id
+                )
+                raise
+            LogService.log_warning(
+                f"🔁 Этап {stage_name}: основная модель упёрлась в length, "
+                f"переключаемся на fallback модель {self.fallback_translator.translator.model.model_id}",
+                chapter_id=chapter_id
+            )
+            self.fallback_translator.translator.current_chapter_id = chapter_id
+            self.fallback_translator.translator.current_prompt_type = prompt_type
+            self.fallback_translator.translator.request_start_time = time.time()
+            return self.fallback_translator.translator.translate_text(
+                translated_text, prompt, "", chapter_id,
+                temperature=self.fallback_translator.temperature
+            )
 
     def _check_text_length(self, result: str, original: str, stage_name: str, chapter_id: int) -> bool:
         """
@@ -315,12 +363,10 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
         )
 
         try:
-            if chapter_id:
-                self.translator.translator.current_chapter_id = chapter_id
-                self.translator.translator.current_prompt_type = 'editing_analysis_original'
-                self.translator.translator.request_start_time = time.time()
-
-            result = self.translator.translator.translate_text(translated, prompt, "", chapter_id, temperature=self.translator.temperature)
+            result = self._translate_with_fallback(
+                translated, prompt, chapter_id,
+                prompt_type='editing_analysis_original', stage_name='analysis'
+            )
 
             # Парсим ответ
             strategy = self._parse_analysis_result(result)
@@ -370,12 +416,10 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
         )
 
         try:
-            if chapter_id:
-                self.translator.translator.current_chapter_id = chapter_id
-                self.translator.translator.current_prompt_type = 'editing_fix_original'
-                self.translator.translator.request_start_time = time.time()
-
-            result = self.translator.translator.translate_text(translated, prompt, "", chapter_id, temperature=self.translator.temperature)
+            result = self._translate_with_fallback(
+                translated, prompt, chapter_id,
+                prompt_type='editing_fix_original', stage_name='fix'
+            )
 
             # КРИТИЧЕСКИ ВАЖНО: Если API вернул None или пустую строку - это ОШИБКА
             # НЕ возвращаем translated текст, чтобы не записать его как edited!
@@ -383,8 +427,8 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
                 raise EmptyResultError(f"API вернул пустой результат при исправлении с оригиналом. Редактура невозможна.")
 
             return result
-        except EmptyResultError:
-            raise  # Пробрасываем EmptyResultError без изменений
+        except (EmptyResultError, LengthLimitError):
+            raise
         except Exception as e:
             LogService.log_error(f"Ошибка исправления с оригиналом: {e}", chapter_id=chapter_id)
             raise  # Прокидываем исключение выше, чтобы edit_chapter() вернул False
@@ -420,19 +464,17 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
         )
 
         try:
-            if chapter_id:
-                self.translator.translator.current_chapter_id = chapter_id
-                self.translator.translator.current_prompt_type = 'editing_style_original'
-                self.translator.translator.request_start_time = time.time()
-
-            result = self.translator.translator.translate_text(translated, prompt, "", chapter_id, temperature=self.translator.temperature)
+            result = self._translate_with_fallback(
+                translated, prompt, chapter_id,
+                prompt_type='editing_style_original', stage_name='style'
+            )
 
             if not result:
                 raise EmptyResultError(f"API вернул пустой результат при улучшении стиля. Редактура невозможна.")
 
             return result
-        except EmptyResultError:
-            raise  # Пробрасываем EmptyResultError без изменений
+        except (EmptyResultError, LengthLimitError):
+            raise
         except Exception as e:
             LogService.log_error(f"Ошибка улучшения стиля с оригиналом: {e}", chapter_id=chapter_id)
             raise
@@ -468,19 +510,17 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
         )
 
         try:
-            if chapter_id:
-                self.translator.translator.current_chapter_id = chapter_id
-                self.translator.translator.current_prompt_type = 'editing_dialogue_original'
-                self.translator.translator.request_start_time = time.time()
-
-            result = self.translator.translator.translate_text(translated, prompt, "", chapter_id, temperature=self.translator.temperature)
+            result = self._translate_with_fallback(
+                translated, prompt, chapter_id,
+                prompt_type='editing_dialogue_original', stage_name='dialogue'
+            )
 
             if not result:
                 raise EmptyResultError(f"API вернул пустой результат при полировке диалогов. Редактура невозможна.")
 
             return result
-        except EmptyResultError:
-            raise  # Пробрасываем EmptyResultError без изменений
+        except (EmptyResultError, LengthLimitError):
+            raise
         except Exception as e:
             LogService.log_error(f"Ошибка полировки диалогов с оригиналом: {e}", chapter_id=chapter_id)
             raise
@@ -516,12 +556,10 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
         )
 
         try:
-            if chapter_id:
-                self.translator.translator.current_chapter_id = chapter_id
-                self.translator.translator.current_prompt_type = 'editing_final_original'
-                self.translator.translator.request_start_time = time.time()
-
-            result = self.translator.translator.translate_text(translated, prompt, "", chapter_id, temperature=self.translator.temperature)
+            result = self._translate_with_fallback(
+                translated, prompt, chapter_id,
+                prompt_type='editing_final_original', stage_name='final'
+            )
 
             if not result:
                 raise EmptyResultError(f"API вернул пустой результат при финальной полировке. Редактура невозможна.")
@@ -533,8 +571,8 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
                 raise EmptyResultError(f"После очистки от метаданных результат пустой. Редактура невозможна.")
 
             return result
-        except EmptyResultError:
-            raise  # Пробрасываем EmptyResultError без изменений
+        except (EmptyResultError, LengthLimitError):
+            raise
         except Exception as e:
             LogService.log_error(f"Ошибка финальной полировки с оригиналом: {e}", chapter_id=chapter_id)
             raise
