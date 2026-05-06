@@ -114,7 +114,6 @@ def setup_sqlite_wal(app):
     """
     # Проверяем что используется SQLite
     if 'sqlite' not in app.config['SQLALCHEMY_DATABASE_URI']:
-        app.logger.info('SQLite WAL: Пропущено (используется не SQLite)')
         return
 
     @event.listens_for(db.engine, "connect")
