@@ -376,9 +376,12 @@ class UniversalLLMTranslator:
                         # Кидаем исключение чтобы остановить всю задачу
                         raise RateLimitError(f"Достигнут {limit_type} лимит: {error}")
 
-                    # Специальная обработка concurrent_slot (429) — быстрые retry с jitter
-                    if self.model.provider in ('ollama', 'ollama_turbo') and error_type == 'concurrent_slot':
-                        LogService.log_warning(f"⚠️ Слоты Ollama заняты (429) для модели {self.model.model_id}")
+                    # Специальная обработка concurrent_slot (429) — быстрые retry с jitter.
+                    # Применяется к ollama, ollama_turbo и nvidia (NVIDIA NIM при перегрузке slots
+                    # отдаёт HTTP 429, который _call_nvidia транслирует в error_type='concurrent_slot').
+                    if self.model.provider in ('ollama', 'ollama_turbo', 'nvidia') and error_type == 'concurrent_slot':
+                        provider_label = 'NVIDIA NIM' if self.model.provider == 'nvidia' else 'Ollama'
+                        LogService.log_warning(f"⚠️ Слоты {provider_label} заняты (429) для модели {self.model.model_id}")
                         LogService.log_warning(f"   Текст ошибки: {error}")
 
                         # Сигнализируем адаптивному лимитеру
@@ -386,10 +389,16 @@ class UniversalLLMTranslator:
                         if endpoint and endpoint in _limiters:
                             _limiters[endpoint].report_429()
 
+                        # Уважаем Retry-After если сервер его прислал
+                        server_retry_after = result.get('retry_after')
+
                         # Быстрые retry с jitter (до 15 попыток, ~2-3 мин суммарно)
                         max_retries_429 = 15
                         for attempt_429 in range(1, max_retries_429 + 1):
-                            delay = random.uniform(1, 5) * (1 + attempt_429 * 0.3)
+                            if server_retry_after and attempt_429 == 1:
+                                delay = float(server_retry_after) + random.uniform(0, 2)
+                            else:
+                                delay = random.uniform(1, 5) * (1 + attempt_429 * 0.3)
                             LogService.log_info(f"⏳ Retry {attempt_429}/{max_retries_429}: ожидание {delay:.1f}с...")
                             await asyncio.sleep(delay)
 
@@ -411,6 +420,7 @@ class UniversalLLMTranslator:
                             if retry_error_type == 'concurrent_slot':
                                 if endpoint and endpoint in _limiters:
                                     _limiters[endpoint].report_429()
+                                server_retry_after = retry_result.get('retry_after')
                                 continue
                             else:
                                 # Другая ошибка — прекращаем retry

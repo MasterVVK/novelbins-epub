@@ -486,10 +486,39 @@ class AIAdapterService:
                             error_msg = err.get('message') if isinstance(err, dict) else err
                         except Exception:
                             error_msg = body[:500]
-                        return {
+
+                        # Классификация типа ошибки для верхнего retry-слоя.
+                        error_type = 'general'
+                        retry_after = response.headers.get('retry-after')
+                        if response.status_code == 429:
+                            # Rate limit — переиспользуем тип 'concurrent_slot', чтобы
+                            # universal_llm_translator применил существующий retry-цикл с jitter.
+                            error_type = 'concurrent_slot'
+                            logger.warning(
+                                f"{log_prefix}NVIDIA 429 Too Many Requests"
+                                + (f" (Retry-After: {retry_after}s)" if retry_after else "")
+                            )
+                        elif response.status_code == 401:
+                            error_type = 'invalid_api_key'
+                        elif response.status_code == 402:
+                            error_type = 'insufficient_credits'
+                        elif response.status_code == 503:
+                            error_type = 'service_unavailable'
+                        elif response.status_code in (502, 504):
+                            error_type = 'server_error'
+
+                        result_dict = {
                             'success': False,
-                            'error': error_msg or f'HTTP {response.status_code}'
+                            'error': error_msg or f'HTTP {response.status_code}',
+                            'error_type': error_type,
+                            'status_code': response.status_code,
                         }
+                        if retry_after:
+                            try:
+                                result_dict['retry_after'] = int(float(retry_after))
+                            except ValueError:
+                                pass
+                        return result_dict
 
                     content_parts = []
                     reasoning_parts = []
