@@ -362,6 +362,12 @@ class AIAdapterService:
 
         OpenAI-совместимый Chat Completions с нативным параметром reasoning_effort
         (none/high/max) для DeepSeek-V4-Pro и других reasoning-моделей.
+
+        При finish_reason='length' (бюджет 16384 токенов исчерпан) и
+        reasoning_effort != 'none' автоматически делает retry с reasoning_effort='none' —
+        это даёт +500-3000 токенов content, может спасти граничные случаи.
+        Если и retry упирается в length — возвращаем success=False, чтобы редактура
+        не использовала обрезанный посередине текст.
         """
         api_key = self.model.api_key
         if not api_key:
@@ -381,15 +387,71 @@ class AIAdapterService:
             if chapter:
                 log_prefix = f"[Novel:{chapter.novel_id}, Ch:{chapter.chapter_number}] "
 
+        # Первая попытка
+        result = await self._nvidia_stream_attempt(
+            api_key=api_key,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=temperature,
+            actual_max_tokens=actual_max_tokens,
+            reasoning_effort=reasoning_effort,
+            log_prefix=log_prefix
+        )
+
+        # Auto-retry: если упёрлись в лимит токенов и thinking был включён —
+        # повторяем без thinking, чтобы освободить пространство для content.
+        if (result.get('finish_reason') == 'length'
+                and result.get('success')
+                and reasoning_effort != 'none'):
+            logger.warning(
+                f"{log_prefix}NVIDIA finish_reason=length при reasoning_effort={reasoning_effort}. "
+                f"Auto-retry с reasoning_effort='none'"
+            )
+            LogService.log_info(
+                f"{log_prefix}NVIDIA retry без thinking (предыдущий ответ обрезан по length)"
+            )
+            result = await self._nvidia_stream_attempt(
+                api_key=api_key,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                temperature=temperature,
+                actual_max_tokens=actual_max_tokens,
+                reasoning_effort='none',
+                log_prefix=log_prefix
+            )
+
+        # Если результат всё ещё length — текст обрезан посередине, не годится
+        # для редактуры. Возвращаем явный fail, чтобы верхний слой не сохранял мусор.
+        if result.get('success') and result.get('finish_reason') == 'length':
+            content_len = len(result.get('content') or '')
+            return {
+                'success': False,
+                'error': (
+                    f'NVIDIA NIM: ответ обрезан по лимиту max_tokens=16384 '
+                    f'(content_len={content_len}, finish_reason=length). '
+                    f'Промпт слишком большой для NVIDIA — используйте Ollama Cloud '
+                    f'(лимит 65k токенов) или сократите главу.'
+                ),
+                'error_type': 'length',
+                'truncated_content': result.get('content'),
+                'finish_reason': 'length'
+            }
+
+        return result
+
+    async def _nvidia_stream_attempt(self, api_key: str, system_prompt: str, user_prompt: str,
+                                     temperature: float, actual_max_tokens: int,
+                                     reasoning_effort: str, log_prefix: str) -> Dict:
+        """Один streaming-запрос к NVIDIA NIM с заданным reasoning_effort.
+
+        Возвращает {success, content, usage, finish_reason} или {success=False, error}.
+        """
         LogService.log_info(
             f"{log_prefix}NVIDIA запрос (stream): {self.model.model_id} | Temperature: {temperature} | "
             f"Max tokens: {actual_max_tokens:,} / {self.model.max_output_tokens:,} | "
             f"reasoning_effort: {reasoning_effort}"
         )
 
-        # SSE-streaming обязателен для NVIDIA NIM: gateway обрывает long non-stream
-        # запросы по своему таймауту и возвращает 504. Streaming держит соединение
-        # активным за счёт постоянного потока токенов.
         request_body = {
             'model': self.model.model_id,
             'messages': [
