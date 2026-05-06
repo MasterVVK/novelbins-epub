@@ -115,7 +115,8 @@ class AIAdapterService:
                                                expected_output_multiplier, min_output_tokens,
                                                disable_thinking=disable_thinking)
             elif self.model.provider == 'openrouter':
-                return await self._call_openrouter(system_prompt, user_prompt, temperature, max_tokens)
+                return await self._call_openrouter(system_prompt, user_prompt, temperature, max_tokens,
+                                                   disable_thinking=disable_thinking)
             elif self.model.provider == 'nvidia':
                 return await self._call_nvidia(system_prompt, user_prompt, temperature, max_tokens,
                                                disable_thinking=disable_thinking)
@@ -989,43 +990,61 @@ class AIAdapterService:
                 'error_type': 'unexpected'
             }
 
+    def _resolve_openrouter_reasoning(self, disable_thinking: bool = False) -> Optional[Dict]:
+        """Вычислить блок `reasoning` для запроса к OpenRouter.
+
+        OpenRouter принимает `reasoning.effort: 'low' | 'medium' | 'high'` и
+        `reasoning.exclude: bool`. У OpenRouter нет уровня 'max' — там потолок 'high'.
+
+        Семантика:
+            disable_thinking=True              → None (поле не отправляется, reasoning отключён)
+            enable_thinking=False              → None
+            enable_thinking=True, mode in (None, 'on') → effort='high', exclude=True
+            enable_thinking=True, mode='high'  → effort='high', exclude=True (на OpenRouter эквивалентно)
+        """
+        if disable_thinking:
+            return None
+        if not getattr(self.model, 'enable_thinking', False):
+            return None
+        # OpenRouter не различает 'on' и 'max' — оба маппятся на 'high'
+        return {'effort': 'high', 'exclude': True}
+
     async def _call_openrouter(self, system_prompt: str, user_prompt: str,
-                               temperature: float, max_tokens: int) -> Dict:
-        """Вызов OpenRouter API (OpenAI-совместимый формат) с динамическим расчетом max_tokens"""
+                               temperature: float, max_tokens: int,
+                               disable_thinking: bool = False) -> Dict:
+        """Вызов OpenRouter API (OpenAI-совместимый формат) с динамическим расчетом max_tokens.
+
+        max_tokens НЕ ограничивается hardcoded потолком — берётся min(estimated, model.max_output_tokens),
+        чтобы платные модели типа DeepSeek-V4-Pro могли использовать весь свой бюджет (80k и больше).
+
+        При finish_reason='length' возвращается success=False с error_type='length' —
+        чтобы редактура не использовала обрезанный посередине ответ и могла переключиться
+        на fallback-модель (если задана).
+        """
         if not self.model.api_key:
             return {'success': False, 'error': 'API ключ не указан'}
 
-        # Логируем статус thinking для отладки
-        if hasattr(self.model, 'enable_thinking'):
-            logger.info(f"🔍 enable_thinking = {self.model.enable_thinking} для модели {self.model.model_id}")
-
-        # 🔧 ДИНАМИЧЕСКИЙ РАСЧЕТ max_tokens (как для Ollama)
         # Объединяем промпты для оценки размера
         full_prompt = f"{system_prompt}\n\n{user_prompt}"
-
-        # Оценка длины промпта на основе языка
         prompt_length = self._estimate_tokens(full_prompt)
+
+        # Reasoning-блок (None если thinking выключен)
+        reasoning_block = self._resolve_openrouter_reasoning(disable_thinking)
 
         # Для перевода: выход обычно ≈ вход × 1.5 (китайский → русский)
         # Для reasoning моделей: нужно × 4.0 из-за внутреннего процесса мышления
-        if hasattr(self.model, 'enable_thinking') and self.model.enable_thinking:
-            multiplier = 4.0  # Reasoning модели требуют больше токенов
-            logger.info(f"  🧠 Reasoning модель: используем multiplier × {multiplier}")
+        if reasoning_block is not None:
+            multiplier = 4.0
+            logger.info(f"  🧠 Reasoning режим активен: multiplier × {multiplier}")
         else:
-            multiplier = 1.5  # Обычные модели
+            multiplier = 1.5
 
         estimated_output = int(prompt_length * multiplier)
 
-        # Ограничения:
-        # 1. Не больше max_output_tokens модели
-        # 2. Не больше 16,384 для бесплатных моделей (чтобы избежать rate limit)
-        # 3. Минимум 2,048 токенов для стабильности
-        actual_max_tokens = min(estimated_output, self.model.max_output_tokens, 16384)
+        # Минимум 2,048 для стабильности; максимум — реальный лимит модели из БД.
+        # Никаких hardcoded потолков — для платных моделей max_output_tokens может быть 80k+.
+        actual_max_tokens = max(2048, min(estimated_output, self.model.max_output_tokens))
 
-        if actual_max_tokens < 2048:
-            actual_max_tokens = 2048
-
-        # Логируем параметры запроса с префиксом главы
         log_prefix = ""
         if self.chapter_id:
             from app.models import Chapter
@@ -1038,33 +1057,39 @@ class AIAdapterService:
         logger.info(f"  📏 Расчетный выход (промпт × {multiplier}): {estimated_output:,} токенов")
         logger.info(f"  🔧 Запрос max_tokens: {actual_max_tokens:,} токенов")
         logger.info(f"  📊 Лимит модели: {self.model.max_output_tokens:,} токенов")
+        logger.info(f"  🧠 reasoning: {reasoning_block if reasoning_block else 'OFF'}")
 
-        LogService.log_info(f"{log_prefix}OpenRouter запрос: {self.model.model_id} | Temperature: {temperature} | Max tokens: {actual_max_tokens:,} (динамический) / {self.model.max_output_tokens:,}")
+        LogService.log_info(
+            f"{log_prefix}OpenRouter запрос: {self.model.model_id} | Temperature: {temperature} | "
+            f"Max tokens: {actual_max_tokens:,} (динамический) / {self.model.max_output_tokens:,} | "
+            f"reasoning: {(reasoning_block or {}).get('effort', 'off')}"
+        )
+
+        request_json = {
+            'model': self.model.model_id,
+            'messages': [
+                {'role': 'system', 'content': system_prompt},
+                {'role': 'user', 'content': user_prompt}
+            ],
+            'temperature': temperature,
+            'max_tokens': actual_max_tokens,
+        }
+        if reasoning_block is not None:
+            request_json['reasoning'] = reasoning_block
 
         try:
-            async with httpx.AsyncClient(timeout=120.0) as client:
+            # 30 минут timeout — DeepSeek-V4-Pro и другие reasoning модели через OpenRouter
+            # на длинных промптах могут думать существенно дольше 2 минут.
+            async with httpx.AsyncClient(timeout=1800.0) as client:
                 response = await client.post(
                     'https://openrouter.ai/api/v1/chat/completions',
                     headers={
                         'Authorization': f'Bearer {self.model.api_key}',
                         'Content-Type': 'application/json',
-                        'HTTP-Referer': 'https://github.com/novelbins/novelbins-epub',  # Опционально
-                        'X-Title': 'NovelBins EPUB Translator'  # Опционально
+                        'HTTP-Referer': 'https://github.com/novelbins/novelbins-epub',
+                        'X-Title': 'NovelBins EPUB Translator'
                     },
-                    json={
-                        'model': self.model.model_id,
-                        'messages': [
-                            {'role': 'system', 'content': system_prompt},
-                            {'role': 'user', 'content': user_prompt}
-                        ],
-                        'temperature': temperature,
-                        'max_tokens': actual_max_tokens,
-                        # Для reasoning моделей: исключаем reasoning из ответа, оставляем только финальный content
-                        'reasoning': {
-                            'effort': 'high',
-                            'exclude': True  # Модель думает внутренне, но возвращает только content
-                        }
-                    }
+                    json=request_json
                 )
 
                 if response.status_code == 200:
@@ -1114,16 +1139,32 @@ class AIAdapterService:
                                     logger.info(f"   🔍 Reasoning_detail[{idx}] first 300 chars: {detail_text[:300]}")
                                     logger.info(f"   🔍 Reasoning_detail[{idx}] last 500 chars: {detail_text[-500:]}")
 
-                        # 🔍 ФИНАЛЬНОЕ ЛОГИРОВАНИЕ перед возвратом
-                        logger.info(f"🔍 DEBUG: Returning content length: {len(content)}")
-                        logger.info(f"🔍 DEBUG: Content is empty: {not content}")
-                        logger.info(f"🔍 DEBUG: Content is None: {content is None}")
+                        finish_reason = choices[0].get('finish_reason', 'unknown')
+
+                        LogService.log_info(
+                            f"{log_prefix}OpenRouter ответ: {len(content)} символов, finish_reason={finish_reason}"
+                        )
+
+                        # finish_reason='length' — ответ обрезан посередине, редактура такой не должна использовать.
+                        # Возвращаем success=False с error_type='length', чтобы editor_service переключился на fallback.
+                        if finish_reason == 'length':
+                            return {
+                                'success': False,
+                                'error': (
+                                    f'OpenRouter: ответ обрезан по лимиту max_tokens={actual_max_tokens} '
+                                    f'(content_len={len(content)}, finish_reason=length). '
+                                    f'Уменьшите промпт или используйте fallback-модель с большим лимитом.'
+                                ),
+                                'error_type': 'length',
+                                'truncated_content': content,
+                                'finish_reason': 'length'
+                            }
 
                         return {
                             'success': True,
                             'content': content,
                             'usage': data.get('usage', {}),
-                            'finish_reason': choices[0].get('finish_reason', 'unknown')
+                            'finish_reason': finish_reason
                         }
                     else:
                         return {'success': False, 'error': 'Нет вариантов в ответе'}
@@ -1166,7 +1207,7 @@ class AIAdapterService:
                     }
 
         except httpx.TimeoutException:
-            error_msg = f'Таймаут при обращении к OpenRouter (>120s). Модель: {self.model.model_id}'
+            error_msg = f'Таймаут при обращении к OpenRouter (>1800s / 30 мин). Модель: {self.model.model_id}'
             logger.error(error_msg)
             return {
                 'success': False,
