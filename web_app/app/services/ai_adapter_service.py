@@ -429,8 +429,13 @@ class AIAdapterService:
                         }
 
                     content_parts = []
+                    reasoning_parts = []
                     finish_reason = 'unknown'
                     usage = {}
+                    chunks_total = 0
+                    chunks_with_content = 0
+                    chunks_with_reasoning = 0
+                    first_chunks_logged = 0
 
                     async for line in response.aiter_lines():
                         if not line or not line.startswith('data:'):
@@ -442,12 +447,22 @@ class AIAdapterService:
                             chunk = json.loads(payload)
                         except json.JSONDecodeError:
                             continue
+                        chunks_total += 1
+                        if first_chunks_logged < 2:
+                            logger.info(f"{log_prefix}NVIDIA chunk #{chunks_total} raw: {payload[:500]}")
+                            first_chunks_logged += 1
                         choices = chunk.get('choices') or []
                         if choices:
                             delta = choices[0].get('delta') or {}
                             piece = delta.get('content')
                             if piece:
                                 content_parts.append(piece)
+                                chunks_with_content += 1
+                            # NVIDIA / DeepSeek могут отдавать reasoning в отдельном поле
+                            reasoning_piece = delta.get('reasoning_content') or delta.get('reasoning')
+                            if reasoning_piece:
+                                reasoning_parts.append(reasoning_piece)
+                                chunks_with_reasoning += 1
                             fr = choices[0].get('finish_reason')
                             if fr:
                                 finish_reason = fr
@@ -456,8 +471,29 @@ class AIAdapterService:
                             usage = chunk_usage
 
                     content = ''.join(content_parts)
+                    reasoning_text = ''.join(reasoning_parts)
+
+                    LogService.log_info(
+                        f"{log_prefix}NVIDIA stream завершён: chunks_total={chunks_total}, "
+                        f"with_content={chunks_with_content}, with_reasoning={chunks_with_reasoning}, "
+                        f"content_len={len(content)}, reasoning_len={len(reasoning_text)}, "
+                        f"finish_reason={finish_reason}"
+                    )
+
+                    if not content and reasoning_text:
+                        # Fallback: модель отдала только reasoning без финального content.
+                        # Используем reasoning_text как контент, чтобы не терять работу.
+                        logger.warning(
+                            f"{log_prefix}NVIDIA вернул только reasoning_content (без финального content). "
+                            f"Используем reasoning_text как fallback ({len(reasoning_text)} симв)"
+                        )
+                        content = reasoning_text
+
                     if not content:
-                        return {'success': False, 'error': 'NVIDIA stream пустой (контент не получен)'}
+                        return {
+                            'success': False,
+                            'error': f'NVIDIA stream пустой (контент не получен; chunks={chunks_total}, finish_reason={finish_reason})'
+                        }
 
                     LogService.log_info(
                         f"{log_prefix}NVIDIA ответ: {len(content)} символов, "
