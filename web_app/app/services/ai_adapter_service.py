@@ -116,6 +116,9 @@ class AIAdapterService:
                                                disable_thinking=disable_thinking)
             elif self.model.provider == 'openrouter':
                 return await self._call_openrouter(system_prompt, user_prompt, temperature, max_tokens)
+            elif self.model.provider == 'nvidia':
+                return await self._call_nvidia(system_prompt, user_prompt, temperature, max_tokens,
+                                               disable_thinking=disable_thinking)
             else:
                 return {'success': False, 'error': f'Неподдерживаемый провайдер: {self.model.provider}'}
 
@@ -330,6 +333,105 @@ class AIAdapterService:
                     'success': False,
                     'error': error_data.get('error', {}).get('message', f'HTTP {response.status_code}')
                 }
+
+    def _resolve_nvidia_reasoning_effort(self, disable_thinking: bool = False) -> str:
+        """Вычислить значение параметра `reasoning_effort` для NVIDIA NIM API.
+
+        NVIDIA NIM (DeepSeek-V4-Pro) принимает enum: 'none' / 'high' / 'max'.
+        По умолчанию API сам ставит 'high', поэтому для отключения нужно явно слать 'none'.
+
+        Семантика трёх режимов:
+            disable_thinking=True              → 'none' (hard kill switch)
+            enable_thinking=False              → 'none'
+            enable_thinking=True, mode in (None, 'on') → 'high'
+            enable_thinking=True, mode='high'  → 'max'
+        """
+        if disable_thinking:
+            return 'none'
+        if not getattr(self.model, 'enable_thinking', False):
+            return 'none'
+        mode = getattr(self.model, 'thinking_mode', None)
+        if mode == 'high':
+            return 'max'
+        return 'high'
+
+    async def _call_nvidia(self, system_prompt: str, user_prompt: str,
+                           temperature: float, max_tokens: int,
+                           disable_thinking: bool = False) -> Dict:
+        """Вызов NVIDIA NIM API (https://integrate.api.nvidia.com/v1).
+
+        OpenAI-совместимый Chat Completions с нативным параметром reasoning_effort
+        (none/high/max) для DeepSeek-V4-Pro и других reasoning-моделей.
+        """
+        api_key = self.model.api_key
+        if not api_key:
+            from app.services.settings_service import SettingsService
+            api_key = SettingsService.get_nvidia_api_key()
+        if not api_key:
+            return {'success': False, 'error': 'API ключ NVIDIA не указан'}
+
+        # Лимит NVIDIA NIM на max_tokens — 16384
+        actual_max_tokens = min(max_tokens, self.model.max_output_tokens, 16384)
+        reasoning_effort = self._resolve_nvidia_reasoning_effort(disable_thinking)
+
+        log_prefix = ""
+        if self.chapter_id:
+            from app.models import Chapter
+            chapter = Chapter.query.get(self.chapter_id)
+            if chapter:
+                log_prefix = f"[Novel:{chapter.novel_id}, Ch:{chapter.chapter_number}] "
+
+        LogService.log_info(
+            f"{log_prefix}NVIDIA запрос: {self.model.model_id} | Temperature: {temperature} | "
+            f"Max tokens: {actual_max_tokens:,} / {self.model.max_output_tokens:,} | "
+            f"reasoning_effort: {reasoning_effort}"
+        )
+
+        try:
+            async with httpx.AsyncClient(timeout=1800.0) as client:
+                response = await client.post(
+                    f"{self.model.api_endpoint}/chat/completions",
+                    headers={
+                        'Authorization': f'Bearer {api_key}',
+                        'Content-Type': 'application/json'
+                    },
+                    json={
+                        'model': self.model.model_id,
+                        'messages': [
+                            {'role': 'system', 'content': system_prompt},
+                            {'role': 'user', 'content': user_prompt}
+                        ],
+                        'temperature': temperature,
+                        'max_tokens': actual_max_tokens,
+                        'stream': False,
+                        'reasoning_effort': reasoning_effort
+                    }
+                )
+
+                if response.status_code == 200:
+                    data = response.json()
+                    choices = data.get('choices', [])
+                    if choices:
+                        message = choices[0].get('message', {})
+                        return {
+                            'success': True,
+                            'content': message.get('content', ''),
+                            'usage': data.get('usage', {}),
+                            'finish_reason': choices[0].get('finish_reason', 'unknown')
+                        }
+                    return {'success': False, 'error': 'Нет вариантов в ответе'}
+
+                try:
+                    error_data = response.json()
+                    error_msg = error_data.get('error', {}).get('message') if isinstance(error_data.get('error'), dict) else error_data.get('error')
+                except Exception:
+                    error_msg = response.text[:500]
+                return {
+                    'success': False,
+                    'error': error_msg or f'HTTP {response.status_code}'
+                }
+        except httpx.ReadTimeout:
+            return {'success': False, 'error': 'NVIDIA NIM timeout (1800s) — попробуйте reasoning_effort=none'}
 
     def _resolve_ollama_think_param(self, disable_thinking: bool = False):
         """Вычислить значение параметра `think` для Ollama API.

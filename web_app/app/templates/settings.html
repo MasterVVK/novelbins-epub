@@ -34,6 +34,12 @@
                         <div class="form-text">Глобальный ключ для https://ollama.com. Используется по умолчанию для всех моделей провайдера <code>ollama_turbo</code>, у которых поле API ключа оставлено пустым.</div>
                     </div>
 
+                    <div class="mb-3">
+                        <label for="nvidia_api_key" class="form-label">NVIDIA NIM API ключ</label>
+                        <input type="password" class="form-control" id="nvidia_api_key" name="nvidia_api_key" placeholder="nvapi-..." value="{{ settings.get('nvidia_api_key', '') }}">
+                        <div class="form-text">Глобальный ключ для https://integrate.api.nvidia.com. Используется по умолчанию для всех моделей провайдера <code>nvidia</code>, у которых поле API ключа оставлено пустым.</div>
+                    </div>
+
                     <hr>
                     
                     <h6 class="mb-3">Настройки перевода</h6>

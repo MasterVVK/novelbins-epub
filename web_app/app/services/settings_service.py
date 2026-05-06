@@ -72,6 +72,15 @@ class SettingsService:
         return key.strip() if key else None
 
     @staticmethod
+    def get_nvidia_api_key() -> Optional[str]:
+        """Получить глобальный API ключ для NVIDIA NIM (https://integrate.api.nvidia.com).
+
+        Используется как fallback для моделей provider='nvidia' с пустым api_key.
+        """
+        key = SystemSettings.get_setting('nvidia_api_key')
+        return key.strip() if key else None
+
+    @staticmethod
     def get_default_model() -> str:
         """Получить модель по умолчанию
 

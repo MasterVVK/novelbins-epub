@@ -25,6 +25,7 @@
                             <option value="openrouter">OpenRouter (400+ моделей)</option>
                             <option value="ollama">Ollama (Локальные модели)</option>
                             <option value="ollama_turbo">Ollama Turbo (Облачный API)</option>
+                            <option value="nvidia">NVIDIA NIM (DeepSeek V4 Pro)</option>
                             <option value="custom">Другой провайдер</option>
                         </select>
                         <div class="form-text">Выберите API провайдера для модели</div>
@@ -302,6 +303,20 @@ function updateProviderFields() {
             document.getElementById('cost_rating').value = '3';
             if (apiKeyHelp) {
                 apiKeyHelp.innerHTML = 'Можно оставить пустым — будет использован глобальный ключ из <a href="/settings" target="_blank">настроек</a>. Заполните только если для этой модели нужен отдельный ключ.';
+            }
+            break;
+
+        case 'nvidia':
+            apiEndpoint.value = 'https://integrate.api.nvidia.com/v1';
+            apiKeySection.style.display = 'block';
+            setModelPreset('deepseek-ai/deepseek-v4-pro', 'DeepSeek V4 Pro (NVIDIA NIM)');
+            document.getElementById('description').value = 'NVIDIA NIM API. Reasoning effort none/high/max через переключатель Thinking.';
+            document.getElementById('max_input_tokens').value = '128000';
+            document.getElementById('max_output_tokens').value = '16384';
+            document.getElementById('default_temperature').value = '0.3';
+            document.getElementById('cost_rating').value = '3';
+            if (apiKeyHelp) {
+                apiKeyHelp.innerHTML = 'Можно оставить пустым — будет использован глобальный ключ NVIDIA из <a href="/settings" target="_blank">настроек</a>.';
             }
             break;
 
