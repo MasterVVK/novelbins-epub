@@ -382,56 +382,97 @@ class AIAdapterService:
                 log_prefix = f"[Novel:{chapter.novel_id}, Ch:{chapter.chapter_number}] "
 
         LogService.log_info(
-            f"{log_prefix}NVIDIA запрос: {self.model.model_id} | Temperature: {temperature} | "
+            f"{log_prefix}NVIDIA запрос (stream): {self.model.model_id} | Temperature: {temperature} | "
             f"Max tokens: {actual_max_tokens:,} / {self.model.max_output_tokens:,} | "
             f"reasoning_effort: {reasoning_effort}"
         )
 
+        # SSE-streaming обязателен для NVIDIA NIM: gateway обрывает long non-stream
+        # запросы по своему таймауту и возвращает 504. Streaming держит соединение
+        # активным за счёт постоянного потока токенов.
+        request_body = {
+            'model': self.model.model_id,
+            'messages': [
+                {'role': 'system', 'content': system_prompt},
+                {'role': 'user', 'content': user_prompt}
+            ],
+            'temperature': temperature,
+            'max_tokens': actual_max_tokens,
+            'stream': True,
+            'reasoning_effort': reasoning_effort
+        }
+        headers = {
+            'Authorization': f'Bearer {api_key}',
+            'Content-Type': 'application/json',
+            'Accept': 'text/event-stream'
+        }
+
         try:
             async with httpx.AsyncClient(timeout=1800.0) as client:
-                response = await client.post(
+                async with client.stream(
+                    'POST',
                     f"{self.model.api_endpoint}/chat/completions",
-                    headers={
-                        'Authorization': f'Bearer {api_key}',
-                        'Content-Type': 'application/json'
-                    },
-                    json={
-                        'model': self.model.model_id,
-                        'messages': [
-                            {'role': 'system', 'content': system_prompt},
-                            {'role': 'user', 'content': user_prompt}
-                        ],
-                        'temperature': temperature,
-                        'max_tokens': actual_max_tokens,
-                        'stream': False,
-                        'reasoning_effort': reasoning_effort
-                    }
-                )
-
-                if response.status_code == 200:
-                    data = response.json()
-                    choices = data.get('choices', [])
-                    if choices:
-                        message = choices[0].get('message', {})
+                    headers=headers,
+                    json=request_body
+                ) as response:
+                    if response.status_code != 200:
+                        body = (await response.aread()).decode('utf-8', errors='replace')
+                        try:
+                            error_data = json.loads(body)
+                            err = error_data.get('error')
+                            error_msg = err.get('message') if isinstance(err, dict) else err
+                        except Exception:
+                            error_msg = body[:500]
                         return {
-                            'success': True,
-                            'content': message.get('content', ''),
-                            'usage': data.get('usage', {}),
-                            'finish_reason': choices[0].get('finish_reason', 'unknown')
+                            'success': False,
+                            'error': error_msg or f'HTTP {response.status_code}'
                         }
-                    return {'success': False, 'error': 'Нет вариантов в ответе'}
 
-                try:
-                    error_data = response.json()
-                    error_msg = error_data.get('error', {}).get('message') if isinstance(error_data.get('error'), dict) else error_data.get('error')
-                except Exception:
-                    error_msg = response.text[:500]
-                return {
-                    'success': False,
-                    'error': error_msg or f'HTTP {response.status_code}'
-                }
+                    content_parts = []
+                    finish_reason = 'unknown'
+                    usage = {}
+
+                    async for line in response.aiter_lines():
+                        if not line or not line.startswith('data:'):
+                            continue
+                        payload = line[5:].strip()
+                        if payload == '[DONE]':
+                            break
+                        try:
+                            chunk = json.loads(payload)
+                        except json.JSONDecodeError:
+                            continue
+                        choices = chunk.get('choices') or []
+                        if choices:
+                            delta = choices[0].get('delta') or {}
+                            piece = delta.get('content')
+                            if piece:
+                                content_parts.append(piece)
+                            fr = choices[0].get('finish_reason')
+                            if fr:
+                                finish_reason = fr
+                        chunk_usage = chunk.get('usage')
+                        if chunk_usage:
+                            usage = chunk_usage
+
+                    content = ''.join(content_parts)
+                    if not content:
+                        return {'success': False, 'error': 'NVIDIA stream пустой (контент не получен)'}
+
+                    LogService.log_info(
+                        f"{log_prefix}NVIDIA ответ: {len(content)} символов, "
+                        f"finish_reason={finish_reason}"
+                    )
+                    return {
+                        'success': True,
+                        'content': content,
+                        'usage': usage,
+                        'finish_reason': finish_reason
+                    }
         except httpx.ReadTimeout:
             return {'success': False, 'error': 'NVIDIA NIM timeout (1800s) — попробуйте reasoning_effort=none'}
+        except httpx.RemoteProtocolError as e:
+            return {'success': False, 'error': f'NVIDIA stream прерван: {e}'}
 
     def _resolve_ollama_think_param(self, disable_thinking: bool = False):
         """Вычислить значение параметра `think` для Ollama API.
