@@ -397,8 +397,13 @@ class UniversalLLMTranslator:
                         # - Иначе экспоненциальный backoff: для NVIDIA NIM (жёсткий rate limit)
                         #   стартуем с 5-15 сек и удваиваем (cap 60 сек). Для Ollama
                         #   (concurrent_slot — слоты освобождаются быстро) короче: 2-7 сек × 1.3^attempt.
+                        # max_retries_429:
+                        # - nvidia: 63 (≈ 1 час wait при cap=60s); если NVIDIA не отпустил
+                        #   за час — раз есть смысл останавливать ВСЮ задачу (последующие
+                        #   главы тоже упадут).
+                        # - ollama: 15 (~2-3 мин); concurrent_slot ольше не висит.
                         is_nvidia = self.model.provider == 'nvidia'
-                        max_retries_429 = 15
+                        max_retries_429 = 63 if is_nvidia else 15
                         for attempt_429 in range(1, max_retries_429 + 1):
                             if server_retry_after:
                                 # Сервер сам сказал сколько ждать — слушаем его всегда
@@ -440,9 +445,20 @@ class UniversalLLMTranslator:
                                     self._save_prompt_history(system_prompt, user_prompt, None, retry_result, False, retry_result.get('error', ''))
                                 return None
 
-                        LogService.log_error(f"❌ Все {max_retries_429} быстрых retry исчерпаны для 429")
+                        LogService.log_error(f"❌ Все {max_retries_429} retry исчерпаны для 429")
                         if self.save_prompt_history and self.current_chapter_id:
                             self._save_prompt_history(system_prompt, user_prompt, None, result, False, f"429 concurrent_slot после {max_retries_429} попыток")
+                        # Для NVIDIA: после ~1 часа непрерывных 429 нет смысла продолжать —
+                        # последующие главы тоже будут падать, лучше остановить всю задачу.
+                        if is_nvidia:
+                            LogService.log_error(
+                                f"🛑 NVIDIA NIM rate limit не сбросился за {max_retries_429} попыток (~1 час). "
+                                f"Останавливаем редактуру — последующие главы тоже не пройдут. "
+                                f"Подождите 30-60 минут или используйте резервную модель."
+                            )
+                            raise RateLimitError(
+                                f"NVIDIA NIM 429 rate limit не сбросился после {max_retries_429} retry (~1 час)"
+                            )
                         return None
 
                     # Специальная обработка для Ollama server error (500), upstream error (502), service unavailable (503), upstream timeout (504), timeout, unexpected error с длинными повторами
