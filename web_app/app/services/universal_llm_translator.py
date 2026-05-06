@@ -392,12 +392,23 @@ class UniversalLLMTranslator:
                         # Уважаем Retry-After если сервер его прислал
                         server_retry_after = result.get('retry_after')
 
-                        # Быстрые retry с jitter (до 15 попыток, ~2-3 мин суммарно)
+                        # Backoff-стратегия для 429:
+                        # - Если сервер прислал Retry-After (любая попытка) — ждём столько + jitter
+                        # - Иначе экспоненциальный backoff: для NVIDIA NIM (жёсткий rate limit)
+                        #   стартуем с 5-15 сек и удваиваем (cap 60 сек). Для Ollama
+                        #   (concurrent_slot — слоты освобождаются быстро) короче: 2-7 сек × 1.3^attempt.
+                        is_nvidia = self.model.provider == 'nvidia'
                         max_retries_429 = 15
                         for attempt_429 in range(1, max_retries_429 + 1):
-                            if server_retry_after and attempt_429 == 1:
+                            if server_retry_after:
+                                # Сервер сам сказал сколько ждать — слушаем его всегда
                                 delay = float(server_retry_after) + random.uniform(0, 2)
+                            elif is_nvidia:
+                                # NVIDIA: агрессивный backoff (5,10,20,40,60,60...) + jitter
+                                base = min(5 * (2 ** (attempt_429 - 1)), 60)
+                                delay = base + random.uniform(0, 3)
                             else:
+                                # Ollama: быстрые retry, слоты освободятся скоро
                                 delay = random.uniform(1, 5) * (1 + attempt_429 * 0.3)
                             LogService.log_info(f"⏳ Retry {attempt_429}/{max_retries_429}: ожидание {delay:.1f}с...")
                             await asyncio.sleep(delay)

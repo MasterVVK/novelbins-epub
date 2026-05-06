@@ -494,9 +494,15 @@ class AIAdapterService:
                             # Rate limit — переиспользуем тип 'concurrent_slot', чтобы
                             # universal_llm_translator применил существующий retry-цикл с jitter.
                             error_type = 'concurrent_slot'
+                            # Собираем все rate-limit headers для диагностики (X-RateLimit-* / RateLimit-*)
+                            rate_headers = {
+                                k: v for k, v in response.headers.items()
+                                if 'ratelimit' in k.lower() or k.lower() == 'retry-after'
+                            }
                             logger.warning(
                                 f"{log_prefix}NVIDIA 429 Too Many Requests"
                                 + (f" (Retry-After: {retry_after}s)" if retry_after else "")
+                                + (f" headers: {rate_headers}" if rate_headers else "")
                             )
                         elif response.status_code == 401:
                             error_type = 'invalid_api_key'
