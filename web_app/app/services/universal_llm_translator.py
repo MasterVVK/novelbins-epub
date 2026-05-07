@@ -376,12 +376,25 @@ class UniversalLLMTranslator:
                         # Кидаем исключение чтобы остановить всю задачу
                         raise RateLimitError(f"Достигнут {limit_type} лимит: {error}")
 
-                    # Специальная обработка concurrent_slot (429) — быстрые retry с jitter.
-                    # Применяется к ollama, ollama_turbo и nvidia (NVIDIA NIM при перегрузке slots
-                    # отдаёт HTTP 429, который _call_nvidia транслирует в error_type='concurrent_slot').
-                    if self.model.provider in ('ollama', 'ollama_turbo', 'nvidia') and error_type == 'concurrent_slot':
+                    # Специальная обработка concurrent_slot (429) — длительный retry с jitter.
+                    # Для Ollama применяется только к 'concurrent_slot' (slots заняты).
+                    # Для NVIDIA расширено на server-side ошибки (504/503/502 = инфраструктура
+                    # перегружена), потому что NVIDIA для них не шлёт Retry-After и они проходят
+                    # после ожидания так же, как и 429.
+                    nvidia_server_busy = (
+                        self.model.provider == 'nvidia'
+                        and error_type in ('concurrent_slot', 'server_error', 'service_unavailable', 'upstream_error', 'upstream_timeout')
+                    )
+                    ollama_concurrent = (
+                        self.model.provider in ('ollama', 'ollama_turbo')
+                        and error_type == 'concurrent_slot'
+                    )
+                    if nvidia_server_busy or ollama_concurrent:
                         provider_label = 'NVIDIA NIM' if self.model.provider == 'nvidia' else 'Ollama'
-                        LogService.log_warning(f"⚠️ Слоты {provider_label} заняты (429) для модели {self.model.model_id}")
+                        if error_type == 'concurrent_slot':
+                            LogService.log_warning(f"⚠️ Слоты {provider_label} заняты (429) для модели {self.model.model_id}")
+                        else:
+                            LogService.log_warning(f"⚠️ {provider_label} server-side ошибка ({error_type}) для модели {self.model.model_id}")
                         LogService.log_warning(f"   Текст ошибки: {error}")
 
                         # Сигнализируем адаптивному лимитеру
@@ -433,7 +446,13 @@ class UniversalLLMTranslator:
                                 return retry_result['content']
 
                             retry_error_type = retry_result.get('error_type', 'general')
-                            if retry_error_type == 'concurrent_slot':
+                            # Для NVIDIA продолжаем retry на любой server-busy ошибке;
+                            # для Ollama — только на concurrent_slot.
+                            retry_busy_types = (
+                                ('concurrent_slot', 'server_error', 'service_unavailable', 'upstream_error', 'upstream_timeout')
+                                if is_nvidia else ('concurrent_slot',)
+                            )
+                            if retry_error_type in retry_busy_types:
                                 if endpoint and endpoint in _limiters:
                                     _limiters[endpoint].report_429()
                                 server_retry_after = retry_result.get('retry_after')
@@ -445,19 +464,21 @@ class UniversalLLMTranslator:
                                     self._save_prompt_history(system_prompt, user_prompt, None, retry_result, False, retry_result.get('error', ''))
                                 return None
 
-                        LogService.log_error(f"❌ Все {max_retries_429} retry исчерпаны для 429")
+                        LogService.log_error(f"❌ Все {max_retries_429} retry исчерпаны (server-busy)")
                         if self.save_prompt_history and self.current_chapter_id:
                             self._save_prompt_history(system_prompt, user_prompt, None, result, False, f"429 concurrent_slot после {max_retries_429} попыток")
-                        # Для NVIDIA: после ~1 часа непрерывных 429 нет смысла продолжать —
-                        # последующие главы тоже будут падать, лучше остановить всю задачу.
+                        # Для NVIDIA: после ~1 часа непрерывных server-busy ошибок (429/504/503)
+                        # нет смысла продолжать — последующие главы тоже будут падать, лучше
+                        # остановить всю задачу.
                         if is_nvidia:
                             LogService.log_error(
-                                f"🛑 NVIDIA NIM rate limit не сбросился за {max_retries_429} попыток (~1 час). "
+                                f"🛑 NVIDIA NIM не отвечает за {max_retries_429} попыток (~1 час). "
+                                f"Последняя ошибка: {error_type}. "
                                 f"Останавливаем редактуру — последующие главы тоже не пройдут. "
                                 f"Подождите 30-60 минут или используйте резервную модель."
                             )
                             raise RateLimitError(
-                                f"NVIDIA NIM 429 rate limit не сбросился после {max_retries_429} retry (~1 час)"
+                                f"NVIDIA NIM server-busy ({error_type}) не сбросился после {max_retries_429} retry (~1 час)"
                             )
                         return None
 
