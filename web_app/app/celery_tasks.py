@@ -566,7 +566,7 @@ def cancel_parsing_task(self, task_id):
         }
 
 
-@celery.task(bind=True, base=CallbackTask, soft_time_limit=172800, time_limit=172860)  # 48 часов soft + 1 мин на cleanup
+@celery.task(bind=True, base=CallbackTask, soft_time_limit=1209600, time_limit=1209660)  # 14 суток soft + 1 мин на cleanup
 def edit_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
     """
     Фоновая задача редактуры глав новеллы
@@ -976,7 +976,7 @@ def cancel_editing_task(self, task_id):
         }
 
 
-@celery.task(bind=True, base=CallbackTask, soft_time_limit=172800, time_limit=172860)  # 48 часов soft + 1 мин на cleanup
+@celery.task(bind=True, base=CallbackTask, soft_time_limit=1209600, time_limit=1209660)  # 14 суток soft + 1 мин на cleanup
 def translate_novel_chapters_task(self, novel_id, chapter_ids):
     """
     Фоновая задача перевода глав новеллы (последовательно)
@@ -1248,7 +1248,7 @@ def translate_novel_chapters_task(self, novel_id, chapter_ids):
                 pass
 
 
-@celery.task(bind=True, base=CallbackTask, soft_time_limit=172800, time_limit=172860)  # 48 часов soft + 1 мин на cleanup
+@celery.task(bind=True, base=CallbackTask, soft_time_limit=1209600, time_limit=1209660)  # 14 суток soft + 1 мин на cleanup
 def align_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
     """
     Фоновая задача билингвального выравнивания глав новеллы
