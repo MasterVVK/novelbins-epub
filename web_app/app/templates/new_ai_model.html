@@ -23,6 +23,7 @@
                             <option value="openai">OpenAI</option>
                             <option value="anthropic">Anthropic (Claude)</option>
                             <option value="openrouter">OpenRouter (400+ моделей)</option>
+                            <option value="deepseek">DeepSeek (Official API)</option>
                             <option value="ollama">Ollama (Локальные модели)</option>
                             <option value="ollama_turbo">Ollama Turbo (Облачный API)</option>
                             <option value="nvidia">NVIDIA NIM (DeepSeek V4 Pro)</option>
@@ -287,6 +288,18 @@ function updateProviderFields() {
             document.getElementById('cost_rating').value = '3';
             break;
 
+        case 'deepseek':
+            apiEndpoint.value = 'https://api.deepseek.com';
+            apiKeySection.style.display = 'block';
+            fetchModelsBtn.style.display = 'block';
+            setModelPreset('deepseek-chat', 'DeepSeek Chat');
+            document.getElementById('description').value = 'Прямой API DeepSeek (OpenAI-совместимый). Reasoning effort через переключатель Thinking.';
+            document.getElementById('max_input_tokens').value = '64000';
+            document.getElementById('max_output_tokens').value = '8192';
+            document.getElementById('default_temperature').value = '0.3';
+            document.getElementById('cost_rating').value = '4';
+            break;
+
         case 'ollama':
             apiEndpoint.value = 'http://localhost:11434/api';
             apiKeySection.style.display = 'none';
@@ -384,6 +397,17 @@ async function fetchAvailableModels() {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({endpoint: endpoint, api_key: apiKey})
+            });
+        } else if (provider === 'deepseek') {
+            const apiKey = document.getElementById('api_key').value;
+            if (!apiKey) {
+                availableModelsDiv.innerHTML = '<div class="alert alert-warning">Введите API ключ DeepSeek для получения списка моделей</div>';
+                return;
+            }
+            response = await fetch('/api/deepseek/models', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({api_key: apiKey})
             });
         } else {
             availableModelsDiv.innerHTML = '<div class="alert alert-warning">Получение списка моделей не поддерживается для этого провайдера</div>';
@@ -565,6 +589,19 @@ async function fetchAvailableModels() {
                         </a>
                     `;
                 }
+            } else if (provider === 'deepseek') {
+                // Отображение моделей DeepSeek (простой список через GET /models)
+                for (const model of models) {
+                    const safeId = (model.id || '').replace(/'/g, "\\'");
+                    const ownedBy = model.owned_by ? `<span class="badge bg-secondary ms-2">${model.owned_by}</span>` : '';
+                    html += `
+                        <a href="#" class="list-group-item list-group-item-action"
+                           onclick="selectModel('${safeId}', '${safeId}'); return false;">
+                            <strong>${model.id}</strong>
+                            ${ownedBy}
+                        </a>
+                    `;
+                }
             }
             html += '</div>';
             availableModelsDiv.innerHTML = html;
@@ -575,6 +612,8 @@ async function fetchAvailableModels() {
                 availableModelsDiv.innerHTML = '<div class="alert alert-warning">Модели не найдены. Проверьте API ключ и доступ к ollama.com.</div>';
             } else if (provider === 'openrouter') {
                 availableModelsDiv.innerHTML = '<div class="alert alert-warning">Не удалось получить список моделей OpenRouter. Проверьте подключение к интернету.</div>';
+            } else if (provider === 'deepseek') {
+                availableModelsDiv.innerHTML = '<div class="alert alert-warning">Модели не найдены. Проверьте API ключ DeepSeek.</div>';
             } else {
                 availableModelsDiv.innerHTML = '<div class="alert alert-warning">Модели не найдены.</div>';
             }

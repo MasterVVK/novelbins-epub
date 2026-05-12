@@ -262,6 +262,9 @@ class AIModelService:
             elif model.provider == 'openrouter':
                 # Тест OpenRouter
                 result = await AIModelService._test_openrouter(model, test_prompt)
+            elif model.provider == 'deepseek':
+                # Тест DeepSeek
+                result = await AIModelService._test_deepseek(model, test_prompt)
             else:
                 result = {'success': False, 'error': f'Неподдерживаемый провайдер: {model.provider}'}
 
@@ -492,6 +495,81 @@ class AIModelService:
 
         except Exception as e:
             return {'success': False, 'error': str(e)}
+
+    @staticmethod
+    async def _test_deepseek(model: AIModel, prompt: str) -> Dict:
+        """Тестировать DeepSeek модель (https://api.deepseek.com)"""
+        try:
+            if not model.api_key:
+                return {'success': False, 'error': 'API ключ не указан'}
+
+            endpoint = (model.api_endpoint or 'https://api.deepseek.com').rstrip('/')
+
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(
+                    f"{endpoint}/chat/completions",
+                    headers={
+                        'Authorization': f'Bearer {model.api_key}',
+                        'Content-Type': 'application/json'
+                    },
+                    json={
+                        'model': model.model_id,
+                        'messages': [{'role': 'user', 'content': prompt}],
+                        'temperature': model.default_temperature,
+                        'max_tokens': 100
+                    }
+                )
+
+                if response.status_code == 200:
+                    result = response.json()
+                    text = result.get('choices', [{}])[0].get('message', {}).get('content', '')
+                    return {
+                        'success': True,
+                        'response': text[:100],
+                        'model_info': {'model': model.model_id}
+                    }
+                else:
+                    try:
+                        error_data = response.json()
+                        return {'success': False, 'error': error_data.get('error', {}).get('message', f'HTTP {response.status_code}')}
+                    except Exception:
+                        return {'success': False, 'error': f'HTTP {response.status_code}'}
+
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    @staticmethod
+    async def fetch_deepseek_models(api_key: str) -> List[Dict]:
+        """Получить список доступных моделей DeepSeek через GET /models.
+
+        Возвращает список словарей вида [{'id': 'deepseek-chat', 'name': 'deepseek-chat'}, ...]
+        """
+        if not api_key:
+            return []
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(
+                    'https://api.deepseek.com/models',
+                    headers={
+                        'Authorization': f'Bearer {api_key}',
+                        'Accept': 'application/json'
+                    }
+                )
+
+                if response.status_code != 200:
+                    logger.error(f"DeepSeek /models вернул HTTP {response.status_code}: {response.text[:200]}")
+                    return []
+
+                data = response.json()
+                items = data.get('data', [])
+                return [
+                    {'id': item.get('id'), 'name': item.get('id'), 'owned_by': item.get('owned_by', '')}
+                    for item in items if item.get('id')
+                ]
+        except Exception as e:
+            logger.error(f"Ошибка получения моделей DeepSeek: {e}")
+            return []
 
     @staticmethod
     async def _test_openrouter(model: AIModel, prompt: str) -> Dict:

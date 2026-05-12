@@ -120,6 +120,9 @@ class AIAdapterService:
             elif self.model.provider == 'nvidia':
                 return await self._call_nvidia(system_prompt, user_prompt, temperature, max_tokens,
                                                disable_thinking=disable_thinking)
+            elif self.model.provider == 'deepseek':
+                return await self._call_deepseek(system_prompt, user_prompt, temperature, max_tokens,
+                                                 disable_thinking=disable_thinking)
             else:
                 return {'success': False, 'error': f'Неподдерживаемый провайдер: {self.model.provider}'}
 
@@ -334,6 +337,134 @@ class AIAdapterService:
                     'success': False,
                     'error': error_data.get('error', {}).get('message', f'HTTP {response.status_code}')
                 }
+
+    def _resolve_deepseek_reasoning_effort(self, disable_thinking: bool = False):
+        """Вычислить значение параметра `reasoning_effort` для DeepSeek API.
+
+        DeepSeek принимает: 'none' / 'low' / 'medium' / 'high'.
+        Возвращает None, если параметр передавать не нужно (стандартный режим без thinking).
+
+        Семантика:
+            disable_thinking=True              → 'none'
+            enable_thinking=False              → None (не передавать параметр)
+            enable_thinking=True, mode in (None, 'on') → 'medium'
+            enable_thinking=True, mode='high'  → 'high'
+        """
+        if disable_thinking:
+            return 'none'
+        if not getattr(self.model, 'enable_thinking', False):
+            return None
+        mode = getattr(self.model, 'thinking_mode', None)
+        if mode == 'high':
+            return 'high'
+        return 'medium'
+
+    async def _call_deepseek(self, system_prompt: str, user_prompt: str,
+                             temperature: float, max_tokens: int,
+                             disable_thinking: bool = False) -> Dict:
+        """Вызов DeepSeek API (https://api.deepseek.com).
+
+        OpenAI-совместимый Chat Completions. Поддерживает reasoning_effort
+        (none/low/medium/high) для v4-моделей и deepseek-reasoner.
+
+        Для deepseek-reasoner API возвращает дополнительное поле
+        `choices[0].message.reasoning_content` (chain-of-thought). Мы его
+        отбрасываем — наверх отдаём только `content`, чтобы редактура/перевод
+        не сохраняли рассуждения как итоговый текст.
+        """
+        if not self.model.api_key:
+            return {'success': False, 'error': 'API ключ не указан'}
+
+        actual_max_tokens = min(max_tokens, self.model.max_output_tokens)
+        reasoning_effort = self._resolve_deepseek_reasoning_effort(disable_thinking)
+
+        thinking_info = f" | reasoning_effort: {reasoning_effort}" if reasoning_effort else ""
+        LogService.log_info(
+            f"DeepSeek запрос: {self.model.model_id} | Temperature: {temperature} | "
+            f"Max tokens: {actual_max_tokens:,} / {self.model.max_output_tokens:,}{thinking_info}"
+        )
+
+        payload = {
+            'model': self.model.model_id,
+            'messages': [
+                {'role': 'system', 'content': system_prompt},
+                {'role': 'user', 'content': user_prompt}
+            ],
+            'temperature': temperature,
+            'max_tokens': actual_max_tokens
+        }
+        if reasoning_effort is not None:
+            payload['reasoning_effort'] = reasoning_effort
+
+        async with httpx.AsyncClient(timeout=600.0) as client:
+            response = await client.post(
+                f"{self.model.api_endpoint.rstrip('/')}/chat/completions",
+                headers={
+                    'Authorization': f'Bearer {self.model.api_key}',
+                    'Content-Type': 'application/json'
+                },
+                json=payload
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                choices = data.get('choices', [])
+                if not choices:
+                    return {'success': False, 'error': 'Нет вариантов в ответе'}
+
+                message = choices[0].get('message', {}) or {}
+                content = message.get('content', '') or ''
+                reasoning_content = message.get('reasoning_content') or ''
+                if reasoning_content:
+                    logger.debug(
+                        f"DeepSeek reasoning_content: {len(reasoning_content):,} символов (отброшено)"
+                    )
+
+                finish_reason = choices[0].get('finish_reason', 'unknown')
+
+                if finish_reason == 'length':
+                    return {
+                        'success': False,
+                        'error': (
+                            f'DeepSeek: ответ обрезан по лимиту max_tokens={actual_max_tokens} '
+                            f'(content_len={len(content)}, finish_reason=length). '
+                            f'Увеличьте max_output_tokens или сократите промпт.'
+                        ),
+                        'error_type': 'length',
+                        'truncated_content': content,
+                        'finish_reason': 'length'
+                    }
+
+                return {
+                    'success': True,
+                    'content': content,
+                    'usage': data.get('usage', {}),
+                    'finish_reason': finish_reason
+                }
+
+            # Обработка ошибок
+            try:
+                error_data = response.json()
+                error_message = error_data.get('error', {}).get('message', f'HTTP {response.status_code}')
+            except Exception:
+                error_message = f'HTTP {response.status_code}'
+
+            error_type = 'general'
+            if response.status_code == 429:
+                error_type = 'rate_limit'
+            elif response.status_code == 503:
+                error_type = 'service_unavailable'
+            elif response.status_code in (500, 502, 504):
+                error_type = 'server_error'
+            elif response.status_code in (401, 403):
+                error_type = 'invalid_api_key'
+
+            return {
+                'success': False,
+                'error': error_message,
+                'error_type': error_type,
+                'status_code': response.status_code
+            }
 
     def _resolve_nvidia_reasoning_effort(self, disable_thinking: bool = False) -> str:
         """Вычислить значение параметра `reasoning_effort` для NVIDIA NIM API.

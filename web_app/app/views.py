@@ -2076,6 +2076,27 @@ def api_fetch_openrouter_models():
         return jsonify({'error': str(e)}), 500
 
 
+@main_bp.route('/api/deepseek/models', methods=['POST'])
+def api_fetch_deepseek_models():
+    """API для получения списка моделей DeepSeek"""
+    from app.services.ai_model_service import AIModelService
+    import asyncio
+
+    try:
+        data = request.json or {}
+        api_key = data.get('api_key')
+        if not api_key:
+            return jsonify({'error': 'API ключ DeepSeek обязателен'}), 400
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        models = loop.run_until_complete(AIModelService.fetch_deepseek_models(api_key))
+        return jsonify(models)
+    except Exception as e:
+        logger.error(f"Ошибка получения моделей DeepSeek: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
 @main_bp.route('/celery-monitor')
 def celery_monitor():
     """Страница мониторинга Celery"""
