@@ -683,6 +683,25 @@ def novel_detail(novel_id):
     # Получаем задачи для новеллы (включая EPUB)
     tasks = Task.query.filter_by(novel_id=novel_id).order_by(Task.updated_at.desc()).all()
 
+    # Резолвим имя модели перевода для отображения. В config может быть PK (новый
+    # формат) или строка-model_id (legacy). Если резолв не удался — показываем
+    # как есть.
+    from app.models import AIModel
+    translation_model_display = None
+    if novel.config:
+        tm_value = novel.config.get('translation_model')
+        if tm_value not in (None, ''):
+            tm_str = str(tm_value)
+            ai_model = None
+            if tm_str.isdigit():
+                ai_model = AIModel.query.get(int(tm_str))
+            if not ai_model:
+                ai_model = AIModel.query.filter_by(model_id=tm_str).first()
+            if ai_model:
+                translation_model_display = f"{ai_model.name} ({ai_model.provider})"
+            else:
+                translation_model_display = tm_str
+
     return render_template('novel_detail.html',
                          novel=novel,
                          chapters=chapters,
@@ -691,7 +710,8 @@ def novel_detail(novel_id):
                          current_page=page,
                          per_page=per_page,
                          status_filter=status_filter,
-                         counts_dict=counts_dict)
+                         counts_dict=counts_dict,
+                         translation_model_display=translation_model_display)
 
 
 @main_bp.route('/novels/<int:novel_id>/parse', methods=['POST'])

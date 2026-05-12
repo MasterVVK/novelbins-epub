@@ -122,7 +122,7 @@
                         </div>
                         <div class="col-md-6">
                             <small class="text-muted">
-                                <strong>Модель:</strong> {{ novel.config.get('translation_model', 'gemini-2.5-flash') }} |
+                                <strong>Модель:</strong> {{ translation_model_display or novel.config.get('translation_model', 'gemini-2.5-flash') }} |
                                 <strong>Температура:</strong> {{ novel.config.get('translation_temperature', 0.1) }}
                             </small>
                         </div>
