@@ -306,10 +306,10 @@
                                 <select class="form-select" id="translation_model" name="translation_model">
                                     {% if ai_models %}
                                         {% for model in ai_models %}
-                                            <option value="{{ model.model_id }}"
+                                            <option value="{{ model.id }}"
                                                     data-provider="{{ model.provider }}"
                                                     data-name="{{ model.name }}"
-                                                    {{ 'selected' if novel.config and novel.config.translation_model == model.model_id else '' }}>
+                                                    {{ 'selected' if novel.config and (novel.config.translation_model|string == model.id|string or novel.config.translation_model == model.model_id) else '' }}>
                                                 {{ model.name }} ({{ model.provider|upper }})
                                                 {% if model.is_default %}[По умолчанию]{% endif %}
                                             </option>
@@ -473,8 +473,8 @@
                                     <option value="">— Не использовать (отключено) —</option>
                                     {% if ai_models %}
                                         {% for model in ai_models %}
-                                            <option value="{{ model.model_id }}"
-                                                    {{ 'selected' if novel.config and novel.config.fallback_editing_model == model.model_id else '' }}>
+                                            <option value="{{ model.id }}"
+                                                    {{ 'selected' if novel.config and (novel.config.fallback_editing_model|string == model.id|string or novel.config.fallback_editing_model == model.model_id) else '' }}>
                                                 {{ model.name }} ({{ model.provider|upper }})
                                             </option>
                                         {% endfor %}

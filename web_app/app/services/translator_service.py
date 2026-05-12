@@ -869,13 +869,25 @@ class TranslatorService:
         model_id_str = config.get('model_name') if config else None
 
         if model_id_str:
-            # Ищем модель по model_id строке
             from app.models import AIModel
-            ai_model = AIModel.query.filter_by(model_id=model_id_str, is_active=True).first()
+            ai_model = None
+
+            # 1. Сначала пробуем интерпретировать как PK (число) — это новый формат,
+            #    он гарантирует точный выбор провайдер+модель без коллизий по имени.
+            try:
+                pk = int(model_id_str)
+                ai_model = AIModel.query.filter_by(id=pk, is_active=True).first()
+            except (ValueError, TypeError):
+                pass
+
+            # 2. Fallback на поиск по строке model_id (legacy формат для старых новелл,
+            #    создававшихся когда в config сохранялось имя модели, а не её PK).
+            if not ai_model:
+                ai_model = AIModel.query.filter_by(model_id=model_id_str, is_active=True).first()
 
             if not ai_model:
-                # Fallback: пробуем найти по умолчанию
-                logger.warning(f"Модель с model_id '{model_id_str}' не найдена, используем модель по умолчанию")
+                # 3. Fallback: пробуем найти по умолчанию
+                logger.warning(f"Модель '{model_id_str}' не найдена, используем модель по умолчанию")
                 ai_model = AIModel.query.filter_by(is_default=True, is_active=True).first()
 
             if ai_model:

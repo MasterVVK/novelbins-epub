@@ -133,7 +133,7 @@
                                 <select class="form-select" id="translation_model" name="translation_model">
                                     {% if ai_models %}
                                         {% for model in ai_models %}
-                                            <option value="{{ model.model_id }}"
+                                            <option value="{{ model.id }}"
                                                     data-provider="{{ model.provider }}"
                                                     data-name="{{ model.name }}"
                                                     {{ 'selected' if model.is_default else '' }}>
