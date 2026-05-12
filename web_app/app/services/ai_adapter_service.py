@@ -474,6 +474,9 @@ class AIAdapterService:
             error_type = 'general'
             if response.status_code == 429:
                 error_type = 'rate_limit'
+            elif response.status_code == 402:
+                # Payment Required — баланс DeepSeek исчерпан. Повторы бессмысленны.
+                error_type = 'insufficient_balance'
             elif response.status_code == 503:
                 error_type = 'service_unavailable'
             elif response.status_code in (500, 502, 504):

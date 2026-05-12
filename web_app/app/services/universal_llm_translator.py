@@ -353,6 +353,26 @@ class UniversalLLMTranslator:
                             self._save_prompt_history(system_prompt, user_prompt, result.get('truncated_content'), result, False, error)
                         raise LengthLimitError(error)
 
+                    # Биллинговые/учётные ошибки — повторы бессмысленны, останавливаем
+                    # всю задачу немедленно. Иначе worker будет жечь время, пробуя все главы
+                    # подряд с одной и той же 402/401/403.
+                    if error_type == 'insufficient_balance':
+                        LogService.log_error(f"💳 Недостаточный баланс на аккаунте {self.model.provider} для модели {self.model.model_id}")
+                        LogService.log_error(f"   Текст ошибки: {error}")
+                        LogService.log_error(f"🛑 Все последующие запросы упадут с этой же ошибкой — останавливаем задачу")
+                        LogService.log_error(f"💡 Пополните баланс на платформе провайдера или выберите другую модель")
+                        if self.save_prompt_history and self.current_chapter_id:
+                            self._save_prompt_history(system_prompt, user_prompt, None, result, False, error)
+                        raise RateLimitError(f"Недостаточный баланс {self.model.provider}: {error}")
+
+                    if error_type == 'invalid_api_key':
+                        LogService.log_error(f"🔑 Невалидный API ключ для {self.model.provider} (модель {self.model.model_id})")
+                        LogService.log_error(f"   Текст ошибки: {error}")
+                        LogService.log_error(f"🛑 Останавливаем задачу — проверьте ключ в настройках модели")
+                        if self.save_prompt_history and self.current_chapter_id:
+                            self._save_prompt_history(system_prompt, user_prompt, None, result, False, error)
+                        raise RateLimitError(f"Невалидный API ключ {self.model.provider}: {error}")
+
                     # Проверяем на НЕДЕЛЬНЫЙ лимит - повторы бессмысленны, нужно остановить задачу
                     # ЧАСОВОЙ лимит (rate_limit) обрабатывается НИЖЕ с прогрессивными повторами
                     if error_type in ['weekly_limit', 'daily_limit']:
