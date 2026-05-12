@@ -338,49 +338,68 @@ class AIAdapterService:
                     'error': error_data.get('error', {}).get('message', f'HTTP {response.status_code}')
                 }
 
-    def _resolve_deepseek_reasoning_effort(self, disable_thinking: bool = False):
-        """Вычислить значение параметра `reasoning_effort` для DeepSeek API.
+    def _resolve_deepseek_thinking_params(self, disable_thinking: bool = False) -> Dict:
+        """Вычислить параметры thinking/reasoning_effort для DeepSeek API.
 
-        Согласно официальной документации DeepSeek (api-docs.deepseek.com),
-        параметр принимает только два значения: 'high' (default) и 'max'.
-        Отключить thinking через этот параметр НЕЛЬЗЯ — нужно просто не
-        передавать его (или выбирать non-thinking модель).
+        Согласно официальной документации DeepSeek (api-docs.deepseek.com):
+        - `thinking` — объект {"type": "enabled"|"disabled"} управляет режимом
+          (для v4-моделей; reasoner всегда в thinking).
+        - `reasoning_effort` — enum ['high', 'max']: 'high' по умолчанию,
+          'max' для максимального усилия. Значения low/medium маппятся в
+          'high', xhigh → 'max'. Значение 'none' API НЕ поддерживает —
+          отключение thinking делается через `thinking.type=disabled`.
 
-        Семантика:
-            disable_thinking=True              → None (не передавать параметр)
-            enable_thinking=False              → None (не передавать параметр)
-            enable_thinking=True, mode in (None, 'on') → 'high' (дефолтное усилие)
-            enable_thinking=True, mode='high'  → 'max' (максимальное усилие)
+        Маппинг наших полей:
+            disable_thinking=True              → thinking.type=disabled, без reasoning_effort
+            enable_thinking=False              → thinking.type=disabled, без reasoning_effort
+            enable_thinking=True, mode in (None, 'on') → thinking.type=enabled, reasoning_effort=high
+            enable_thinking=True, mode='high'  → thinking.type=enabled, reasoning_effort=max
+
+        Returns:
+            Dict с ключами для JSON-payload (можно сразу .update() в payload).
         """
-        if disable_thinking:
-            return None
-        if not getattr(self.model, 'enable_thinking', False):
-            return None
+        if disable_thinking or not getattr(self.model, 'enable_thinking', False):
+            return {'thinking': {'type': 'disabled'}}
+
         mode = getattr(self.model, 'thinking_mode', None)
-        if mode == 'high':
-            return 'max'
-        return 'high'
+        reasoning_effort = 'max' if mode == 'high' else 'high'
+        return {
+            'thinking': {'type': 'enabled'},
+            'reasoning_effort': reasoning_effort
+        }
 
     async def _call_deepseek(self, system_prompt: str, user_prompt: str,
                              temperature: float, max_tokens: int,
                              disable_thinking: bool = False) -> Dict:
         """Вызов DeepSeek API (https://api.deepseek.com).
 
-        OpenAI-совместимый Chat Completions. Поддерживает reasoning_effort
-        (none/low/medium/high) для v4-моделей и deepseek-reasoner.
-
-        Для deepseek-reasoner API возвращает дополнительное поле
+        OpenAI-совместимый Chat Completions. Управление thinking-режимом
+        через параметры `thinking` (enabled/disabled) и `reasoning_effort`
+        (high/max). Для deepseek-reasoner API возвращает дополнительное поле
         `choices[0].message.reasoning_content` (chain-of-thought). Мы его
-        отбрасываем — наверх отдаём только `content`, чтобы редактура/перевод
-        не сохраняли рассуждения как итоговый текст.
+        отбрасываем — наверх отдаём только `content`.
+
+        Особенности:
+        - deepseek-reasoner: не поддерживает temperature/top_p, лимит
+          max_tokens=64K (вычитаем reasoning_content из бюджета).
         """
         if not self.model.api_key:
             return {'success': False, 'error': 'API ключ не указан'}
 
-        actual_max_tokens = min(max_tokens, self.model.max_output_tokens)
-        reasoning_effort = self._resolve_deepseek_reasoning_effort(disable_thinking)
+        is_reasoner_only = (self.model.model_id or '').startswith('deepseek-reasoner')
 
-        thinking_info = f" | reasoning_effort: {reasoning_effort}" if reasoning_effort else ""
+        actual_max_tokens = min(max_tokens, self.model.max_output_tokens)
+        # deepseek-reasoner имеет жёсткий потолок 64K
+        if is_reasoner_only:
+            actual_max_tokens = min(actual_max_tokens, 65536)
+
+        thinking_params = self._resolve_deepseek_thinking_params(disable_thinking)
+        thinking_type = thinking_params.get('thinking', {}).get('type', 'default')
+        reasoning_effort = thinking_params.get('reasoning_effort')
+
+        thinking_info = f" | thinking={thinking_type}"
+        if reasoning_effort:
+            thinking_info += f", reasoning_effort={reasoning_effort}"
         LogService.log_info(
             f"DeepSeek запрос: {self.model.model_id} | Temperature: {temperature} | "
             f"Max tokens: {actual_max_tokens:,} / {self.model.max_output_tokens:,}{thinking_info}"
@@ -392,11 +411,12 @@ class AIAdapterService:
                 {'role': 'system', 'content': system_prompt},
                 {'role': 'user', 'content': user_prompt}
             ],
-            'temperature': temperature,
             'max_tokens': actual_max_tokens
         }
-        if reasoning_effort is not None:
-            payload['reasoning_effort'] = reasoning_effort
+        # deepseek-reasoner не поддерживает temperature/top_p
+        if not is_reasoner_only:
+            payload['temperature'] = temperature
+        payload.update(thinking_params)
 
         async with httpx.AsyncClient(timeout=600.0) as client:
             response = await client.post(
