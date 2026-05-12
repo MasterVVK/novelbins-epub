@@ -292,10 +292,10 @@ function updateProviderFields() {
             apiEndpoint.value = 'https://api.deepseek.com';
             apiKeySection.style.display = 'block';
             fetchModelsBtn.style.display = 'block';
-            setModelPreset('deepseek-chat', 'DeepSeek Chat');
-            document.getElementById('description').value = 'Прямой API DeepSeek (OpenAI-совместимый). Reasoning effort через переключатель Thinking.';
-            document.getElementById('max_input_tokens').value = '64000';
-            document.getElementById('max_output_tokens').value = '8192';
+            setModelPreset('deepseek-v4-pro', 'DeepSeek V4 Pro (Official API)');
+            document.getElementById('description').value = 'Прямой API DeepSeek (OpenAI-совместимый). Context 1M, max output до 384K. Reasoning effort: high (по умолчанию) / max — через переключатель Thinking.';
+            document.getElementById('max_input_tokens').value = '128000';
+            document.getElementById('max_output_tokens').value = '65536';
             document.getElementById('default_temperature').value = '0.3';
             document.getElementById('cost_rating').value = '4';
             break;

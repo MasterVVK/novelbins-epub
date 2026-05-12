@@ -341,23 +341,25 @@ class AIAdapterService:
     def _resolve_deepseek_reasoning_effort(self, disable_thinking: bool = False):
         """Вычислить значение параметра `reasoning_effort` для DeepSeek API.
 
-        DeepSeek принимает: 'none' / 'low' / 'medium' / 'high'.
-        Возвращает None, если параметр передавать не нужно (стандартный режим без thinking).
+        Согласно официальной документации DeepSeek (api-docs.deepseek.com),
+        параметр принимает только два значения: 'high' (default) и 'max'.
+        Отключить thinking через этот параметр НЕЛЬЗЯ — нужно просто не
+        передавать его (или выбирать non-thinking модель).
 
         Семантика:
-            disable_thinking=True              → 'none'
+            disable_thinking=True              → None (не передавать параметр)
             enable_thinking=False              → None (не передавать параметр)
-            enable_thinking=True, mode in (None, 'on') → 'medium'
-            enable_thinking=True, mode='high'  → 'high'
+            enable_thinking=True, mode in (None, 'on') → 'high' (дефолтное усилие)
+            enable_thinking=True, mode='high'  → 'max' (максимальное усилие)
         """
         if disable_thinking:
-            return 'none'
+            return None
         if not getattr(self.model, 'enable_thinking', False):
             return None
         mode = getattr(self.model, 'thinking_mode', None)
         if mode == 'high':
-            return 'high'
-        return 'medium'
+            return 'max'
+        return 'high'
 
     async def _call_deepseek(self, system_prompt: str, user_prompt: str,
                              temperature: float, max_tokens: int,
