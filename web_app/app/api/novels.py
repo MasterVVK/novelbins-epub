@@ -690,14 +690,27 @@ def get_novel_usage(novel_id):
         """), params).mappings().first()
 
         # 2. По провайдеру/модели.
-        # Внимание: prompt_history хранит только model_used (= model_id), но не provider.
-        # Если несколько ai_models имеют одинаковый model_id (например deepseek-v4-pro
-        # есть и в provider=ollama_turbo, и в provider=deepseek), здесь они слипаются в
-        # одну строку и provider показывается как список через STRING_AGG.
+        # Группируем по ai_model_id (FK на ai_models) — это позволяет однозначно
+        # различать запросы к моделям с одинаковым model_id, но разными провайдерами
+        # (например deepseek-v4-pro есть у ollama_turbo id=37 и у deepseek id=40).
+        # Для старых записей, где ai_model_id NULL (созданы до миграции), показываем
+        # их отдельной строкой с пометкой "(legacy)" — там провайдер не различить.
         by_provider = db.session.execute(text(f"""
             SELECT
-                ph.model_used,
-                STRING_AGG(DISTINCT am.provider, ', ' ORDER BY am.provider) AS provider,
+                ph.ai_model_id,
+                COALESCE(am.model_id, ph.model_used) AS model_used,
+                CASE
+                    WHEN am.provider IS NOT NULL THEN am.provider
+                    WHEN ph.ai_model_id IS NULL THEN (
+                        -- Старые записи: пытаемся вытащить все возможные провайдеры
+                        SELECT STRING_AGG(p2, ', ' ORDER BY p2)
+                        FROM (
+                            SELECT DISTINCT provider AS p2 FROM ai_models WHERE model_id = ph.model_used
+                        ) sub
+                    )
+                    ELSE NULL
+                END AS provider,
+                CASE WHEN ph.ai_model_id IS NULL THEN '(legacy: provider не различим)' ELSE NULL END AS note,
                 COUNT(*) AS requests,
                 COUNT(*) FILTER (WHERE ph.success = TRUE) AS successes,
                 COUNT(*) FILTER (WHERE ph.success = FALSE) AS failures,
@@ -719,10 +732,10 @@ def get_novel_usage(novel_id):
                 ) AS avg_failure_s
             FROM prompt_history ph
             JOIN chapters c ON c.id = ph.chapter_id
-            LEFT JOIN ai_models am ON am.model_id = ph.model_used
+            LEFT JOIN ai_models am ON am.id = ph.ai_model_id
             WHERE c.novel_id = :novel_id
               {where_extra}
-            GROUP BY ph.model_used
+            GROUP BY ph.ai_model_id, am.model_id, am.provider, ph.model_used
             ORDER BY total_time_s DESC
         """), params).mappings().all()
 

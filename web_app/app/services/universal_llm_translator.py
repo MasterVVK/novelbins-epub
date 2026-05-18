@@ -848,6 +848,7 @@ class UniversalLLMTranslator:
                 user_prompt=user_prompt,
                 response=response,
                 api_key_index=self.current_key_index if self.model.provider == 'gemini' else 0,
+                ai_model_id=self.model.id,
                 model_used=self.model.model_id,
                 temperature=result.get('temperature', self.model.default_temperature),
                 tokens_used=usage.get('total_tokens'),

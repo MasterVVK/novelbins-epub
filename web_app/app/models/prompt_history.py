@@ -21,7 +21,11 @@ class PromptHistory(db.Model):
     
     # Метаданные
     api_key_index = Column(Integer)
-    model_used = Column(String(100))
+    # Прямая ссылка на AIModel — позволяет однозначно различать запросы
+    # к моделям с одинаковым model_id, но разными провайдерами
+    # (например, deepseek-v4-pro есть в provider=ollama_turbo и в provider=deepseek).
+    ai_model_id = Column(Integer, ForeignKey('ai_models.id'), nullable=True, index=True)
+    model_used = Column(String(100))  # дублирует model_id из ai_models для denormalized SELECT
     temperature = Column(db.Float)
     tokens_used = Column(Integer)
     finish_reason = Column(String(50))

@@ -194,7 +194,7 @@ async function loadUsage() {
         document.getElementById('providerTable').innerHTML = (data.by_provider || []).map(p => `
             <tr>
                 <td><code>${p.model_used}</code></td>
-                <td>${p.provider || '—'}</td>
+                <td>${p.provider || '—'}${p.note ? `<br><small class="text-warning">⚠ ${p.note}</small>` : ''}</td>
                 <td class="text-end">${fmtNumber(p.requests)}</td>
                 <td class="text-end">${fmtNumber(p.successes)}</td>
                 <td class="text-end">${failBadge(p.fail_pct)}</td>
