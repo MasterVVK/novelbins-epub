@@ -689,11 +689,15 @@ def get_novel_usage(novel_id):
               {where_extra}
         """), params).mappings().first()
 
-        # 2. По провайдеру/модели
+        # 2. По провайдеру/модели.
+        # Внимание: prompt_history хранит только model_used (= model_id), но не provider.
+        # Если несколько ai_models имеют одинаковый model_id (например deepseek-v4-pro
+        # есть и в provider=ollama_turbo, и в provider=deepseek), здесь они слипаются в
+        # одну строку и provider показывается как список через STRING_AGG.
         by_provider = db.session.execute(text(f"""
             SELECT
                 ph.model_used,
-                MAX(am.provider) AS provider,
+                STRING_AGG(DISTINCT am.provider, ', ' ORDER BY am.provider) AS provider,
                 COUNT(*) AS requests,
                 COUNT(*) FILTER (WHERE ph.success = TRUE) AS successes,
                 COUNT(*) FILTER (WHERE ph.success = FALSE) AS failures,
