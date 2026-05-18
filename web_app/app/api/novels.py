@@ -645,6 +645,13 @@ def get_novel_usage(novel_id):
 
     since = request.args.get('since')
     until = request.args.get('until')
+    # stage_filter:
+    #   '' / отсутствует — все типы (editing + summary + translation + ...)
+    #   'editing'        — все этапы редактуры (editing_fix/style/dialogue/final/analysis)
+    #   'summary'        — только summary
+    #   'translation'    — только translation
+    #   'editing_fix_original' и подобное — точное значение prompt_type
+    stage_filter = (request.args.get('stage') or '').strip()
 
     where_extra = ''
     params = {'novel_id': novel_id}
@@ -654,6 +661,13 @@ def get_novel_usage(novel_id):
     if until:
         where_extra += ' AND ph.created_at < (DATE(:until) + INTERVAL \'1 day\')'
         params['until'] = until
+    if stage_filter == 'editing':
+        # Спец-группа: все этапы редактуры. `_` в LIKE — это спец-символ для любого
+        # одного символа, поэтому экранируем через ESCAPE.
+        where_extra += " AND ph.prompt_type LIKE 'editing\\_%' ESCAPE '\\'"
+    elif stage_filter:
+        where_extra += ' AND ph.prompt_type = :stage'
+        params['stage'] = stage_filter
 
     try:
         # 1. Общие итоги
@@ -672,7 +686,6 @@ def get_novel_usage(novel_id):
             FROM prompt_history ph
             JOIN chapters c ON c.id = ph.chapter_id
             WHERE c.novel_id = :novel_id
-              AND ph.prompt_type LIKE 'editing\\_%' ESCAPE '\\'
               {where_extra}
         """), params).mappings().first()
 
@@ -704,7 +717,6 @@ def get_novel_usage(novel_id):
             JOIN chapters c ON c.id = ph.chapter_id
             LEFT JOIN ai_models am ON am.model_id = ph.model_used
             WHERE c.novel_id = :novel_id
-              AND ph.prompt_type LIKE 'editing\\_%' ESCAPE '\\'
               {where_extra}
             GROUP BY ph.model_used
             ORDER BY total_time_s DESC
@@ -722,7 +734,6 @@ def get_novel_usage(novel_id):
             FROM prompt_history ph
             JOIN chapters c ON c.id = ph.chapter_id
             WHERE c.novel_id = :novel_id
-              AND ph.prompt_type LIKE 'editing\\_%' ESCAPE '\\'
               {where_extra}
             GROUP BY ph.prompt_type
             ORDER BY total_time_s DESC
@@ -740,7 +751,6 @@ def get_novel_usage(novel_id):
             FROM prompt_history ph
             JOIN chapters c ON c.id = ph.chapter_id
             WHERE c.novel_id = :novel_id
-              AND ph.prompt_type LIKE 'editing\\_%' ESCAPE '\\'
               {where_extra}
             GROUP BY c.chapter_number
             ORDER BY total_time_s DESC

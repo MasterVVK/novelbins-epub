@@ -8,8 +8,20 @@
     <a href="{{ url_for('main.novel_detail', novel_id=novel.id) }}" class="btn btn-outline-secondary btn-sm">
         <i class="bi bi-arrow-left"></i> Вернуться к новелле
     </a>
-    <form id="dateFilter" class="d-flex gap-2 align-items-center">
-        <label class="form-label mb-0">Период:</label>
+    <form id="dateFilter" class="d-flex gap-2 align-items-center flex-wrap">
+        <label class="form-label mb-0">Тип:</label>
+        <select id="stage" name="stage" class="form-select form-select-sm" style="width: 220px;">
+            <option value="">Все</option>
+            <option value="editing">Редактура (все этапы)</option>
+            <option value="editing_analysis_original">— editing: analysis</option>
+            <option value="editing_fix_original">— editing: fix</option>
+            <option value="editing_style_original">— editing: style</option>
+            <option value="editing_dialogue_original">— editing: dialogue</option>
+            <option value="editing_final_original">— editing: final</option>
+            <option value="summary">Summary (резюме главы)</option>
+            <option value="translation">Translation (перевод)</option>
+        </select>
+        <label class="form-label mb-0 ms-2">Период:</label>
         <input type="date" id="since" name="since" class="form-control form-control-sm" style="width: 160px;">
         <span>—</span>
         <input type="date" id="until" name="until" class="form-control form-control-sm" style="width: 160px;">
@@ -55,7 +67,7 @@
     <!-- По этапу -->
     <div class="card mb-4">
         <div class="card-header">
-            <h5 class="mb-0"><i class="bi bi-list-ol"></i> По этапу редактуры</h5>
+            <h5 class="mb-0"><i class="bi bi-list-ol"></i> По типу запроса (этап редактуры / summary / translation)</h5>
         </div>
         <div class="table-responsive">
             <table class="table table-sm table-hover mb-0">
@@ -132,8 +144,10 @@ async function loadUsage() {
     const params = new URLSearchParams();
     const since = document.getElementById('since').value;
     const until = document.getElementById('until').value;
+    const stage = document.getElementById('stage').value;
     if (since) params.set('since', since);
     if (until) params.set('until', until);
+    if (stage) params.set('stage', stage);
 
     try {
         const resp = await fetch(`/api/novels/${NOVEL_ID}/usage?${params}`);
@@ -237,8 +251,11 @@ document.getElementById('dateFilter').addEventListener('submit', function(e) {
 document.getElementById('resetDates').addEventListener('click', function() {
     document.getElementById('since').value = '';
     document.getElementById('until').value = '';
+    document.getElementById('stage').value = '';
     loadUsage();
 });
+// Авто-применение при смене dropdown'а
+document.getElementById('stage').addEventListener('change', loadUsage);
 
 loadUsage();
 </script>
