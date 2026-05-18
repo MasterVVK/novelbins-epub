@@ -1,0 +1,245 @@
+{% extends "base.html" %}
+
+{% block title %}Usage — {{ novel.title }}{% endblock %}
+{% block page_title %}📊 Usage: {{ novel.title }}{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <a href="{{ url_for('main.novel_detail', novel_id=novel.id) }}" class="btn btn-outline-secondary btn-sm">
+        <i class="bi bi-arrow-left"></i> Вернуться к новелле
+    </a>
+    <form id="dateFilter" class="d-flex gap-2 align-items-center">
+        <label class="form-label mb-0">Период:</label>
+        <input type="date" id="since" name="since" class="form-control form-control-sm" style="width: 160px;">
+        <span>—</span>
+        <input type="date" id="until" name="until" class="form-control form-control-sm" style="width: 160px;">
+        <button type="submit" class="btn btn-primary btn-sm">Применить</button>
+        <button type="button" id="resetDates" class="btn btn-outline-secondary btn-sm">Сбросить</button>
+    </form>
+</div>
+
+<div id="loadingIndicator" class="text-center my-4">
+    <div class="spinner-border text-primary"></div>
+    <div class="mt-2 text-muted">Загружаем статистику…</div>
+</div>
+
+<div id="usageContent" style="display: none;">
+    <!-- Общие итоги -->
+    <div class="row mb-4" id="totalsCards"></div>
+
+    <!-- По провайдеру/модели -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5 class="mb-0"><i class="bi bi-cpu"></i> По провайдеру / модели</h5>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-sm table-hover mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Модель</th>
+                        <th>Провайдер</th>
+                        <th class="text-end">Запросов</th>
+                        <th class="text-end">Успех</th>
+                        <th class="text-end">Fail %</th>
+                        <th class="text-end">GPU time</th>
+                        <th class="text-end">Avg успех</th>
+                        <th class="text-end">Avg fail</th>
+                        <th class="text-end">Tokens</th>
+                    </tr>
+                </thead>
+                <tbody id="providerTable"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- По этапу -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5 class="mb-0"><i class="bi bi-list-ol"></i> По этапу редактуры</h5>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-sm table-hover mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Этап</th>
+                        <th class="text-end">Запросов</th>
+                        <th class="text-end">Успех</th>
+                        <th class="text-end">Fail %</th>
+                        <th class="text-end">Time</th>
+                        <th class="text-end">Tokens</th>
+                    </tr>
+                </thead>
+                <tbody id="stageTable"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Топ-10 глав -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5 class="mb-0"><i class="bi bi-trophy"></i> Топ-10 самых «дорогих» глав</h5>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-sm table-hover mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Глава</th>
+                        <th class="text-end">Запросов</th>
+                        <th class="text-end">Успех</th>
+                        <th class="text-end">Fail %</th>
+                        <th class="text-end">Time</th>
+                        <th class="text-end">Tokens</th>
+                    </tr>
+                </thead>
+                <tbody id="chaptersTable"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<div id="errorBlock" class="alert alert-danger" style="display:none;"></div>
+
+<script>
+const NOVEL_ID = {{ novel.id }};
+
+function fmtTime(s) {
+    s = Number(s) || 0;
+    if (s < 60) return s.toFixed(0) + 's';
+    if (s < 3600) return (s / 60).toFixed(1) + 'm';
+    const h = Math.floor(s / 3600);
+    const m = Math.round((s % 3600) / 60);
+    return h + 'h ' + m + 'm';
+}
+
+function fmtNumber(n) {
+    n = Number(n) || 0;
+    return n.toLocaleString('ru-RU');
+}
+
+function failBadge(pct) {
+    if (pct == null) return '—';
+    let cls = 'success';
+    if (pct >= 50) cls = 'danger';
+    else if (pct >= 20) cls = 'warning';
+    return `<span class="badge bg-${cls}">${pct}%</span>`;
+}
+
+async function loadUsage() {
+    document.getElementById('loadingIndicator').style.display = 'block';
+    document.getElementById('usageContent').style.display = 'none';
+    document.getElementById('errorBlock').style.display = 'none';
+
+    const params = new URLSearchParams();
+    const since = document.getElementById('since').value;
+    const until = document.getElementById('until').value;
+    if (since) params.set('since', since);
+    if (until) params.set('until', until);
+
+    try {
+        const resp = await fetch(`/api/novels/${NOVEL_ID}/usage?${params}`);
+        const data = await resp.json();
+        if (!data.success) throw new Error(data.error || 'API error');
+
+        // Totals — карточки
+        const t = data.totals || {};
+        const periodHint = (data.period.since || data.period.until)
+            ? `Период: ${data.period.since || '—'} … ${data.period.until || '—'}`
+            : `Период: всё время (${t.earliest ? t.earliest.slice(0, 10) : '—'} … ${t.latest ? t.latest.slice(0, 10) : '—'})`;
+
+        document.getElementById('totalsCards').innerHTML = `
+            <div class="col-12 mb-2"><small class="text-muted">${periodHint}</small></div>
+            <div class="col-md-3 col-6 mb-2">
+                <div class="card border-primary"><div class="card-body py-2">
+                    <div class="text-muted small">Глав обработано</div>
+                    <div class="h4 mb-0">${fmtNumber(t.chapters_touched)}</div>
+                </div></div>
+            </div>
+            <div class="col-md-3 col-6 mb-2">
+                <div class="card border-info"><div class="card-body py-2">
+                    <div class="text-muted small">Всего запросов</div>
+                    <div class="h4 mb-0">${fmtNumber(t.requests)}</div>
+                    <small class="text-muted">из них успех: ${fmtNumber(t.successes)}, fail: ${fmtNumber(t.failures)} (${t.fail_pct || 0}%)</small>
+                </div></div>
+            </div>
+            <div class="col-md-3 col-6 mb-2">
+                <div class="card border-warning"><div class="card-body py-2">
+                    <div class="text-muted small">GPU time (всего)</div>
+                    <div class="h4 mb-0">${fmtTime(t.total_time_s)}</div>
+                    <small class="text-muted">потеряно на fail: ${fmtTime(t.failure_time_s)}</small>
+                </div></div>
+            </div>
+            <div class="col-md-3 col-6 mb-2">
+                <div class="card border-success"><div class="card-body py-2">
+                    <div class="text-muted small">Tokens (всего)</div>
+                    <div class="h4 mb-0">${fmtNumber(t.total_tokens)}</div>
+                </div></div>
+            </div>
+        `;
+
+        // По провайдеру
+        document.getElementById('providerTable').innerHTML = (data.by_provider || []).map(p => `
+            <tr>
+                <td><code>${p.model_used}</code></td>
+                <td>${p.provider || '—'}</td>
+                <td class="text-end">${fmtNumber(p.requests)}</td>
+                <td class="text-end">${fmtNumber(p.successes)}</td>
+                <td class="text-end">${failBadge(p.fail_pct)}</td>
+                <td class="text-end">${fmtTime(p.total_time_s)}</td>
+                <td class="text-end text-muted">${p.avg_success_s ? p.avg_success_s + 's' : '—'}</td>
+                <td class="text-end text-muted">${p.avg_failure_s ? p.avg_failure_s + 's' : '—'}</td>
+                <td class="text-end">${fmtNumber(p.total_tokens)}</td>
+            </tr>
+        `).join('') || '<tr><td colspan="9" class="text-center text-muted py-3">Нет данных</td></tr>';
+
+        // По этапу
+        document.getElementById('stageTable').innerHTML = (data.by_stage || []).map(s => {
+            const failPct = s.requests > 0 ? Math.round(s.failures * 1000 / s.requests) / 10 : 0;
+            return `
+                <tr>
+                    <td><code>${s.stage}</code></td>
+                    <td class="text-end">${fmtNumber(s.requests)}</td>
+                    <td class="text-end">${fmtNumber(s.successes)}</td>
+                    <td class="text-end">${failBadge(failPct)}</td>
+                    <td class="text-end">${fmtTime(s.total_time_s)}</td>
+                    <td class="text-end">${fmtNumber(s.total_tokens)}</td>
+                </tr>
+            `;
+        }).join('') || '<tr><td colspan="6" class="text-center text-muted py-3">Нет данных</td></tr>';
+
+        // Топ глав
+        document.getElementById('chaptersTable').innerHTML = (data.top_chapters || []).map(c => {
+            const failPct = c.requests > 0 ? Math.round(c.failures * 1000 / c.requests) / 10 : 0;
+            return `
+                <tr>
+                    <td>Глава ${c.ch}</td>
+                    <td class="text-end">${fmtNumber(c.requests)}</td>
+                    <td class="text-end">${fmtNumber(c.successes)}</td>
+                    <td class="text-end">${failBadge(failPct)}</td>
+                    <td class="text-end">${fmtTime(c.total_time_s)}</td>
+                    <td class="text-end">${fmtNumber(c.total_tokens)}</td>
+                </tr>
+            `;
+        }).join('') || '<tr><td colspan="6" class="text-center text-muted py-3">Нет данных</td></tr>';
+
+        document.getElementById('loadingIndicator').style.display = 'none';
+        document.getElementById('usageContent').style.display = 'block';
+    } catch (e) {
+        document.getElementById('loadingIndicator').style.display = 'none';
+        document.getElementById('errorBlock').textContent = 'Ошибка: ' + e.message;
+        document.getElementById('errorBlock').style.display = 'block';
+    }
+}
+
+document.getElementById('dateFilter').addEventListener('submit', function(e) {
+    e.preventDefault();
+    loadUsage();
+});
+document.getElementById('resetDates').addEventListener('click', function() {
+    document.getElementById('since').value = '';
+    document.getElementById('until').value = '';
+    loadUsage();
+});
+
+loadUsage();
+</script>
+{% endblock %}

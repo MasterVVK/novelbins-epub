@@ -624,4 +624,148 @@ def get_novel_status(novel_id):
         return jsonify({
             'success': False,
             'error': str(e)
-        }), 500 
+        }), 500
+
+
+@novels_bp.route('/novels/<int:novel_id>/usage', methods=['GET'])
+def get_novel_usage(novel_id):
+    """Статистика использования API провайдеров для редактуры новеллы.
+
+    Агрегирует prompt_history по провайдеру / этапу / главе.
+    Query params:
+        since=YYYY-MM-DD — начиная с даты (включительно)
+        until=YYYY-MM-DD — до даты (включительно)
+    """
+    from datetime import datetime
+    from sqlalchemy import text
+
+    novel = Novel.query.get(novel_id)
+    if not novel:
+        return jsonify({'success': False, 'error': 'Новелла не найдена'}), 404
+
+    since = request.args.get('since')
+    until = request.args.get('until')
+
+    where_extra = ''
+    params = {'novel_id': novel_id}
+    if since:
+        where_extra += ' AND ph.created_at >= :since'
+        params['since'] = since
+    if until:
+        where_extra += ' AND ph.created_at < (DATE(:until) + INTERVAL \'1 day\')'
+        params['until'] = until
+
+    try:
+        # 1. Общие итоги
+        totals_row = db.session.execute(text(f"""
+            SELECT
+                COUNT(DISTINCT c.chapter_number) AS chapters_touched,
+                COUNT(*) AS requests,
+                COUNT(*) FILTER (WHERE ph.success = TRUE) AS successes,
+                COUNT(*) FILTER (WHERE ph.success = FALSE) AS failures,
+                COALESCE(SUM(ph.execution_time), 0) AS total_time_s,
+                COALESCE(SUM(ph.execution_time) FILTER (WHERE ph.success = TRUE), 0) AS success_time_s,
+                COALESCE(SUM(ph.execution_time) FILTER (WHERE ph.success = FALSE), 0) AS failure_time_s,
+                COALESCE(SUM(ph.tokens_used), 0) AS total_tokens,
+                MIN(ph.created_at) AS earliest,
+                MAX(ph.created_at) AS latest
+            FROM prompt_history ph
+            JOIN chapters c ON c.id = ph.chapter_id
+            WHERE c.novel_id = :novel_id
+              AND ph.prompt_type LIKE 'editing\\_%' ESCAPE '\\'
+              {where_extra}
+        """), params).mappings().first()
+
+        # 2. По провайдеру/модели
+        by_provider = db.session.execute(text(f"""
+            SELECT
+                ph.model_used,
+                MAX(am.provider) AS provider,
+                COUNT(*) AS requests,
+                COUNT(*) FILTER (WHERE ph.success = TRUE) AS successes,
+                COUNT(*) FILTER (WHERE ph.success = FALSE) AS failures,
+                ROUND(
+                    COUNT(*) FILTER (WHERE ph.success = FALSE)::numeric
+                    * 100.0 / NULLIF(COUNT(*), 0),
+                    1
+                ) AS fail_pct,
+                COALESCE(SUM(ph.execution_time), 0) AS total_time_s,
+                COALESCE(SUM(ph.execution_time) FILTER (WHERE ph.success = TRUE), 0) AS success_time_s,
+                COALESCE(SUM(ph.tokens_used), 0) AS total_tokens,
+                ROUND(
+                    AVG(ph.execution_time) FILTER (WHERE ph.success = TRUE)::numeric,
+                    0
+                ) AS avg_success_s,
+                ROUND(
+                    AVG(ph.execution_time) FILTER (WHERE ph.success = FALSE)::numeric,
+                    0
+                ) AS avg_failure_s
+            FROM prompt_history ph
+            JOIN chapters c ON c.id = ph.chapter_id
+            LEFT JOIN ai_models am ON am.model_id = ph.model_used
+            WHERE c.novel_id = :novel_id
+              AND ph.prompt_type LIKE 'editing\\_%' ESCAPE '\\'
+              {where_extra}
+            GROUP BY ph.model_used
+            ORDER BY total_time_s DESC
+        """), params).mappings().all()
+
+        # 3. По этапу редактуры
+        by_stage = db.session.execute(text(f"""
+            SELECT
+                ph.prompt_type AS stage,
+                COUNT(*) AS requests,
+                COUNT(*) FILTER (WHERE ph.success = TRUE) AS successes,
+                COUNT(*) FILTER (WHERE ph.success = FALSE) AS failures,
+                COALESCE(SUM(ph.execution_time), 0) AS total_time_s,
+                COALESCE(SUM(ph.tokens_used), 0) AS total_tokens
+            FROM prompt_history ph
+            JOIN chapters c ON c.id = ph.chapter_id
+            WHERE c.novel_id = :novel_id
+              AND ph.prompt_type LIKE 'editing\\_%' ESCAPE '\\'
+              {where_extra}
+            GROUP BY ph.prompt_type
+            ORDER BY total_time_s DESC
+        """), params).mappings().all()
+
+        # 4. Топ-10 самых "дорогих" глав по времени
+        top_chapters = db.session.execute(text(f"""
+            SELECT
+                c.chapter_number AS ch,
+                COUNT(*) AS requests,
+                COUNT(*) FILTER (WHERE ph.success = TRUE) AS successes,
+                COUNT(*) FILTER (WHERE ph.success = FALSE) AS failures,
+                COALESCE(SUM(ph.execution_time), 0) AS total_time_s,
+                COALESCE(SUM(ph.tokens_used), 0) AS total_tokens
+            FROM prompt_history ph
+            JOIN chapters c ON c.id = ph.chapter_id
+            WHERE c.novel_id = :novel_id
+              AND ph.prompt_type LIKE 'editing\\_%' ESCAPE '\\'
+              {where_extra}
+            GROUP BY c.chapter_number
+            ORDER BY total_time_s DESC
+            LIMIT 10
+        """), params).mappings().all()
+
+        def _row(r):
+            return {k: (v.isoformat() if hasattr(v, 'isoformat') else (float(v) if hasattr(v, 'as_tuple') else v)) for k, v in r.items()}
+
+        totals = _row(totals_row) if totals_row else {}
+        if totals:
+            totals['total_time_h'] = round((totals.get('total_time_s') or 0) / 3600, 2)
+            totals['fail_pct'] = round((totals.get('failures') or 0) * 100.0 / max(totals.get('requests') or 1, 1), 1)
+
+        return jsonify({
+            'success': True,
+            'novel_id': novel_id,
+            'novel_title': novel.title,
+            'period': {'since': since, 'until': until},
+            'totals': totals,
+            'by_provider': [_row(r) for r in by_provider],
+            'by_stage': [_row(r) for r in by_stage],
+            'top_chapters': [_row(r) for r in top_chapters],
+        })
+
+    except Exception as e:
+        logger.exception('usage endpoint failed')
+        return jsonify({'success': False, 'error': str(e)}), 500

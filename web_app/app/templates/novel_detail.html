@@ -16,6 +16,9 @@
                     <a href="{{ url_for('main.edit_novel', novel_id=novel.id) }}" class="btn btn-outline-primary btn-sm me-2">
                         <i class="bi bi-pencil-square"></i> Редактировать
                     </a>
+                    <a href="{{ url_for('main.novel_usage', novel_id=novel.id) }}" class="btn btn-outline-info btn-sm me-2">
+                        <i class="bi bi-bar-chart"></i> Usage
+                    </a>
                     <button type="button" class="btn btn-outline-danger btn-sm" data-bs-toggle="modal" data-bs-target="#deleteNovelModal">
                         <i class="bi bi-trash"></i> Удалить
                     </button>

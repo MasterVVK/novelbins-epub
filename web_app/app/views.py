@@ -618,6 +618,13 @@ def delete_permanently(novel_id):
     return redirect(url_for('main.deleted_novels'))
 
 
+@main_bp.route('/novels/<int:novel_id>/usage')
+def novel_usage(novel_id):
+    """Страница со статистикой использования API провайдеров для редактуры новеллы."""
+    novel = Novel.query.get_or_404(novel_id)
+    return render_template('novel_usage.html', novel=novel)
+
+
 @main_bp.route('/novels/<int:novel_id>')
 def novel_detail(novel_id):
     """Детальная страница новеллы"""
