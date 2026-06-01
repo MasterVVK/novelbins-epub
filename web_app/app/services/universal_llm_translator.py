@@ -877,7 +877,8 @@ class UniversalLLMTranslator:
     def generate_summary(self, text: str, summary_prompt: str, chapter_id: int = None, glossary_text: str = None) -> Optional[str]:
         """Генерация резюме главы с учётом глоссария для консистентности терминов"""
         self.current_chapter_id = chapter_id
-        self.current_prompt_type = 'translation'
+        if not hasattr(self, 'current_prompt_type') or self.current_prompt_type == 'translation':
+            self.current_prompt_type = 'summary'
         self.request_start_time = time.time()
 
         # Добавляем глоссарий для консистентности имён и терминов
@@ -891,7 +892,8 @@ class UniversalLLMTranslator:
                      chapter_id: int = None, original_text: str = None) -> Optional[str]:
         """Извлечение новых терминов из текста с контекстной фильтрацией глоссария"""
         self.current_chapter_id = chapter_id
-        self.current_prompt_type = 'translation'
+        if not hasattr(self, 'current_prompt_type') or self.current_prompt_type == 'translation':
+            self.current_prompt_type = 'terms_extraction'
         self.request_start_time = time.time()
 
         # Используем контекстную фильтрацию - только термины из текста главы

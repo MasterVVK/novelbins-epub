@@ -646,11 +646,10 @@ def get_novel_usage(novel_id):
     since = request.args.get('since')
     until = request.args.get('until')
     # stage_filter:
-    #   '' / отсутствует — все типы (editing + translation)
+    #   '' / отсутствует — все типы (editing + summary + translation + ...)
     #   'editing'        — все этапы редактуры (editing_fix/style/dialogue/final/analysis)
-    #   'translation'    — весь пайплайн перевода (translate + summary + terms_extraction
-    #                      пишутся одним типом, чтобы не зависеть от залипания
-    #                      current_prompt_type между вызовами)
+    #   'summary'        — только summary
+    #   'translation'    — только translation
     #   'editing_fix_original' и подобное — точное значение prompt_type
     stage_filter = (request.args.get('stage') or '').strip()
 
