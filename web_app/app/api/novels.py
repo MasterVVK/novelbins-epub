@@ -646,12 +646,21 @@ def get_novel_usage(novel_id):
     since = request.args.get('since')
     until = request.args.get('until')
     # stage_filter:
-    #   '' / отсутствует — все типы (editing + summary + translation + ...)
+    #   '' / отсутствует — все типы (editing + translation pipeline)
     #   'editing'        — все этапы редактуры (editing_fix/style/dialogue/final/analysis)
-    #   'summary'        — только summary
-    #   'translation'    — только translation
+    #   'translation'    — весь пайплайн перевода: translation + summary + terms_extraction
+    #                      (агрегируем три типа в один, потому что из-за залипания
+    #                      current_prompt_type в UniversalLLMTranslator они исторически
+    #                      перемешаны и разделять их в UI бессмысленно)
+    #   'summary' / 'terms_extraction' — точечный фильтр на конкретный prompt_type
     #   'editing_fix_original' и подобное — точное значение prompt_type
     stage_filter = (request.args.get('stage') or '').strip()
+
+    # Список prompt_type, которые в UI показываются под зонтиком "translation".
+    # Используется и в WHERE-фильтре, и в CASE при группировке by_stage.
+    # Литералы безопасно инлайнить в SQL (нет user input).
+    TRANSLATION_PIPELINE_TYPES = ('translation', 'summary', 'terms_extraction')
+    translation_list_sql = ", ".join(f"'{t}'" for t in TRANSLATION_PIPELINE_TYPES)
 
     where_extra = ''
     params = {'novel_id': novel_id}
@@ -665,6 +674,10 @@ def get_novel_usage(novel_id):
         # Спец-группа: все этапы редактуры. `_` в LIKE — это спец-символ для любого
         # одного символа, поэтому экранируем через ESCAPE.
         where_extra += " AND ph.prompt_type LIKE 'editing\\_%' ESCAPE '\\'"
+    elif stage_filter == 'translation':
+        # Зонтичная группа: пайплайн перевода. Включаем все три типа,
+        # см. комментарий к TRANSLATION_PIPELINE_TYPES выше.
+        where_extra += f" AND ph.prompt_type IN ({translation_list_sql})"
     elif stage_filter:
         where_extra += ' AND ph.prompt_type = :stage'
         params['stage'] = stage_filter
@@ -739,10 +752,16 @@ def get_novel_usage(novel_id):
             ORDER BY total_time_s DESC
         """), params).mappings().all()
 
-        # 3. По этапу редактуры
+        # 3. По этапу. Схлопываем translation/summary/terms_extraction в один
+        # зонтичный stage='translation' — см. комментарий к TRANSLATION_PIPELINE_TYPES.
+        # editing_* и прочее остаются как есть.
         by_stage = db.session.execute(text(f"""
             SELECT
-                ph.prompt_type AS stage,
+                CASE
+                    WHEN ph.prompt_type IN ({translation_list_sql})
+                        THEN 'translation'
+                    ELSE ph.prompt_type
+                END AS stage,
                 COUNT(*) AS requests,
                 COUNT(*) FILTER (WHERE ph.success = TRUE) AS successes,
                 COUNT(*) FILTER (WHERE ph.success = FALSE) AS failures,
@@ -752,7 +771,7 @@ def get_novel_usage(novel_id):
             JOIN chapters c ON c.id = ph.chapter_id
             WHERE c.novel_id = :novel_id
               {where_extra}
-            GROUP BY ph.prompt_type
+            GROUP BY 1
             ORDER BY total_time_s DESC
         """), params).mappings().all()
 
