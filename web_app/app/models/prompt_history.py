@@ -12,7 +12,7 @@ class PromptHistory(db.Model):
     chapter_id = Column(Integer, ForeignKey('chapters.id'), nullable=False)
     
     # Тип промпта
-    prompt_type = Column(String(50), nullable=False)  # translation, summary, terms_extraction
+    prompt_type = Column(String(50), nullable=False)  # translation (включает summary/terms_extraction), editing_*, alignment
     
     # Промпты
     system_prompt = Column(Text, nullable=False)
