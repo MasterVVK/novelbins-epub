@@ -899,19 +899,47 @@ def edit_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
         }
 
     except Terminated:
-        # Отмена через сигнал
+        # Terminated приходит в двух разных случаях:
+        # 1. revoke(terminate=True, signal='SIGTERM') от пользователя
+        #    → наш SIGTERM-handler выставил _cancel_requested=True ДО Terminated
+        # 2. hard time_limit Celery (через TimeLimitExceeded в MainProcess)
+        #    → OS-сигнал нашему обработчику НЕ приходит, флаг остаётся False
+        # До этого фикса оба случая ловились одинаково и писались как "пользовательская отмена".
         novel = Novel.query.get(novel_id)
-        if novel:
-            novel.status = 'editing_cancelled'
-            novel.editing_task_id = None
-            db.session.commit()
-        LogService.log_warning(f"🛑 [Novel:{novel_id}] Редактура прервана по сигналу SIGTERM", novel_id=novel_id)
-        return {
-            'status': 'cancelled',
-            'message': 'Редактура отменена пользователем',
-            'edited_chapters': success_count if 'success_count' in locals() else 0,
-            'total_chapters': total_chapters if 'total_chapters' in locals() else 0
-        }
+        edited = success_count if 'success_count' in locals() else 0
+        total = total_chapters if 'total_chapters' in locals() else 0
+        if _cancel_requested:
+            if novel:
+                novel.status = 'editing_cancelled'
+                novel.editing_task_id = None
+                db.session.commit()
+            LogService.log_warning(
+                f"🛑 [Novel:{novel_id}] Редактура отменена пользователем (revoke SIGTERM). "
+                f"Отредактировано {edited}/{total}",
+                novel_id=novel_id
+            )
+            return {
+                'status': 'cancelled',
+                'message': 'Редактура отменена пользователем',
+                'edited_chapters': edited,
+                'total_chapters': total
+            }
+        else:
+            if novel:
+                novel.status = 'editing_timeout'
+                novel.editing_task_id = None
+                db.session.commit()
+            LogService.log_error(
+                f"⏱️ [Novel:{novel_id}] Редактура убита Celery (вероятно hard time_limit 60 суток). "
+                f"Отредактировано {edited}/{total}",
+                novel_id=novel_id
+            )
+            return {
+                'status': 'timeout',
+                'message': 'Редактура остановлена по таймауту',
+                'edited_chapters': edited,
+                'total_chapters': total
+            }
 
     except SoftTimeLimitExceeded:
         novel = Novel.query.get(novel_id)

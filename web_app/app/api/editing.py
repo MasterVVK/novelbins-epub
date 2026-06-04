@@ -5,6 +5,7 @@ from flask import Blueprint, request, jsonify
 from app.models import Novel
 from app import db, celery
 from app.celery_tasks import edit_novel_chapters_task, cancel_editing_task
+from app.services.log_service import LogService
 
 editing_bp = Blueprint('editing', __name__)
 
@@ -28,8 +29,15 @@ def cancel_editing(novel_id):
                 'error': 'Редактура не запущена'
             }), 400
 
-        # Отменяем задачу НАПРЯМУЮ через celery.control.revoke (синхронно)
+        # Отменяем задачу НАПРЯМУЮ через celery.control.revoke (синхронно).
+        # Лог перед revoke — чтобы в log_entries была явная отметка о ручной отмене
+        # за миг до того, как worker запишет "🛑 SIGTERM" из except Terminated.
+        # Без этой записи отмена и hard time_limit выглядели одинаково.
         task_id = novel.editing_task_id
+        LogService.log_info(
+            f"🛑 [Novel:{novel_id}] Запрошена отмена редактуры через API (revoke task={task_id})",
+            novel_id=novel_id
+        )
         celery.control.revoke(task_id, terminate=True, signal='SIGTERM')
 
         # Обновляем статус немедленно
