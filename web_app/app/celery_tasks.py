@@ -566,7 +566,7 @@ def cancel_parsing_task(self, task_id):
         }
 
 
-@celery.task(bind=True, base=CallbackTask, soft_time_limit=1209600, time_limit=1209660)  # 14 суток soft + 1 мин на cleanup
+@celery.task(bind=True, base=CallbackTask, soft_time_limit=5184000, time_limit=5184060)  # 60 суток soft + 1 мин на cleanup
 def edit_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
     """
     Фоновая задача редактуры глав новеллы
@@ -919,7 +919,7 @@ def edit_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
             novel.status = 'editing_timeout'
             novel.editing_task_id = None
             db.session.commit()
-        LogService.log_error(f"⏱️ [Novel:{novel_id}] Превышено время выполнения задачи редактуры (48 часов)", novel_id=novel_id)
+        LogService.log_error(f"⏱️ [Novel:{novel_id}] Превышено время выполнения задачи редактуры (60 суток)", novel_id=novel_id)
         raise
 
     except Exception as e:
@@ -976,7 +976,7 @@ def cancel_editing_task(self, task_id):
         }
 
 
-@celery.task(bind=True, base=CallbackTask, soft_time_limit=1209600, time_limit=1209660)  # 14 суток soft + 1 мин на cleanup
+@celery.task(bind=True, base=CallbackTask, soft_time_limit=5184000, time_limit=5184060)  # 60 суток soft + 1 мин на cleanup
 def translate_novel_chapters_task(self, novel_id, chapter_ids):
     """
     Фоновая задача перевода глав новеллы (последовательно)
@@ -1221,7 +1221,7 @@ def translate_novel_chapters_task(self, novel_id, chapter_ids):
             novel.status = 'translation_timeout'
             novel.translation_task_id = None
             db.session.commit()
-        LogService.log_error(f"⏱️ [Novel:{novel_id}] Превышено время выполнения задачи перевода (48 часов)", novel_id=novel_id)
+        LogService.log_error(f"⏱️ [Novel:{novel_id}] Превышено время выполнения задачи перевода (60 суток)", novel_id=novel_id)
         raise
 
     except Exception as e:
@@ -1248,7 +1248,7 @@ def translate_novel_chapters_task(self, novel_id, chapter_ids):
                 pass
 
 
-@celery.task(bind=True, base=CallbackTask, soft_time_limit=1209600, time_limit=1209660)  # 14 суток soft + 1 мин на cleanup
+@celery.task(bind=True, base=CallbackTask, soft_time_limit=5184000, time_limit=5184060)  # 60 суток soft + 1 мин на cleanup
 def align_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
     """
     Фоновая задача билингвального выравнивания глав новеллы
