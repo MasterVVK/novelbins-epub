@@ -123,6 +123,9 @@ class AIAdapterService:
             elif self.model.provider == 'deepseek':
                 return await self._call_deepseek(system_prompt, user_prompt, temperature, max_tokens,
                                                  disable_thinking=disable_thinking)
+            elif self.model.provider == 'deepseek_free':
+                return await self._call_deepseek_free(system_prompt, user_prompt, temperature, max_tokens,
+                                                      disable_thinking=disable_thinking)
             else:
                 return {'success': False, 'error': f'Неподдерживаемый провайдер: {self.model.provider}'}
 
@@ -483,6 +486,118 @@ class AIAdapterService:
                 error_type = 'server_error'
             elif response.status_code in (401, 403):
                 error_type = 'invalid_api_key'
+
+            return {
+                'success': False,
+                'error': error_message,
+                'error_type': error_type,
+                'status_code': response.status_code
+            }
+
+    async def _call_deepseek_free(self, system_prompt: str, user_prompt: str,
+                                  temperature: float, max_tokens: int,
+                                  disable_thinking: bool = False) -> Dict:
+        """Вызов ds-free-api (https://github.com/NIyueeE/ds-free-api).
+
+        Бесплатный прокси к веб-чату DeepSeek. OpenAI-совместимый
+        /v1/chat/completions с Bearer-аутентификацией. Режим thinking
+        определяется именем модели (deepseek-expert/v4-pro → reasoning on),
+        параметры thinking/reasoning_effort API не принимает.
+
+        Особенности:
+        - длинный таймаут (thinking может занимать 1–3 минуты);
+        - возможен mute со стороны веб-чата DeepSeek → пустой content,
+          возвращаем error_type='upstream_mute' для ретрая через UniversalLLMTranslator;
+        - reasoning_content (если есть) отбрасываем — наверх отдаём только финальный content.
+        """
+        if not self.model.api_key:
+            return {'success': False, 'error': 'API ключ не указан'}
+
+        actual_max_tokens = min(max_tokens, self.model.max_output_tokens)
+
+        LogService.log_info(
+            f"DeepSeek-Free запрос: {self.model.model_id} | Temperature: {temperature} | "
+            f"Max tokens: {actual_max_tokens:,} / {self.model.max_output_tokens:,}"
+        )
+
+        payload = {
+            'model': self.model.model_id,
+            'messages': [
+                {'role': 'system', 'content': system_prompt},
+                {'role': 'user', 'content': user_prompt}
+            ],
+            'temperature': temperature,
+            'max_tokens': actual_max_tokens
+        }
+
+        async with httpx.AsyncClient(timeout=1800.0) as client:
+            response = await client.post(
+                f"{self.model.api_endpoint.rstrip('/')}/chat/completions",
+                headers={
+                    'Authorization': f'Bearer {self.model.api_key}',
+                    'Content-Type': 'application/json'
+                },
+                json=payload
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                choices = data.get('choices', [])
+                if not choices:
+                    return {'success': False, 'error': 'Нет вариантов в ответе'}
+
+                message = choices[0].get('message', {}) or {}
+                content = message.get('content', '') or ''
+                reasoning_content = message.get('reasoning_content') or ''
+                if reasoning_content:
+                    logger.debug(
+                        f"DeepSeek-Free reasoning_content: {len(reasoning_content):,} символов (отброшено)"
+                    )
+
+                finish_reason = choices[0].get('finish_reason', 'unknown')
+
+                if finish_reason == 'length':
+                    return {
+                        'success': False,
+                        'error': (
+                            f'DeepSeek-Free: ответ обрезан по лимиту max_tokens={actual_max_tokens} '
+                            f'(content_len={len(content)}, finish_reason=length).'
+                        ),
+                        'error_type': 'length',
+                        'truncated_content': content,
+                        'finish_reason': 'length'
+                    }
+
+                if not content.strip():
+                    return {
+                        'success': False,
+                        'error': 'DeepSeek-Free вернул пустой content (вероятно mute от веб-чата DeepSeek)',
+                        'error_type': 'upstream_mute',
+                        'finish_reason': finish_reason
+                    }
+
+                return {
+                    'success': True,
+                    'content': content,
+                    'usage': data.get('usage', {}),
+                    'finish_reason': finish_reason
+                }
+
+            try:
+                error_data = response.json()
+                error_message = error_data.get('error', {}).get('message', f'HTTP {response.status_code}')
+            except Exception:
+                error_message = f'HTTP {response.status_code}'
+
+            error_type = 'general'
+            if response.status_code == 429:
+                error_type = 'rate_limit'
+            elif response.status_code in (401, 403):
+                error_type = 'invalid_api_key'
+            elif response.status_code == 503:
+                error_type = 'service_unavailable'
+            elif response.status_code in (500, 502, 504):
+                error_type = 'server_error'
 
             return {
                 'success': False,
