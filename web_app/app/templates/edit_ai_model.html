@@ -135,10 +135,15 @@
                                    name="enable_thinking" {% if model.enable_thinking %}checked{% endif %}>
                             <label class="form-check-label" for="enable_thinking">
                                 <strong>🧠 Включить Thinking Mode</strong>
-                                <div class="form-text">Глубокий анализ с пошаговыми рассуждениями (для DeepSeek, DeepSeek-R1 и других reasoning моделей)</div>
+                                <div class="form-text">
+                                    Глубокий анализ с пошаговыми рассуждениями. Поддерживают:
+                                    DeepSeek (V4-Pro, R1, deepseek-reasoner), NVIDIA NIM,
+                                    Qwen (qwen3-max / qwen3.7-* / qwq-32b), Ollama reasoning-модели.
+                                </div>
                             </label>
                         </div>
 
+                        {% if model.provider != 'qwen_free' %}
                         <div id="thinkingModeWrapper" class="ms-4 mb-3" style="display: none;">
                             <label class="form-label"><strong>Уровень thinking</strong></label>
                             <div class="form-check">
@@ -162,6 +167,12 @@
                             <input type="hidden" name="thinking_mode" id="thinkingModeHidden"
                                    value="{{ model.thinking_mode or '' }}">
                         </div>
+                        {% else %}
+                        <div class="ms-4 mb-3 text-muted small">
+                            <i class="bi bi-info-circle"></i>
+                            У Qwen thinking — бинарный флаг (без уровней): только on/off.
+                        </div>
+                        {% endif %}
                     </div>
 
                     <!-- Рейтинги и рекомендации -->
