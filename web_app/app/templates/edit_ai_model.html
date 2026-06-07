@@ -115,6 +115,13 @@
                             <div class="form-text">0 = детерминированный, 2 = максимально креативный</div>
                         </div>
 
+                        <div class="mb-3">
+                            <label for="request_delay" class="form-label">Задержка между запросами (сек)</label>
+                            <input type="number" class="form-control" id="request_delay" name="request_delay"
+                                   value="{{ model.request_delay or 0 }}" min="0" step="0.5">
+                            <div class="form-text">0 — без задержки. Для провайдеров с rate-limit (например ds-free-api).</div>
+                        </div>
+
                         <div class="form-check mb-3">
                             <input class="form-check-input" type="checkbox" id="supports_system_prompt"
                                    name="supports_system_prompt" {% if model.supports_system_prompt %}checked{% endif %}>

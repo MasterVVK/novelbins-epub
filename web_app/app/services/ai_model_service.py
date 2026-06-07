@@ -83,6 +83,7 @@ class AIModelService:
                 supports_system_prompt=data.get('supports_system_prompt', True),
                 supports_temperature=data.get('supports_temperature', True),
                 default_temperature=data.get('default_temperature', 0.3),
+                request_delay=float(data.get('request_delay', 0.0) or 0.0),
                 provider_config=data.get('provider_config', {}),
                 speed_rating=data.get('speed_rating', 3),
                 quality_rating=data.get('quality_rating', 3),
@@ -114,7 +115,8 @@ class AIModelService:
                          'api_key', 'max_input_tokens', 'max_output_tokens',
                          'supports_system_prompt', 'supports_temperature',
                          'default_temperature', 'speed_rating', 'quality_rating',
-                         'cost_rating', 'is_active', 'enable_thinking', 'thinking_mode']:
+                         'cost_rating', 'is_active', 'enable_thinking', 'thinking_mode',
+                         'request_delay']:
                 if field in data:
                     setattr(model, field, data[field])
 
