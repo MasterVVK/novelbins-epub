@@ -447,15 +447,15 @@ class UniversalLLMTranslator:
                         # - nvidia: 63 (≈ 1 час wait при cap=60s); если NVIDIA не отпустил
                         #   за час — раз есть смысл останавливать ВСЮ задачу (последующие
                         #   главы тоже упадут).
-                        # - deepseek_free: 30 (≈30 мин); ds-free-api мьютит надолго
-                        #   при перегрузке веб-чата DeepSeek.
+                        # - deepseek_free: 10 (~8-10 мин); если ds-free-api не оживает
+                        #   за это время — останавливаем задачу (как NVIDIA).
                         # - ollama: 15 (~2-3 мин); concurrent_slot долго не висит.
                         is_nvidia = self.model.provider == 'nvidia'
                         is_deepseek_free = self.model.provider == 'deepseek_free'
                         if is_nvidia:
                             max_retries_429 = 63
                         elif is_deepseek_free:
-                            max_retries_429 = 30
+                            max_retries_429 = 10
                         else:
                             max_retries_429 = 15
                         for attempt_429 in range(1, max_retries_429 + 1):
@@ -523,6 +523,18 @@ class UniversalLLMTranslator:
                             )
                             raise RateLimitError(
                                 f"NVIDIA NIM server-busy ({error_type}) не сбросился после {max_retries_429} retry (~1 час)"
+                            )
+                        # Для deepseek_free: ds-free-api мьютит со стороны веб-чата DeepSeek,
+                        # последующие главы тоже не пройдут — останавливаем задачу.
+                        if is_deepseek_free:
+                            LogService.log_error(
+                                f"🛑 DeepSeek-Free не отвечает за {max_retries_429} попыток (~8-10 мин). "
+                                f"Последняя ошибка: {error_type}. "
+                                f"Останавливаем редактуру — веб-чат DeepSeek мьютит. "
+                                f"Подождите 30-60 минут или используйте резервную модель."
+                            )
+                            raise RateLimitError(
+                                f"DeepSeek-Free server-busy ({error_type}) не сбросился после {max_retries_429} retry"
                             )
                         return None
 
