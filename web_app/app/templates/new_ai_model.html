@@ -24,6 +24,7 @@
                             <option value="anthropic">Anthropic (Claude)</option>
                             <option value="openrouter">OpenRouter (400+ моделей)</option>
                             <option value="deepseek">DeepSeek (Official API)</option>
+                            <option value="deepseek_free">DeepSeek Free (ds-free-api proxy)</option>
                             <option value="ollama">Ollama (Локальные модели)</option>
                             <option value="ollama_turbo">Ollama Turbo (Облачный API)</option>
                             <option value="nvidia">NVIDIA NIM (DeepSeek V4 Pro)</option>
@@ -298,6 +299,17 @@ function updateProviderFields() {
             document.getElementById('max_output_tokens').value = '65536';
             document.getElementById('default_temperature').value = '0.3';
             document.getElementById('cost_rating').value = '4';
+            break;
+
+        case 'deepseek_free':
+            apiEndpoint.value = 'http://127.0.0.1:22217/v1';
+            apiKeySection.style.display = 'block';
+            setModelPreset('deepseek-expert', 'DeepSeek V4 Pro (ds-free-api)');
+            document.getElementById('description').value = 'Бесплатный прокси к веб-чату DeepSeek (ds-free-api). Thinking всегда on. Нестабилен — возможны mute/таймауты.';
+            document.getElementById('max_input_tokens').value = '1000000';
+            document.getElementById('max_output_tokens').value = '65536';
+            document.getElementById('default_temperature').value = '0.3';
+            document.getElementById('cost_rating').value = '5';
             break;
 
         case 'ollama':
