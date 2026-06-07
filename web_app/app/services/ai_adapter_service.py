@@ -1,6 +1,7 @@
 """
 Адаптер для работы с разными AI провайдерами через унифицированный интерфейс
 """
+import asyncio
 import httpx
 import json
 import logging
@@ -101,6 +102,12 @@ class AIAdapterService:
         """
         temperature = temperature or self.model.default_temperature
         max_tokens = max_tokens or self.model.max_output_tokens
+
+        # Троттлинг: задержка перед запросом для провайдеров с жёстким rate-limit
+        request_delay = getattr(self.model, 'request_delay', 0.0) or 0.0
+        if request_delay > 0:
+            logger.debug(f"request_delay={request_delay}s перед вызовом {self.model.provider}/{self.model.model_id}")
+            await asyncio.sleep(request_delay)
 
         try:
             if self.model.provider == 'gemini':
