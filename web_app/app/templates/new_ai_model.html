@@ -25,6 +25,7 @@
                             <option value="openrouter">OpenRouter (400+ моделей)</option>
                             <option value="deepseek">DeepSeek (Official API)</option>
                             <option value="deepseek_free">DeepSeek Free (ds-free-api proxy)</option>
+                            <option value="qwen_free">Qwen Free (FreeQwenApi proxy)</option>
                             <option value="ollama">Ollama (Локальные модели)</option>
                             <option value="ollama_turbo">Ollama Turbo (Облачный API)</option>
                             <option value="nvidia">NVIDIA NIM (DeepSeek V4 Pro)</option>
@@ -322,6 +323,18 @@ function updateProviderFields() {
             document.getElementById('default_temperature').value = '0.3';
             document.getElementById('cost_rating').value = '5';
             document.getElementById('request_delay').value = '30';
+            break;
+
+        case 'qwen_free':
+            apiEndpoint.value = 'http://127.0.0.1:3264/api';
+            apiKeySection.style.display = 'block';
+            setModelPreset('qwen3-max', 'Qwen3-Max (FreeQwenApi)');
+            document.getElementById('description').value = 'Бесплатный прокси к chat.qwen.ai (FreeQwenApi). Без thinking. Возможны лимиты Qwen Chat аккаунтов.';
+            document.getElementById('max_input_tokens').value = '128000';
+            document.getElementById('max_output_tokens').value = '8192';
+            document.getElementById('default_temperature').value = '0.3';
+            document.getElementById('cost_rating').value = '5';
+            document.getElementById('request_delay').value = '10';
             break;
 
         case 'ollama':
