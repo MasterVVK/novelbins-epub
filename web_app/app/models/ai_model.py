@@ -40,6 +40,11 @@ class AIModel(db.Model):
     # Допустимые значения: None / 'on' (обычный, think=true) / 'high' (Max, think="high")
     thinking_mode = db.Column(db.String(20), nullable=True, default=None)
 
+    # Задержка между запросами (в секундах). 0 = без задержки.
+    # Применяется в AIAdapterService.generate_content() перед каждым вызовом API.
+    # Полезно для провайдеров с жёстким rate-limit (например ds-free-api).
+    request_delay = db.Column(db.Float, default=0.0, nullable=False)
+
     # Настройки для конкретных провайдеров
     provider_config = db.Column(db.JSON, default={})
     # Для Gemini: {"safety_settings": "block_none", "api_version": "v1beta"}
@@ -135,7 +140,8 @@ class AIModel(db.Model):
             'test_status': self.test_status,
             'last_tested_at': self.last_tested_at.isoformat() if self.last_tested_at else None,
             'use_dynamic_context': self.use_dynamic_context,
-            'dynamic_context_buffer': self.dynamic_context_buffer
+            'dynamic_context_buffer': self.dynamic_context_buffer,
+            'request_delay': self.request_delay
         }
 
 
