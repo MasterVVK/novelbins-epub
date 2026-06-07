@@ -332,6 +332,7 @@ DEFAULT_MODELS = [
         'cost_rating': 5,
         'default_temperature': 0.3,
         'enable_thinking': True,
+        'request_delay': 30.0,
         'recommended_for': ['draft', 'bulk_translation', 'experimental'],
         'provider_config': {'api_version': 'v1'}
     }
