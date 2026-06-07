@@ -310,5 +310,23 @@ DEFAULT_MODELS = [
             'max_generation_ratio': 0.5,
             'min_context_size': 8192
         }
+    },
+    {
+        'name': 'DeepSeek V4 Pro (ds-free-api)',
+        'model_id': 'deepseek-expert',
+        'provider': 'deepseek_free',
+        'api_type': 'openai-compatible',
+        'description': 'Бесплатный прокси к веб-чату DeepSeek (ds-free-api). '
+                       'Thinking всегда on. Нестабилен — возможны mute/таймауты, ретраи обязательны.',
+        'api_endpoint': 'http://127.0.0.1:22217/v1',
+        'max_input_tokens': 1000000,
+        'max_output_tokens': 65536,
+        'speed_rating': 2,
+        'quality_rating': 4,
+        'cost_rating': 5,
+        'default_temperature': 0.3,
+        'enable_thinking': True,
+        'recommended_for': ['draft', 'bulk_translation', 'experimental'],
+        'provider_config': {'api_version': 'v1'}
     }
 ]
