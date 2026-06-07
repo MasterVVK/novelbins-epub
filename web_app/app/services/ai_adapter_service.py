@@ -636,6 +636,13 @@ class AIAdapterService:
           Поддерживают: qwen3-max, qwen3.7-max, qwen3.7-plus, qwen3.6-plus, qwq-32b.
           Бинарный флаг — поле thinking_mode='high' у нас игнорируется
           (у Qwen нет уровней reasoning_effort);
+        - Temporary Chat (`temporary: true`) — управляется через
+          `model.provider_config['temporary_chat']` (по умолчанию True).
+          Чат не сохраняется в истории Qwen аккаунта, не накапливает
+          контекст между запросами. Для пайплайна редактуры это идеально:
+          каждый этап (fix/style/dialogue/final) — независимый запрос,
+          и веб-интерфейс chat.qwen.ai не засоряется тысячами чатов.
+          Можно выключить в UI если нужно сохранять чаты для отладки;
         - reasoning_content (если придёт) отбрасываем;
         - при пустом content от прокси (mute / лимит Qwen Chat аккаунта)
           возвращаем error_type='upstream_mute' для ретрая через
@@ -653,10 +660,15 @@ class AIAdapterService:
         else:
             thinking_flag = bool(getattr(self.model, 'enable_thinking', False))
 
+        # Temporary Chat — берём из provider_config, default=True
+        # (чаты не сохраняются в истории Qwen аккаунта, веб-UI не засоряется).
+        provider_cfg = self.model.provider_config or {}
+        temporary_chat = bool(provider_cfg.get('temporary_chat', True))
+
         LogService.log_info(
             f"Qwen-Free запрос: {self.model.model_id} | Temperature: {temperature} | "
             f"Max tokens: {actual_max_tokens:,} / {self.model.max_output_tokens:,} | "
-            f"thinking={thinking_flag}"
+            f"thinking={thinking_flag} | temporary={temporary_chat}"
         )
 
         payload = {
@@ -667,7 +679,8 @@ class AIAdapterService:
             ],
             'temperature': temperature,
             'max_tokens': actual_max_tokens,
-            'thinking': thinking_flag
+            'thinking': thinking_flag,
+            'temporary': temporary_chat
         }
 
         async with httpx.AsyncClient(timeout=1800.0) as client:

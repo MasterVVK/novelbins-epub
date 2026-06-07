@@ -173,6 +173,22 @@
                             У Qwen thinking — бинарный флаг (без уровней): только on/off.
                         </div>
                         {% endif %}
+
+                        {% if model.provider == 'qwen_free' %}
+                        <div class="form-check mb-3">
+                            <input class="form-check-input" type="checkbox" id="qwen_temporary_chat"
+                                   name="qwen_temporary_chat"
+                                   {% if model.provider_config is none or model.provider_config.get('temporary_chat', True) %}checked{% endif %}>
+                            <label class="form-check-label" for="qwen_temporary_chat">
+                                <strong>🕵️ Temporary Chat (не сохранять в истории Qwen)</strong>
+                                <div class="form-text">
+                                    Каждый запрос — новый временный чат на стороне chat.qwen.ai.
+                                    Чат не сохраняется в истории аккаунта, не подхватывает контекст
+                                    предыдущих сообщений. Рекомендуется для редактуры (каждый этап независимый).
+                                </div>
+                            </label>
+                        </div>
+                        {% endif %}
                     </div>
 
                     <!-- Рейтинги и рекомендации -->
@@ -323,6 +339,19 @@ document.getElementById('editModelForm').addEventListener('submit', async functi
         data.thinking_mode = null;
     } else if (!data.thinking_mode) {
         data.thinking_mode = 'on';
+    }
+
+    // qwen_free: чекбокс Temporary Chat кладём в provider_config.
+    // Важно: мерджим с существующим provider_config (он пришёл с сервера через Jinja),
+    // чтобы не перезатереть другие поля (например api_version).
+    {
+        const hasTempCheckbox = document.getElementById('qwen_temporary_chat') !== null;
+        if (hasTempCheckbox) {
+            const existingCfg = {{ (model.provider_config or {}) | tojson }};
+            const isTemp = formData.has('qwen_temporary_chat');
+            data.provider_config = Object.assign({}, existingCfg, { temporary_chat: isTemp });
+            delete data.qwen_temporary_chat;
+        }
     }
 
     try {

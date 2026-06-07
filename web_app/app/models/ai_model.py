@@ -352,6 +352,6 @@ DEFAULT_MODELS = [
         'default_temperature': 0.3,
         'request_delay': 10.0,
         'recommended_for': ['draft', 'bulk_translation', 'experimental'],
-        'provider_config': {'api_version': 'v1'}
+        'provider_config': {'api_version': 'v1', 'temporary_chat': True}
     }
 ]
