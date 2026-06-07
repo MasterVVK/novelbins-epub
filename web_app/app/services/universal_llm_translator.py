@@ -401,6 +401,8 @@ class UniversalLLMTranslator:
                     # Для NVIDIA расширено на server-side ошибки (504/503/502 = инфраструктура
                     # перегружена), потому что NVIDIA для них не шлёт Retry-After и они проходят
                     # после ожидания так же, как и 429.
+                    # Для deepseek_free (ds-free-api прокси): error_type='rate_limit' приходит
+                    # когда веб-чат DeepSeek мьютит. Аналогичный backoff что у NVIDIA.
                     nvidia_server_busy = (
                         self.model.provider == 'nvidia'
                         and error_type in ('concurrent_slot', 'server_error', 'service_unavailable', 'upstream_error', 'upstream_timeout')
@@ -409,10 +411,21 @@ class UniversalLLMTranslator:
                         self.model.provider in ('ollama', 'ollama_turbo')
                         and error_type == 'concurrent_slot'
                     )
-                    if nvidia_server_busy or ollama_concurrent:
-                        provider_label = 'NVIDIA NIM' if self.model.provider == 'nvidia' else 'Ollama'
+                    deepseek_free_busy = (
+                        self.model.provider == 'deepseek_free'
+                        and error_type in ('rate_limit', 'server_error', 'service_unavailable', 'upstream_mute')
+                    )
+                    if nvidia_server_busy or ollama_concurrent or deepseek_free_busy:
+                        if self.model.provider == 'nvidia':
+                            provider_label = 'NVIDIA NIM'
+                        elif self.model.provider == 'deepseek_free':
+                            provider_label = 'DeepSeek-Free'
+                        else:
+                            provider_label = 'Ollama'
                         if error_type == 'concurrent_slot':
                             LogService.log_warning(f"⚠️ Слоты {provider_label} заняты (429) для модели {self.model.model_id}")
+                        elif error_type == 'rate_limit':
+                            LogService.log_warning(f"⚠️ {provider_label} rate-limit (429) для модели {self.model.model_id}")
                         else:
                             LogService.log_warning(f"⚠️ {provider_label} server-side ошибка ({error_type}) для модели {self.model.model_id}")
                         LogService.log_warning(f"   Текст ошибки: {error}")
@@ -434,15 +447,23 @@ class UniversalLLMTranslator:
                         # - nvidia: 63 (≈ 1 час wait при cap=60s); если NVIDIA не отпустил
                         #   за час — раз есть смысл останавливать ВСЮ задачу (последующие
                         #   главы тоже упадут).
-                        # - ollama: 15 (~2-3 мин); concurrent_slot ольше не висит.
+                        # - deepseek_free: 30 (≈30 мин); ds-free-api мьютит надолго
+                        #   при перегрузке веб-чата DeepSeek.
+                        # - ollama: 15 (~2-3 мин); concurrent_slot долго не висит.
                         is_nvidia = self.model.provider == 'nvidia'
-                        max_retries_429 = 63 if is_nvidia else 15
+                        is_deepseek_free = self.model.provider == 'deepseek_free'
+                        if is_nvidia:
+                            max_retries_429 = 63
+                        elif is_deepseek_free:
+                            max_retries_429 = 30
+                        else:
+                            max_retries_429 = 15
                         for attempt_429 in range(1, max_retries_429 + 1):
                             if server_retry_after:
                                 # Сервер сам сказал сколько ждать — слушаем его всегда
                                 delay = float(server_retry_after) + random.uniform(0, 2)
-                            elif is_nvidia:
-                                # NVIDIA: агрессивный backoff (5,10,20,40,60,60...) + jitter
+                            elif is_nvidia or is_deepseek_free:
+                                # NVIDIA / ds-free-api: агрессивный backoff (5,10,20,40,60,60...) + jitter
                                 base = min(5 * (2 ** (attempt_429 - 1)), 60)
                                 delay = base + random.uniform(0, 3)
                             else:
@@ -467,11 +488,14 @@ class UniversalLLMTranslator:
 
                             retry_error_type = retry_result.get('error_type', 'general')
                             # Для NVIDIA продолжаем retry на любой server-busy ошибке;
+                            # для deepseek_free — на rate_limit/server_error/service_unavailable/upstream_mute;
                             # для Ollama — только на concurrent_slot.
-                            retry_busy_types = (
-                                ('concurrent_slot', 'server_error', 'service_unavailable', 'upstream_error', 'upstream_timeout')
-                                if is_nvidia else ('concurrent_slot',)
-                            )
+                            if is_nvidia:
+                                retry_busy_types = ('concurrent_slot', 'server_error', 'service_unavailable', 'upstream_error', 'upstream_timeout')
+                            elif is_deepseek_free:
+                                retry_busy_types = ('rate_limit', 'server_error', 'service_unavailable', 'upstream_mute')
+                            else:
+                                retry_busy_types = ('concurrent_slot',)
                             if retry_error_type in retry_busy_types:
                                 if endpoint and endpoint in _limiters:
                                     _limiters[endpoint].report_429()
