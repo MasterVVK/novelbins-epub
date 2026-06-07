@@ -627,10 +627,15 @@ class AIAdapterService:
         сессию Qwen Chat внутри FreeQwenApi).
 
         Особенности:
-        - таймаут 10 минут (Qwen Chat без thinking, ответ за 30-120с);
+        - таймаут 10 минут (без thinking ответ 30-120с; с thinking может
+          дольше из-за reasoning summary);
         - api_key опционален: если пусто — слать 'dummy-key' (FreeQwenApi
           не проверяет ключ, но многие OpenAI-клиенты падают без header);
-        - thinking-параметры НЕ слать (qwen3-max не использует reasoning);
+        - thinking-режим (`thinking: true` в payload) — управляется флагом
+          AIModel.enable_thinking. Маппится в Qwen feature_config.thinking_enabled.
+          Поддерживают: qwen3-max, qwen3.7-max, qwen3.7-plus, qwen3.6-plus, qwq-32b.
+          Бинарный флаг — поле thinking_mode='high' у нас игнорируется
+          (у Qwen нет уровней reasoning_effort);
         - reasoning_content (если придёт) отбрасываем;
         - при пустом content от прокси (mute / лимит Qwen Chat аккаунта)
           возвращаем error_type='upstream_mute' для ретрая через
@@ -640,9 +645,18 @@ class AIAdapterService:
 
         actual_max_tokens = min(max_tokens, self.model.max_output_tokens)
 
+        # Thinking: явный override через disable_thinking → False,
+        # иначе берём из AIModel.enable_thinking, иначе FreeQwenApi сам
+        # отключит thinking для текстовых чатов (default backend).
+        if disable_thinking:
+            thinking_flag = False
+        else:
+            thinking_flag = bool(getattr(self.model, 'enable_thinking', False))
+
         LogService.log_info(
             f"Qwen-Free запрос: {self.model.model_id} | Temperature: {temperature} | "
-            f"Max tokens: {actual_max_tokens:,} / {self.model.max_output_tokens:,}"
+            f"Max tokens: {actual_max_tokens:,} / {self.model.max_output_tokens:,} | "
+            f"thinking={thinking_flag}"
         )
 
         payload = {
@@ -652,7 +666,8 @@ class AIAdapterService:
                 {'role': 'user', 'content': user_prompt}
             ],
             'temperature': temperature,
-            'max_tokens': actual_max_tokens
+            'max_tokens': actual_max_tokens,
+            'thinking': thinking_flag
         }
 
         async with httpx.AsyncClient(timeout=600.0) as client:
