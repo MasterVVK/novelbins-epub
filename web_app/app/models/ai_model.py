@@ -335,5 +335,23 @@ DEFAULT_MODELS = [
         'request_delay': 30.0,
         'recommended_for': ['draft', 'bulk_translation', 'experimental'],
         'provider_config': {'api_version': 'v1'}
+    },
+    {
+        'name': 'Qwen3-Max (FreeQwenApi)',
+        'model_id': 'qwen3-max',
+        'provider': 'qwen_free',
+        'api_type': 'openai-compatible',
+        'description': 'Бесплатный прокси к chat.qwen.ai (FreeQwenApi). '
+                       'Без thinking. Нестабилен — лимиты Qwen Chat аккаунтов, возможен mute.',
+        'api_endpoint': 'http://127.0.0.1:3264/api',
+        'max_input_tokens': 128000,
+        'max_output_tokens': 8192,
+        'speed_rating': 3,
+        'quality_rating': 4,
+        'cost_rating': 5,
+        'default_temperature': 0.3,
+        'request_delay': 10.0,
+        'recommended_for': ['draft', 'bulk_translation', 'experimental'],
+        'provider_config': {'api_version': 'v1'}
     }
 ]
