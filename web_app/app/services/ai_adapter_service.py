@@ -627,8 +627,8 @@ class AIAdapterService:
         сессию Qwen Chat внутри FreeQwenApi).
 
         Особенности:
-        - таймаут 10 минут (без thinking ответ 30-120с; с thinking может
-          дольше из-за reasoning summary);
+        - таймаут 30 минут (без thinking ответ 30-120с; с thinking
+          на больших главах 8-15 мин из-за reasoning summary, +запас);
         - api_key опционален: если пусто — слать 'dummy-key' (FreeQwenApi
           не проверяет ключ, но многие OpenAI-клиенты падают без header);
         - thinking-режим (`thinking: true` в payload) — управляется флагом
@@ -670,15 +670,30 @@ class AIAdapterService:
             'thinking': thinking_flag
         }
 
-        async with httpx.AsyncClient(timeout=600.0) as client:
-            response = await client.post(
-                f"{self.model.api_endpoint.rstrip('/')}/chat/completions",
-                headers={
-                    'Authorization': f'Bearer {api_key}',
-                    'Content-Type': 'application/json'
-                },
-                json=payload
-            )
+        async with httpx.AsyncClient(timeout=1800.0) as client:
+            try:
+                response = await client.post(
+                    f"{self.model.api_endpoint.rstrip('/')}/chat/completions",
+                    headers={
+                        'Authorization': f'Bearer {api_key}',
+                        'Content-Type': 'application/json'
+                    },
+                    json=payload
+                )
+            except (httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout):
+                # Qwen Chat не ответил за 30 мин — считаем как upstream_timeout,
+                # чтобы UniversalLLMTranslator сделал retry.
+                return {
+                    'success': False,
+                    'error': 'Qwen-Free: ReadTimeout (>30 мин без ответа от Qwen Chat)',
+                    'error_type': 'upstream_timeout',
+                }
+            except httpx.ConnectTimeout:
+                return {
+                    'success': False,
+                    'error': 'Qwen-Free: ConnectTimeout (FreeQwenApi не доступен)',
+                    'error_type': 'service_unavailable',
+                }
 
             if response.status_code == 200:
                 data = response.json()
