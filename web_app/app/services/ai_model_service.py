@@ -265,6 +265,9 @@ class AIModelService:
             elif model.provider == 'deepseek':
                 # Тест DeepSeek
                 result = await AIModelService._test_deepseek(model, test_prompt)
+            elif model.provider == 'deepseek_free':
+                # Тест ds-free-api (бесплатный прокси к веб-чату DeepSeek)
+                result = await AIModelService._test_deepseek_free(model, test_prompt)
             else:
                 result = {'success': False, 'error': f'Неподдерживаемый провайдер: {model.provider}'}
 
@@ -527,6 +530,52 @@ class AIModelService:
                         'success': True,
                         'response': text[:100],
                         'model_info': {'model': model.model_id}
+                    }
+                else:
+                    try:
+                        error_data = response.json()
+                        return {'success': False, 'error': error_data.get('error', {}).get('message', f'HTTP {response.status_code}')}
+                    except Exception:
+                        return {'success': False, 'error': f'HTTP {response.status_code}'}
+
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    @staticmethod
+    async def _test_deepseek_free(model: AIModel, prompt: str) -> Dict:
+        """Тестировать ds-free-api (бесплатный прокси к веб-чату DeepSeek).
+
+        Использует deepseek-default (без thinking) для health-check, чтобы
+        не ждать полный thinking-цикл (1-3 мин). Таймаут 180с.
+        """
+        try:
+            if not model.api_key:
+                return {'success': False, 'error': 'API ключ не указан'}
+
+            endpoint = (model.api_endpoint or 'http://127.0.0.1:22217/v1').rstrip('/')
+
+            async with httpx.AsyncClient(timeout=180.0) as client:
+                response = await client.post(
+                    f"{endpoint}/chat/completions",
+                    headers={
+                        'Authorization': f'Bearer {model.api_key}',
+                        'Content-Type': 'application/json'
+                    },
+                    json={
+                        'model': 'deepseek-default',
+                        'messages': [{'role': 'user', 'content': prompt}],
+                        'temperature': model.default_temperature,
+                        'max_tokens': 100
+                    }
+                )
+
+                if response.status_code == 200:
+                    result = response.json()
+                    text = result.get('choices', [{}])[0].get('message', {}).get('content', '')
+                    return {
+                        'success': True,
+                        'response': text[:100],
+                        'model_info': {'model': model.model_id, 'tested_with': 'deepseek-default'}
                     }
                 else:
                     try:
