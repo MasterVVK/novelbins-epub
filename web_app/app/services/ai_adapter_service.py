@@ -133,6 +133,9 @@ class AIAdapterService:
             elif self.model.provider == 'deepseek_free':
                 return await self._call_deepseek_free(system_prompt, user_prompt, temperature, max_tokens,
                                                       disable_thinking=disable_thinking)
+            elif self.model.provider == 'qwen_free':
+                return await self._call_qwen_free(system_prompt, user_prompt, temperature, max_tokens,
+                                                  disable_thinking=disable_thinking)
             else:
                 return {'success': False, 'error': f'Неподдерживаемый провайдер: {self.model.provider}'}
 
@@ -579,6 +582,121 @@ class AIAdapterService:
                     return {
                         'success': False,
                         'error': 'DeepSeek-Free вернул пустой content (вероятно mute от веб-чата DeepSeek)',
+                        'error_type': 'upstream_mute',
+                        'finish_reason': finish_reason
+                    }
+
+                return {
+                    'success': True,
+                    'content': content,
+                    'usage': data.get('usage', {}),
+                    'finish_reason': finish_reason
+                }
+
+            try:
+                error_data = response.json()
+                error_message = error_data.get('error', {}).get('message', f'HTTP {response.status_code}')
+            except Exception:
+                error_message = f'HTTP {response.status_code}'
+
+            error_type = 'general'
+            if response.status_code == 429:
+                error_type = 'rate_limit'
+            elif response.status_code in (401, 403):
+                error_type = 'invalid_api_key'
+            elif response.status_code == 503:
+                error_type = 'service_unavailable'
+            elif response.status_code in (500, 502, 504):
+                error_type = 'server_error'
+
+            return {
+                'success': False,
+                'error': error_message,
+                'error_type': error_type,
+                'status_code': response.status_code
+            }
+
+    async def _call_qwen_free(self, system_prompt: str, user_prompt: str,
+                              temperature: float, max_tokens: int,
+                              disable_thinking: bool = False) -> Dict:
+        """Вызов FreeQwenApi (https://github.com/.../FreeQwenApi).
+
+        Бесплатный прокси к веб-чату chat.qwen.ai (Alibaba Qwen).
+        OpenAI-совместимый /chat/completions с Bearer-аутентификацией
+        (api_key фиктивный — реальная auth идёт через сохранённую
+        сессию Qwen Chat внутри FreeQwenApi).
+
+        Особенности:
+        - таймаут 10 минут (Qwen Chat без thinking, ответ за 30-120с);
+        - api_key опционален: если пусто — слать 'dummy-key' (FreeQwenApi
+          не проверяет ключ, но многие OpenAI-клиенты падают без header);
+        - thinking-параметры НЕ слать (qwen3-max не использует reasoning);
+        - reasoning_content (если придёт) отбрасываем;
+        - при пустом content от прокси (mute / лимит Qwen Chat аккаунта)
+          возвращаем error_type='upstream_mute' для ретрая через
+          UniversalLLMTranslator.
+        """
+        api_key = self.model.api_key or 'dummy-key'
+
+        actual_max_tokens = min(max_tokens, self.model.max_output_tokens)
+
+        LogService.log_info(
+            f"Qwen-Free запрос: {self.model.model_id} | Temperature: {temperature} | "
+            f"Max tokens: {actual_max_tokens:,} / {self.model.max_output_tokens:,}"
+        )
+
+        payload = {
+            'model': self.model.model_id,
+            'messages': [
+                {'role': 'system', 'content': system_prompt},
+                {'role': 'user', 'content': user_prompt}
+            ],
+            'temperature': temperature,
+            'max_tokens': actual_max_tokens
+        }
+
+        async with httpx.AsyncClient(timeout=600.0) as client:
+            response = await client.post(
+                f"{self.model.api_endpoint.rstrip('/')}/chat/completions",
+                headers={
+                    'Authorization': f'Bearer {api_key}',
+                    'Content-Type': 'application/json'
+                },
+                json=payload
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                choices = data.get('choices', [])
+                if not choices:
+                    return {'success': False, 'error': 'Нет вариантов в ответе'}
+
+                message = choices[0].get('message', {}) or {}
+                content = message.get('content', '') or ''
+                reasoning_content = message.get('reasoning_content') or ''
+                if reasoning_content:
+                    logger.debug(
+                        f"Qwen-Free reasoning_content: {len(reasoning_content):,} символов (отброшено)"
+                    )
+
+                finish_reason = choices[0].get('finish_reason', 'unknown')
+
+                if finish_reason == 'length':
+                    return {
+                        'success': False,
+                        'error': (
+                            f'Qwen-Free: ответ обрезан по лимиту max_tokens={actual_max_tokens} '
+                            f'(content_len={len(content)}, finish_reason=length).'
+                        ),
+                        'error_type': 'length',
+                        'truncated_content': content,
+                        'finish_reason': 'length'
+                    }
+
+                if not content.strip():
+                    return {
+                        'success': False,
+                        'error': 'Qwen-Free вернул пустой content (вероятно лимит Qwen Chat аккаунта или mute)',
                         'error_type': 'upstream_mute',
                         'finish_reason': finish_reason
                     }
