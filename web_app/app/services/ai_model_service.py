@@ -273,6 +273,9 @@ class AIModelService:
             elif model.provider == 'qwen_free':
                 # Тест FreeQwenApi (бесплатный прокси к chat.qwen.ai)
                 result = await AIModelService._test_qwen_free(model, test_prompt)
+            elif model.provider == 'qwen2api':
+                # Тест Qwen2API (локальный прокси с дашбордом)
+                result = await AIModelService._test_qwen2api(model, test_prompt)
             else:
                 result = {'success': False, 'error': f'Неподдерживаемый провайдер: {model.provider}'}
 
@@ -602,6 +605,50 @@ class AIModelService:
         try:
             api_key = model.api_key or 'dummy-key'
             endpoint = (model.api_endpoint or 'http://127.0.0.1:3264/api').rstrip('/')
+
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                response = await client.post(
+                    f"{endpoint}/chat/completions",
+                    headers={
+                        'Authorization': f'Bearer {api_key}',
+                        'Content-Type': 'application/json'
+                    },
+                    json={
+                        'model': model.model_id,
+                        'messages': [{'role': 'user', 'content': prompt}],
+                        'temperature': model.default_temperature,
+                        'max_tokens': 100
+                    }
+                )
+
+                if response.status_code == 200:
+                    result = response.json()
+                    text = result.get('choices', [{}])[0].get('message', {}).get('content', '')
+                    return {
+                        'success': True,
+                        'response': text[:100],
+                        'model_info': {'model': model.model_id}
+                    }
+                else:
+                    try:
+                        error_data = response.json()
+                        return {'success': False, 'error': error_data.get('error', {}).get('message', f'HTTP {response.status_code}')}
+                    except Exception:
+                        return {'success': False, 'error': f'HTTP {response.status_code}'}
+
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    @staticmethod
+    async def _test_qwen2api(model: AIModel, prompt: str) -> Dict:
+        """Тестировать Qwen2API (OpenAI-совместимый прокси с веб-дашбордом).
+
+        api_key обязателен (default 'sk-123456' в пресете). Endpoint
+        по умолчанию http://192.168.0.58:3001/v1. Таймаут 120с.
+        """
+        try:
+            api_key = model.api_key or 'sk-123456'
+            endpoint = (model.api_endpoint or 'http://192.168.0.58:3001/v1').rstrip('/')
 
             async with httpx.AsyncClient(timeout=120.0) as client:
                 response = await client.post(
