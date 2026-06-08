@@ -353,5 +353,25 @@ DEFAULT_MODELS = [
         'request_delay': 10.0,
         'recommended_for': ['draft', 'bulk_translation', 'experimental'],
         'provider_config': {'api_version': 'v1', 'temporary_chat': True}
+    },
+    {
+        'name': 'Qwen3.7-Max Thinking (Qwen2API)',
+        'model_id': 'qwen3.7-max-thinking',
+        'provider': 'qwen2api',
+        'api_type': 'openai-compatible',
+        'description': 'Локальный прокси Qwen2API к chat.qwen.ai/portal.qwen.ai. '
+                       'Thinking-режим через суффикс -thinking в имени модели. '
+                       'Hard-cap ~19-20K выходных токенов. Веб-дашборд: http://192.168.0.58:3001.',
+        'api_endpoint': 'http://192.168.0.58:3001/v1',
+        'api_key': 'sk-123456',
+        'max_input_tokens': 128000,
+        'max_output_tokens': 16384,
+        'speed_rating': 3,
+        'quality_rating': 4,
+        'cost_rating': 5,
+        'default_temperature': 0.3,
+        'request_delay': 10.0,
+        'recommended_for': ['draft', 'bulk_translation', 'experimental'],
+        'provider_config': {'api_version': 'v1'}
     }
 ]
