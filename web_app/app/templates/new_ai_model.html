@@ -26,6 +26,7 @@
                             <option value="deepseek">DeepSeek (Official API)</option>
                             <option value="deepseek_free">DeepSeek Free (ds-free-api proxy)</option>
                             <option value="qwen_free">Qwen Free (FreeQwenApi proxy)</option>
+                            <option value="qwen2api">Qwen2API (Local proxy с дашбордом)</option>
                             <option value="ollama">Ollama (Локальные модели)</option>
                             <option value="ollama_turbo">Ollama Turbo (Облачный API)</option>
                             <option value="nvidia">NVIDIA NIM (DeepSeek V4 Pro)</option>
@@ -332,6 +333,19 @@ function updateProviderFields() {
             document.getElementById('description').value = 'Бесплатный прокси к chat.qwen.ai (FreeQwenApi). Без thinking. Возможны лимиты Qwen Chat аккаунтов.';
             document.getElementById('max_input_tokens').value = '128000';
             document.getElementById('max_output_tokens').value = '8192';
+            document.getElementById('default_temperature').value = '0.3';
+            document.getElementById('cost_rating').value = '5';
+            document.getElementById('request_delay').value = '10';
+            break;
+
+        case 'qwen2api':
+            apiEndpoint.value = 'http://192.168.0.58:3001/v1';
+            apiKeySection.style.display = 'block';
+            setModelPreset('qwen3.7-max-thinking', 'Qwen3.7-Max Thinking (Qwen2API)');
+            document.getElementById('api_key').value = 'sk-123456';
+            document.getElementById('description').value = 'Локальный прокси Qwen2API. Thinking через суффикс -thinking в имени модели. Hard-cap ~19-20K токенов.';
+            document.getElementById('max_input_tokens').value = '128000';
+            document.getElementById('max_output_tokens').value = '16384';
             document.getElementById('default_temperature').value = '0.3';
             document.getElementById('cost_rating').value = '5';
             document.getElementById('request_delay').value = '10';

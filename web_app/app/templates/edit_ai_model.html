@@ -143,7 +143,7 @@
                             </label>
                         </div>
 
-                        {% if model.provider != 'qwen_free' %}
+                        {% if model.provider != 'qwen_free' and model.provider != 'qwen2api' %}
                         <div id="thinkingModeWrapper" class="ms-4 mb-3" style="display: none;">
                             <label class="form-label"><strong>Уровень thinking</strong></label>
                             <div class="form-check">
@@ -166,6 +166,13 @@
                             </div>
                             <input type="hidden" name="thinking_mode" id="thinkingModeHidden"
                                    value="{{ model.thinking_mode or '' }}">
+                        </div>
+                        {% elif model.provider == 'qwen2api' %}
+                        <div class="ms-4 mb-3 text-muted small">
+                            <i class="bi bi-info-circle"></i>
+                            У Qwen2API thinking управляется ИМЕНЕМ модели: выберите
+                            <code>qwen3.7-max-thinking</code> для reasoning или <code>qwen3.7-max</code> без него.
+                            Чекбокс enable_thinking не влияет на запрос.
                         </div>
                         {% else %}
                         <div class="ms-4 mb-3 text-muted small">
