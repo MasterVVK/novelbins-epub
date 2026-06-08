@@ -136,6 +136,9 @@ class AIAdapterService:
             elif self.model.provider == 'qwen_free':
                 return await self._call_qwen_free(system_prompt, user_prompt, temperature, max_tokens,
                                                   disable_thinking=disable_thinking)
+            elif self.model.provider == 'qwen2api':
+                return await self._call_qwen2api(system_prompt, user_prompt, temperature, max_tokens,
+                                                 disable_thinking=disable_thinking)
             else:
                 return {'success': False, 'error': f'Неподдерживаемый провайдер: {self.model.provider}'}
 
@@ -740,6 +743,149 @@ class AIAdapterService:
                     return {
                         'success': False,
                         'error': 'Qwen-Free вернул пустой content (вероятно лимит Qwen Chat аккаунта или mute)',
+                        'error_type': 'upstream_mute',
+                        'finish_reason': finish_reason
+                    }
+
+                return {
+                    'success': True,
+                    'content': content,
+                    'usage': data.get('usage', {}),
+                    'finish_reason': finish_reason
+                }
+
+            try:
+                error_data = response.json()
+                error_message = error_data.get('error', {}).get('message', f'HTTP {response.status_code}')
+            except Exception:
+                error_message = f'HTTP {response.status_code}'
+
+            error_type = 'general'
+            if response.status_code == 429:
+                error_type = 'rate_limit'
+            elif response.status_code in (401, 403):
+                error_type = 'invalid_api_key'
+            elif response.status_code == 503:
+                error_type = 'service_unavailable'
+            elif response.status_code in (500, 502, 504):
+                error_type = 'server_error'
+
+            return {
+                'success': False,
+                'error': error_message,
+                'error_type': error_type,
+                'status_code': response.status_code
+            }
+
+    async def _call_qwen2api(self, system_prompt: str, user_prompt: str,
+                             temperature: float, max_tokens: int,
+                             disable_thinking: bool = False) -> Dict:
+        """Вызов Qwen2API (https://github.com/Rfym21/Qwen2API).
+
+        Локальный OpenAI-совместимый прокси к chat.qwen.ai / portal.qwen.ai
+        с веб-дашбордом и реальным API-ключом (default 'sk-123456').
+
+        Принципиальные отличия от _call_qwen_free:
+        - URL `/v1/chat/completions` (не `/api/...`);
+        - api_key реальный (обязателен);
+        - thinking-режим управляется ИМЕНЕМ модели (суффикс '-thinking'),
+          а НЕ payload-флагом thinking — НЕ слать поле 'thinking';
+        - НЕТ опции 'temporary' — не слать;
+        - hard-cap upstream ~19-20K выходных токенов (документировано в NOTES.md
+          проекта Qwen2API).
+
+        Особенности обработки:
+        - таймаут 30 минут (на случай долгих thinking-ответов);
+        - reasoning_content (если придёт) отбрасываем;
+        - при пустом content → error_type='upstream_mute' для ретрая;
+        - ReadTimeout → error_type='upstream_timeout'.
+        """
+        if not self.model.api_key:
+            return {'success': False, 'error': 'API ключ не указан', 'error_type': 'invalid_api_key'}
+
+        actual_max_tokens = min(max_tokens, self.model.max_output_tokens)
+
+        # thinking-режим определяется суффиксом в model_id ('-thinking')
+        is_thinking_model = '-thinking' in (self.model.model_id or '')
+        thinking_marker = 'via_model_id' if is_thinking_model else 'off'
+        if disable_thinking and is_thinking_model:
+            logger.warning(
+                f"Qwen2API: disable_thinking=True, но model_id={self.model.model_id} "
+                f"содержит '-thinking'. Чтобы реально отключить — поменяйте модель."
+            )
+
+        LogService.log_info(
+            f"Qwen2API запрос: {self.model.model_id} | Temperature: {temperature} | "
+            f"Max tokens: {actual_max_tokens:,} / {self.model.max_output_tokens:,} | "
+            f"thinking={thinking_marker}"
+        )
+
+        payload = {
+            'model': self.model.model_id,
+            'messages': [
+                {'role': 'system', 'content': system_prompt},
+                {'role': 'user', 'content': user_prompt}
+            ],
+            'temperature': temperature,
+            'max_tokens': actual_max_tokens
+        }
+
+        async with httpx.AsyncClient(timeout=1800.0) as client:
+            try:
+                response = await client.post(
+                    f"{self.model.api_endpoint.rstrip('/')}/chat/completions",
+                    headers={
+                        'Authorization': f'Bearer {self.model.api_key}',
+                        'Content-Type': 'application/json'
+                    },
+                    json=payload
+                )
+            except (httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout):
+                return {
+                    'success': False,
+                    'error': 'Qwen2API: ReadTimeout (>30 мин без ответа)',
+                    'error_type': 'upstream_timeout',
+                }
+            except httpx.ConnectTimeout:
+                return {
+                    'success': False,
+                    'error': 'Qwen2API: ConnectTimeout (сервис не доступен)',
+                    'error_type': 'service_unavailable',
+                }
+
+            if response.status_code == 200:
+                data = response.json()
+                choices = data.get('choices', [])
+                if not choices:
+                    return {'success': False, 'error': 'Нет вариантов в ответе'}
+
+                message = choices[0].get('message', {}) or {}
+                content = message.get('content', '') or ''
+                reasoning_content = message.get('reasoning_content') or ''
+                if reasoning_content:
+                    logger.debug(
+                        f"Qwen2API reasoning_content: {len(reasoning_content):,} символов (отброшено)"
+                    )
+
+                finish_reason = choices[0].get('finish_reason', 'unknown')
+
+                if finish_reason == 'length':
+                    return {
+                        'success': False,
+                        'error': (
+                            f'Qwen2API: ответ обрезан по лимиту max_tokens={actual_max_tokens} '
+                            f'(content_len={len(content)}, finish_reason=length). '
+                            f'Учтите hard-cap upstream ~19-20K.'
+                        ),
+                        'error_type': 'length',
+                        'truncated_content': content,
+                        'finish_reason': 'length'
+                    }
+
+                if not content.strip():
+                    return {
+                        'success': False,
+                        'error': 'Qwen2API вернул пустой content (вероятно лимит аккаунта или mute)',
                         'error_type': 'upstream_mute',
                         'finish_reason': finish_reason
                     }
