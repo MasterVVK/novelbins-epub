@@ -867,6 +867,18 @@ class AIAdapterService:
                         f"Qwen2API reasoning_content: {len(reasoning_content):,} символов (отброшено)"
                     )
 
+                # Qwen2API thinking-модели возвращают reasoning ВНУТРИ content
+                # как блок <think>...</think>\nфинальный_ответ. Нужно вырезать.
+                if '<think>' in content:
+                    import re
+                    raw_len = len(content)
+                    content = re.sub(r'<think>.*?</think>\s*', '', content, flags=re.DOTALL)
+                    content = content.lstrip()
+                    logger.debug(
+                        f"Qwen2API вырезан <think>...</think> блок: "
+                        f"{raw_len:,} → {len(content):,} символов"
+                    )
+
                 finish_reason = choices[0].get('finish_reason', 'unknown')
 
                 if finish_reason == 'length':
