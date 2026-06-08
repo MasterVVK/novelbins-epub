@@ -420,13 +420,19 @@ class UniversalLLMTranslator:
                         self.model.provider == 'qwen_free'
                         and error_type in ('rate_limit', 'server_error', 'service_unavailable', 'upstream_mute', 'upstream_timeout')
                     )
-                    if nvidia_server_busy or ollama_concurrent or deepseek_free_busy or qwen_free_busy:
+                    qwen2api_busy = (
+                        self.model.provider == 'qwen2api'
+                        and error_type in ('rate_limit', 'server_error', 'service_unavailable', 'upstream_mute', 'upstream_timeout')
+                    )
+                    if nvidia_server_busy or ollama_concurrent or deepseek_free_busy or qwen_free_busy or qwen2api_busy:
                         if self.model.provider == 'nvidia':
                             provider_label = 'NVIDIA NIM'
                         elif self.model.provider == 'deepseek_free':
                             provider_label = 'DeepSeek-Free'
                         elif self.model.provider == 'qwen_free':
                             provider_label = 'Qwen-Free'
+                        elif self.model.provider == 'qwen2api':
+                            provider_label = 'Qwen2API'
                         else:
                             provider_label = 'Ollama'
                         if error_type == 'concurrent_slot':
@@ -457,13 +463,16 @@ class UniversalLLMTranslator:
                         # - deepseek_free: 10 (~8-10 мин); если ds-free-api не оживает
                         #   за это время — останавливаем задачу (как NVIDIA).
                         # - qwen_free: 10 (~8-10 мин); та же логика что у deepseek_free.
+                        # - qwen2api: 10 (~8-10 мин); та же логика — Qwen2API проксирует
+                        #   Qwen Chat, риски схожие.
                         # - ollama: 15 (~2-3 мин); concurrent_slot долго не висит.
                         is_nvidia = self.model.provider == 'nvidia'
                         is_deepseek_free = self.model.provider == 'deepseek_free'
                         is_qwen_free = self.model.provider == 'qwen_free'
+                        is_qwen2api = self.model.provider == 'qwen2api'
                         if is_nvidia:
                             max_retries_429 = 63
-                        elif is_deepseek_free or is_qwen_free:
+                        elif is_deepseek_free or is_qwen_free or is_qwen2api:
                             max_retries_429 = 10
                         else:
                             max_retries_429 = 15
@@ -471,8 +480,8 @@ class UniversalLLMTranslator:
                             if server_retry_after:
                                 # Сервер сам сказал сколько ждать — слушаем его всегда
                                 delay = float(server_retry_after) + random.uniform(0, 2)
-                            elif is_nvidia or is_deepseek_free or is_qwen_free:
-                                # NVIDIA / ds-free-api / FreeQwenApi: агрессивный backoff (5,10,20,40,60,60...) + jitter
+                            elif is_nvidia or is_deepseek_free or is_qwen_free or is_qwen2api:
+                                # NVIDIA / ds-free-api / FreeQwenApi / Qwen2API: агрессивный backoff (5,10,20,40,60,60...) + jitter
                                 base = min(5 * (2 ** (attempt_429 - 1)), 60)
                                 delay = base + random.uniform(0, 3)
                             else:
@@ -503,7 +512,7 @@ class UniversalLLMTranslator:
                                 retry_busy_types = ('concurrent_slot', 'server_error', 'service_unavailable', 'upstream_error', 'upstream_timeout')
                             elif is_deepseek_free:
                                 retry_busy_types = ('rate_limit', 'server_error', 'service_unavailable', 'upstream_mute')
-                            elif is_qwen_free:
+                            elif is_qwen_free or is_qwen2api:
                                 retry_busy_types = ('rate_limit', 'server_error', 'service_unavailable', 'upstream_mute', 'upstream_timeout')
                             else:
                                 retry_busy_types = ('concurrent_slot',)
@@ -559,6 +568,19 @@ class UniversalLLMTranslator:
                             )
                             raise RateLimitError(
                                 f"Qwen-Free server-busy ({error_type}) не сбросился после {max_retries_429} retry"
+                            )
+                        # Для qwen2api: Qwen2API проксирует Qwen Chat, при перегрузе
+                        # аккаунтов в дашборде последующие главы тоже не пройдут.
+                        if is_qwen2api:
+                            LogService.log_error(
+                                f"🛑 Qwen2API не отвечает за {max_retries_429} попыток (~8-10 мин). "
+                                f"Последняя ошибка: {error_type}. "
+                                f"Останавливаем редактуру — Qwen Chat аккаунт перегружен или mute. "
+                                f"Проверьте дашборд http://192.168.0.58:3001 (статус аккаунтов), "
+                                f"подождите 30-60 минут или используйте резервную модель."
+                            )
+                            raise RateLimitError(
+                                f"Qwen2API server-busy ({error_type}) не сбросился после {max_retries_429} retry"
                             )
                         return None
 
