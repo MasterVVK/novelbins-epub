@@ -879,6 +879,36 @@ class AIAdapterService:
                         f"{raw_len:,} → {len(content):,} символов"
                     )
 
+                # Защита от битого ответа после WAF/timeout (баг главы 1294 от 10.06):
+                # 1. Незакрытый <think> блок (закрывающего </think> нет) — re.sub не вырезал,
+                #    тег остался в content.
+                # 2. Модель «сошла с ума» и выдала пары Original NN: / Translation NN:
+                #    вместо плавного русского текста (типично при прерывании thinking).
+                # В обоих случаях возвращаем error_type='upstream_truncated', чтобы
+                # UniversalLLMTranslator сделал retry и не сохранил битый текст.
+                import re as _re
+                suspicious_markers = []
+                if '<think>' in content or '</think>' in content:
+                    suspicious_markers.append('незакрытый <think>')
+                pair_matches = _re.findall(r'(?:^|\n)\s*Original\s+\d+\s*:', content)
+                if len(pair_matches) >= 3:
+                    suspicious_markers.append(f'парные Original/Translation ×{len(pair_matches)}')
+                if suspicious_markers:
+                    logger.warning(
+                        f"Qwen2API битый ответ: {', '.join(suspicious_markers)}. "
+                        f"Content len={len(content):,}. Возвращаем upstream_truncated для retry."
+                    )
+                    return {
+                        'success': False,
+                        'error': (
+                            f'Qwen2API: битый ответ ({", ".join(suspicious_markers)}). '
+                            f'Вероятно WAF/timeout прервал thinking-режим. '
+                            f'Content len={len(content)}.'
+                        ),
+                        'error_type': 'upstream_truncated',
+                        'truncated_content': content[:500],
+                    }
+
                 finish_reason = choices[0].get('finish_reason', 'unknown')
 
                 if finish_reason == 'length':

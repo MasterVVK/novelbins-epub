@@ -422,7 +422,7 @@ class UniversalLLMTranslator:
                     )
                     qwen2api_busy = (
                         self.model.provider == 'qwen2api'
-                        and error_type in ('rate_limit', 'server_error', 'service_unavailable', 'upstream_mute', 'upstream_timeout')
+                        and error_type in ('rate_limit', 'server_error', 'service_unavailable', 'upstream_mute', 'upstream_timeout', 'upstream_truncated')
                     )
                     if nvidia_server_busy or ollama_concurrent or deepseek_free_busy or qwen_free_busy or qwen2api_busy:
                         if self.model.provider == 'nvidia':
@@ -512,8 +512,10 @@ class UniversalLLMTranslator:
                                 retry_busy_types = ('concurrent_slot', 'server_error', 'service_unavailable', 'upstream_error', 'upstream_timeout')
                             elif is_deepseek_free:
                                 retry_busy_types = ('rate_limit', 'server_error', 'service_unavailable', 'upstream_mute')
-                            elif is_qwen_free or is_qwen2api:
+                            elif is_qwen_free:
                                 retry_busy_types = ('rate_limit', 'server_error', 'service_unavailable', 'upstream_mute', 'upstream_timeout')
+                            elif is_qwen2api:
+                                retry_busy_types = ('rate_limit', 'server_error', 'service_unavailable', 'upstream_mute', 'upstream_timeout', 'upstream_truncated')
                             else:
                                 retry_busy_types = ('concurrent_slot',)
                             if retry_error_type in retry_busy_types:
