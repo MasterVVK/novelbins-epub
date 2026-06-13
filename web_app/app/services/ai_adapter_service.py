@@ -827,19 +827,101 @@ class AIAdapterService:
                 {'role': 'user', 'content': user_prompt}
             ],
             'temperature': temperature,
-            'max_tokens': actual_max_tokens
+            'max_tokens': actual_max_tokens,
+            # Streaming: держит соединение «живым» (токены текут непрерывно), что
+            # резко снижает обрывы (ECONNRESET / client read-timeout) на длинных
+            # thinking-ответах, где non-stream молчал бы минутами до единого JSON.
+            # Пост-обработка (<think>-вырезка, детект битого ответа, finish_reason)
+            # идентична — просто контент собирается из SSE-чанков.
+            'stream': True
         }
 
         async with httpx.AsyncClient(timeout=1800.0) as client:
             try:
-                response = await client.post(
+                async with client.stream(
+                    'POST',
                     f"{self.model.api_endpoint.rstrip('/')}/chat/completions",
                     headers={
                         'Authorization': f'Bearer {self.model.api_key}',
-                        'Content-Type': 'application/json'
+                        'Content-Type': 'application/json',
+                        'Accept': 'text/event-stream'
                     },
                     json=payload
-                )
+                ) as response:
+                    if response.status_code != 200:
+                        body = (await response.aread()).decode('utf-8', errors='replace')
+                        try:
+                            error_data = json.loads(body)
+                            error_message = error_data.get('error', {}).get('message', f'HTTP {response.status_code}')
+                        except Exception:
+                            error_message = body[:500] or f'HTTP {response.status_code}'
+
+                        error_type = 'general'
+                        if response.status_code == 429:
+                            error_type = 'rate_limit'
+                        elif response.status_code in (401, 403):
+                            error_type = 'invalid_api_key'
+                        elif response.status_code == 503:
+                            error_type = 'service_unavailable'
+                        elif response.status_code in (500, 502, 504):
+                            error_type = 'server_error'
+
+                        return {
+                            'success': False,
+                            'error': error_message,
+                            'error_type': error_type,
+                            'status_code': response.status_code
+                        }
+
+                    # 200 OK — собираем SSE-поток. Qwen2API (OUTPUT_THINK) кладёт
+                    # <think>…</think> ПРЯМО в delta.content, поэтому достаточно
+                    # склеить delta.content; reasoning_content (если придёт отдельно)
+                    # отбрасываем — как и в прежней non-stream версии.
+                    content_parts = []
+                    finish_reason = 'unknown'
+                    usage = {}
+                    incomplete_details = None
+                    done = False
+                    async for line in response.aiter_lines():
+                        if done:
+                            continue  # досасываем остаток stream без обработки
+                        if not line or not line.startswith('data:'):
+                            continue
+                        chunk_payload = line[5:].strip()
+                        if chunk_payload == '[DONE]':
+                            done = True
+                            continue
+                        try:
+                            chunk = json.loads(chunk_payload)
+                        except json.JSONDecodeError:
+                            continue
+                        # Qwen2API (browser-channel) surfaces upstream errors as an SSE
+                        # `{"error": {...}}` event (no delta.content). Without this we'd collect
+                        # empty content and misclassify it as upstream_mute → 10 pointless retries.
+                        # Content moderation → content_filter/PROHIBITED_CONTENT: return it so the
+                        # caller raises ProhibitedContentError and SKIPS the chapter immediately.
+                        chunk_error = chunk.get('error')
+                        if chunk_error:
+                            emsg = chunk_error.get('message', '') if isinstance(chunk_error, dict) else str(chunk_error)
+                            etype = chunk_error.get('type', '') if isinstance(chunk_error, dict) else ''
+                            if 'PROHIBITED_CONTENT' in emsg or etype == 'content_filter':
+                                return {'success': False, 'error': f'PROHIBITED_CONTENT: {emsg}', 'error_type': 'prohibited_content'}
+                            return {'success': False, 'error': emsg or f'Qwen2API stream error ({etype})', 'error_type': etype or 'server_error'}
+                        choices = chunk.get('choices') or []
+                        if choices:
+                            delta = choices[0].get('delta') or {}
+                            piece = delta.get('content')
+                            if piece:
+                                content_parts.append(piece)
+                            fr = choices[0].get('finish_reason')
+                            if fr:
+                                finish_reason = fr
+                            # Qwen2API-расширение: incomplete_details при усечении thinking
+                            if choices[0].get('incomplete_details'):
+                                incomplete_details = choices[0]['incomplete_details']
+                        chunk_usage = chunk.get('usage')
+                        if chunk_usage:
+                            usage = chunk_usage
             except (httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout):
                 return {
                     'success': False,
@@ -852,114 +934,104 @@ class AIAdapterService:
                     'error': 'Qwen2API: ConnectTimeout (сервис не доступен)',
                     'error_type': 'service_unavailable',
                 }
-
-            if response.status_code == 200:
-                data = response.json()
-                choices = data.get('choices', [])
-                if not choices:
-                    return {'success': False, 'error': 'Нет вариантов в ответе'}
-
-                message = choices[0].get('message', {}) or {}
-                content = message.get('content', '') or ''
-                reasoning_content = message.get('reasoning_content') or ''
-                if reasoning_content:
-                    logger.debug(
-                        f"Qwen2API reasoning_content: {len(reasoning_content):,} символов (отброшено)"
-                    )
-
-                # Qwen2API thinking-модели возвращают reasoning ВНУТРИ content
-                # как блок <think>...</think>\nфинальный_ответ. Нужно вырезать.
-                if '<think>' in content:
-                    import re
-                    raw_len = len(content)
-                    content = re.sub(r'<think>.*?</think>\s*', '', content, flags=re.DOTALL)
-                    content = content.lstrip()
-                    logger.debug(
-                        f"Qwen2API вырезан <think>...</think> блок: "
-                        f"{raw_len:,} → {len(content):,} символов"
-                    )
-
-                # Защита от битого ответа после WAF/timeout (баг главы 1294 от 10.06):
-                # 1. Незакрытый <think> блок (закрывающего </think> нет) — re.sub не вырезал,
-                #    тег остался в content.
-                # 2. Модель «сошла с ума» и выдала пары Original NN: / Translation NN:
-                #    вместо плавного русского текста (типично при прерывании thinking).
-                # В обоих случаях возвращаем error_type='upstream_truncated', чтобы
-                # UniversalLLMTranslator сделал retry и не сохранил битый текст.
-                import re as _re
-                suspicious_markers = []
-                if '<think>' in content or '</think>' in content:
-                    suspicious_markers.append('незакрытый <think>')
-                pair_matches = _re.findall(r'(?:^|\n)\s*Original\s+\d+\s*:', content)
-                if len(pair_matches) >= 3:
-                    suspicious_markers.append(f'парные Original/Translation ×{len(pair_matches)}')
-                if suspicious_markers:
-                    logger.warning(
-                        f"Qwen2API битый ответ: {', '.join(suspicious_markers)}. "
-                        f"Content len={len(content):,}. Возвращаем upstream_truncated для retry."
-                    )
-                    return {
-                        'success': False,
-                        'error': (
-                            f'Qwen2API: битый ответ ({", ".join(suspicious_markers)}). '
-                            f'Вероятно WAF/timeout прервал thinking-режим. '
-                            f'Content len={len(content)}.'
-                        ),
-                        'error_type': 'upstream_truncated',
-                        'truncated_content': content[:500],
-                    }
-
-                finish_reason = choices[0].get('finish_reason', 'unknown')
-
-                if finish_reason == 'length':
-                    return {
-                        'success': False,
-                        'error': (
-                            f'Qwen2API: ответ обрезан по лимиту max_tokens={actual_max_tokens} '
-                            f'(content_len={len(content)}, finish_reason=length). '
-                            f'Учтите hard-cap upstream ~19-20K.'
-                        ),
-                        'error_type': 'length',
-                        'truncated_content': content,
-                        'finish_reason': 'length'
-                    }
-
-                if not content.strip():
-                    return {
-                        'success': False,
-                        'error': 'Qwen2API вернул пустой content (вероятно лимит аккаунта или mute)',
-                        'error_type': 'upstream_mute',
-                        'finish_reason': finish_reason
-                    }
-
+            except httpx.RemoteProtocolError as e:
                 return {
-                    'success': True,
-                    'content': content,
-                    'usage': data.get('usage', {}),
+                    'success': False,
+                    'error': f'Qwen2API: stream прерван (RemoteProtocolError: {e})',
+                    'error_type': 'server_error',
+                }
+
+            content = ''.join(content_parts)
+
+            # Qwen2API thinking-модели возвращают reasoning ВНУТРИ content
+            # как блок <think>...</think>\nфинальный_ответ. Нужно вырезать.
+            if '<think>' in content:
+                import re
+                raw_len = len(content)
+                content = re.sub(r'<think>.*?</think>\s*', '', content, flags=re.DOTALL)
+                content = content.lstrip()
+                logger.debug(
+                    f"Qwen2API вырезан <think>...</think> блок: "
+                    f"{raw_len:,} → {len(content):,} символов"
+                )
+
+            # Защита от битого ответа после WAF/timeout (баг главы 1294 от 10.06):
+            # 1. Незакрытый <think> блок (закрывающего </think> нет) — re.sub не вырезал,
+            #    тег остался в content.
+            # 2. Модель «сошла с ума» и выдала пары Original NN: / Translation NN:
+            #    вместо плавного русского текста (типично при прерывании thinking).
+            import re as _re
+            has_unclosed_think = ('<think>' in content or '</think>' in content)
+            pair_matches = _re.findall(r'(?:^|\n)\s*Original\s+\d+\s*:', content)
+            has_pairs = len(pair_matches) >= 3
+
+            if has_unclosed_think:
+                # Незакрытый <think> = thinking-режим не дошёл до ответа (упёрся в потолок
+                # апстрима / оборвался). На веб-канале chat.qwen.ai thinking_budget НЕ
+                # соблюдается, ретраи той же thinking-модели бесполезны (зацикливание).
+                # Поэтому возвращаем error_type='length' → UniversalLLMTranslator кинет
+                # LengthLimitError → OriginalAwareEditorService переключится на резервную
+                # НЕ-thinking модель (fallback_editing_model), которая не спиралит в <think>.
+                logger.warning(
+                    f"Qwen2API: thinking оборван (незакрытый <think>), content_len={len(content):,}. "
+                    f"Возвращаем length → переключение на резервную не-thinking модель."
+                )
+                return {
+                    'success': False,
+                    'error': (
+                        f'Qwen2API: thinking-режим оборван (незакрытый <think>, '
+                        f'content_len={len(content)}). Нужна резервная не-thinking модель.'
+                    ),
+                    'error_type': 'length',
+                    'truncated_content': content[:500],
+                    'finish_reason': 'length',
+                }
+
+            if has_pairs:
+                logger.warning(
+                    f"Qwen2API битый ответ: парные Original/Translation ×{len(pair_matches)}. "
+                    f"Content len={len(content):,}. Возвращаем upstream_truncated для retry."
+                )
+                return {
+                    'success': False,
+                    'error': (
+                        f'Qwen2API: битый ответ (парные Original/Translation ×{len(pair_matches)}). '
+                        f'Вероятно WAF/timeout прервал thinking-режим. Content len={len(content)}.'
+                    ),
+                    'error_type': 'upstream_truncated',
+                    'truncated_content': content[:500],
+                }
+
+            # finish_reason=length (вкл. наш truncation-сигнал incomplete_details)
+            if finish_reason == 'length':
+                detail = ''
+                if incomplete_details:
+                    detail = f", incomplete_details={incomplete_details}"
+                return {
+                    'success': False,
+                    'error': (
+                        f'Qwen2API: ответ обрезан по лимиту max_tokens={actual_max_tokens} '
+                        f'(content_len={len(content)}, finish_reason=length{detail}). '
+                        f'Учтите hard-cap upstream ~19-20K.'
+                    ),
+                    'error_type': 'length',
+                    'truncated_content': content,
+                    'finish_reason': 'length'
+                }
+
+            if not content.strip():
+                return {
+                    'success': False,
+                    'error': 'Qwen2API вернул пустой content (вероятно лимит аккаунта или mute)',
+                    'error_type': 'upstream_mute',
                     'finish_reason': finish_reason
                 }
 
-            try:
-                error_data = response.json()
-                error_message = error_data.get('error', {}).get('message', f'HTTP {response.status_code}')
-            except Exception:
-                error_message = f'HTTP {response.status_code}'
-
-            error_type = 'general'
-            if response.status_code == 429:
-                error_type = 'rate_limit'
-            elif response.status_code in (401, 403):
-                error_type = 'invalid_api_key'
-            elif response.status_code == 503:
-                error_type = 'service_unavailable'
-            elif response.status_code in (500, 502, 504):
-                error_type = 'server_error'
-
             return {
-                'success': False,
-                'error': error_message,
-                'error_type': error_type,
-                'status_code': response.status_code
+                'success': True,
+                'content': content,
+                'usage': usage,
+                'finish_reason': finish_reason
             }
 
     def _resolve_nvidia_reasoning_effort(self, disable_thinking: bool = False) -> str:
