@@ -31,6 +31,20 @@ def signal_handler(signum, frame):
     raise Terminated("Task cancelled by user")
 
 
+def _safe_rollback():
+    """Откатывает «битую» сессию SQLAlchemy перед обращением к БД.
+
+    При обрыве соединения с PostgreSQL (например, "SSL connection has been
+    closed unexpectedly") транзакция помечается невалидной, и любой запрос
+    через db.session падает с PendingRollbackError, пока не вызван rollback().
+    Вызывать первой строкой в except/finally до Novel.query.get / commit.
+    """
+    try:
+        db.session.rollback()
+    except Exception:
+        pass
+
+
 class CallbackTask(Task):
     """Базовая задача с поддержкой callback и отмены"""
 
@@ -43,6 +57,7 @@ class CallbackTask(Task):
         """Обработка ошибки — очистка task_id и статуса"""
         app = create_app()
         with app.app_context():
+            _safe_rollback()  # на случай битой сессии после обрыва соединения
             novel_id = args[0] if args else kwargs.get('novel_id')
             if novel_id:
                 novel = Novel.query.get(novel_id)
@@ -487,6 +502,7 @@ def parse_novel_chapters_task(self, novel_id, start_chapter=None, max_chapters=N
 
     except Terminated:
         # Отмена через сигнал
+        _safe_rollback()
         if 'parser' in locals():
             parser.close()
         novel = Novel.query.get(novel_id)
@@ -505,6 +521,7 @@ def parse_novel_chapters_task(self, novel_id, start_chapter=None, max_chapters=N
         }
 
     except SoftTimeLimitExceeded:
+        _safe_rollback()
         if 'parser' in locals():
             parser.close()
         novel = Novel.query.get(novel_id)
@@ -518,6 +535,7 @@ def parse_novel_chapters_task(self, novel_id, start_chapter=None, max_chapters=N
         raise
 
     except Exception as e:
+        _safe_rollback()
         if 'parser' in locals():
             parser.close()
         novel = Novel.query.get(novel_id)
@@ -905,6 +923,7 @@ def edit_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
         # 2. hard time_limit Celery (через TimeLimitExceeded в MainProcess)
         #    → OS-сигнал нашему обработчику НЕ приходит, флаг остаётся False
         # До этого фикса оба случая ловились одинаково и писались как "пользовательская отмена".
+        _safe_rollback()
         novel = Novel.query.get(novel_id)
         edited = success_count if 'success_count' in locals() else 0
         total = total_chapters if 'total_chapters' in locals() else 0
@@ -942,6 +961,7 @@ def edit_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
             }
 
     except SoftTimeLimitExceeded:
+        _safe_rollback()
         novel = Novel.query.get(novel_id)
         if novel:
             novel.status = 'editing_timeout'
@@ -951,6 +971,7 @@ def edit_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
         raise
 
     except Exception as e:
+        _safe_rollback()
         novel = Novel.query.get(novel_id)
         if novel:
             novel.status = 'editing_error'
@@ -965,6 +986,7 @@ def edit_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
 
         # Гарантированно очищаем editing_task_id даже если что-то пошло не так
         try:
+            _safe_rollback()
             novel = Novel.query.get(novel_id)
             if novel and novel.editing_task_id == self.request.id:
                 novel.editing_task_id = None
@@ -1199,6 +1221,7 @@ def translate_novel_chapters_task(self, novel_id, chapter_ids):
 
     except Terminated:
         # Проверяем: отмена пользователем или крах инфраструктуры?
+        _safe_rollback()
         novel = Novel.query.get(novel_id)
         if novel:
             db.session.refresh(novel)
@@ -1244,6 +1267,7 @@ def translate_novel_chapters_task(self, novel_id, chapter_ids):
             LogService.log_error(f"❌ [Novel:{novel_id}] Перевод прерван, новелла не найдена", novel_id=novel_id)
 
     except SoftTimeLimitExceeded:
+        _safe_rollback()
         novel = Novel.query.get(novel_id)
         if novel:
             novel.status = 'translation_timeout'
@@ -1253,6 +1277,7 @@ def translate_novel_chapters_task(self, novel_id, chapter_ids):
         raise
 
     except Exception as e:
+        _safe_rollback()
         novel = Novel.query.get(novel_id)
         if novel:
             novel.status = 'translation_error'
@@ -1268,6 +1293,7 @@ def translate_novel_chapters_task(self, novel_id, chapter_ids):
         # Гарантированно очищаем translation_task_id (кроме retry — там id остаётся)
         if not _retrying:
             try:
+                _safe_rollback()
                 novel = Novel.query.get(novel_id)
                 if novel and novel.translation_task_id == self.request.id:
                     novel.translation_task_id = None
@@ -1575,6 +1601,7 @@ def align_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
         }
 
     except Exception as e:
+        _safe_rollback()
         LogService.log_error(f"❌ [Novel:{novel_id}] Критическая ошибка выравнивания: {e}", novel_id=novel_id)
 
         # Обновляем статус на ошибку
@@ -1592,6 +1619,7 @@ def align_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
 
         # Гарантированно очищаем alignment_task_id даже если что-то пошло не так
         try:
+            _safe_rollback()
             novel = Novel.query.get(novel_id)
             if novel and novel.alignment_task_id == self.request.id:
                 novel.alignment_task_id = None
@@ -1741,6 +1769,7 @@ def generate_bilingual_epub_task(self, novel_id):
         }
 
     except Terminated:
+        _safe_rollback()
         LogService.log_info(f"⏹️ [Novel:{novel_id}] Генерация EPUB прервана (SIGTERM)", novel_id=novel_id)
         novel = Novel.query.get(novel_id)
         if novel:
@@ -1749,6 +1778,7 @@ def generate_bilingual_epub_task(self, novel_id):
         raise
 
     except Exception as e:
+        _safe_rollback()
         LogService.log_error(f"❌ [Novel:{novel_id}] Ошибка генерации EPUB: {e}", novel_id=novel_id)
         novel = Novel.query.get(novel_id)
         if novel:
@@ -1762,6 +1792,7 @@ def generate_bilingual_epub_task(self, novel_id):
 
         # Гарантированно очищаем epub_generation_task_id даже если что-то пошло не так
         try:
+            _safe_rollback()
             novel = Novel.query.get(novel_id)
             if novel and novel.epub_generation_task_id == self.request.id:
                 novel.epub_generation_task_id = None
