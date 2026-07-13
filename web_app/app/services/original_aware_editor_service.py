@@ -72,6 +72,13 @@ class LengthLimitError(EditingError):
     pass
 
 
+class CJKLeakError(EditingError):
+    """В отредактированном тексте осталось слишком много китайских иероглифов (CJK).
+    Глюк LLM: непереведённые куски оригинала попали в русский результат.
+    Требует быстрый retry главы (как NoChangesError)."""
+    pass
+
+
 class OriginalAwareEditorService(GlossaryAwareEditorService):
     """
     Продвинутый сервис редактуры с использованием оригинального текста и глоссария.
@@ -81,6 +88,12 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
     # Константы для контроля галлюцинаций
     MAX_TEXT_EXPANSION_RATIO = 6.0  # Максимальное расширение текста (6x от оригинала)
     MAX_LENGTH_RETRIES = 2  # Максимум retry при превышении лимита длины
+
+    # Порог утечки китайских иероглифов (CJK) в русский результат.
+    # Целевой язык — русский, поэтому иероглифов в edited-тексте быть не должно.
+    # Малый допуск (<=10) оставлен на редкие намеренные вставки (имя/термин в скобках).
+    # Больше порога — считаем брак (глюк LLM оставил куски оригинала) → retry главы.
+    MAX_CJK_ALLOWED = 10
 
     def __init__(self, translator_service: TranslatorService,
                  fallback_translator: TranslatorService = None):
@@ -105,30 +118,55 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
         self.translator.translator.current_prompt_type = prompt_type
         self.translator.translator.request_start_time = time.time()
 
+        primary_result = None
+        primary_truncated = False
         try:
-            return self.translator.translator.translate_text(
+            primary_result = self.translator.translator.translate_text(
                 translated_text, prompt, "", chapter_id,
                 temperature=self.translator.temperature
             )
-        except LengthLimitError as e:
-            if not self.fallback_translator:
-                LogService.log_error(
-                    f"⚠️ Этап {stage_name}: ответ обрезан по length, fallback не настроен — пропускаем этап",
-                    chapter_id=chapter_id
-                )
-                raise
-            LogService.log_warning(
-                f"🔁 Этап {stage_name}: основная модель упёрлась в length, "
-                f"переключаемся на fallback модель {self.fallback_translator.translator.model.model_id}",
+        except LengthLimitError:
+            primary_truncated = True  # явный сигнал усечения (finish_reason=length)
+
+        # Основная модель дала годный результат — отдаём.
+        if primary_result and str(primary_result).strip():
+            return primary_result
+
+        # Иначе нужен fallback. Усечение thinking на веб-канале chat.qwen.ai всплывает
+        # двояко: (1) как LengthLimitError (чистая первая попытка), либо (2) как None —
+        # когда error_type сменился на 'length' уже внутри WAF-retry-петли
+        # universal_llm_translator и та вернула None вместо raise. Оба случая = «основная
+        # не дала ответа» → переключаемся на резервную НЕ-thinking модель.
+        if not self.fallback_translator:
+            LogService.log_error(
+                f"⚠️ Этап {stage_name}: основная модель не дала результат "
+                f"({'обрыв length' if primary_truncated else 'пусто/None'}), "
+                f"fallback не настроен — пропускаем этап",
                 chapter_id=chapter_id
             )
-            self.fallback_translator.translator.current_chapter_id = chapter_id
-            self.fallback_translator.translator.current_prompt_type = prompt_type
-            self.fallback_translator.translator.request_start_time = time.time()
-            return self.fallback_translator.translator.translate_text(
-                translated_text, prompt, "", chapter_id,
-                temperature=self.fallback_translator.temperature
-            )
+            raise LengthLimitError("основная модель: пустой/усечённый результат, fallback не настроен")
+
+        LogService.log_warning(
+            f"🔁 Этап {stage_name}: основная модель "
+            f"{'упёрлась в length' if primary_truncated else 'вернула пусто/None'}, "
+            f"переключаемся на fallback модель {self.fallback_translator.translator.model.model_id}",
+            chapter_id=chapter_id
+        )
+        self.fallback_translator.translator.current_chapter_id = chapter_id
+        self.fallback_translator.translator.current_prompt_type = prompt_type
+        self.fallback_translator.translator.request_start_time = time.time()
+        return self.fallback_translator.translator.translate_text(
+            translated_text, prompt, "", chapter_id,
+            temperature=self.fallback_translator.temperature
+        )
+
+    @staticmethod
+    def _count_cjk(text: str) -> int:
+        """Подсчёт китайских иероглифов (CJK Unified Ideographs, U+4E00–U+9FFF) в тексте.
+        Используется для детекта утечки непереведённых кусков оригинала в русский результат."""
+        if not text:
+            return 0
+        return sum(1 for c in text if '一' <= c <= '鿿')
 
     def _check_text_length(self, result: str, original: str, stage_name: str, chapter_id: int) -> bool:
         """
@@ -289,7 +327,7 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
             raise NoChangesError(f"Глава {chapter.chapter_number}: текст не изменился после редактуры (все 4 этапа провалились)")
 
         # Финальная валидация
-        if not self.validate_with_original(original_text, edited_text, glossary):
+        if not self.validate_with_original(original_text, edited_text, glossary, translated_text):
             LogService.log_error(f"Глава {chapter.chapter_number}: финальная валидация не пройдена",
                                novel_id=chapter.novel_id, chapter_id=chapter.id)
             return False
@@ -577,7 +615,7 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
             LogService.log_error(f"Ошибка финальной полировки с оригиналом: {e}", chapter_id=chapter_id)
             raise
 
-    def validate_with_original(self, original: str, edited: str, glossary: Dict) -> bool:
+    def validate_with_original(self, original: str, edited: str, glossary: Dict, translated: str = None) -> bool:
         """
         Валидация результата редактирования с оригиналом
         """
@@ -586,13 +624,29 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
             LogService.log_error("Валидация: пустой отредактированный текст")
             return False
 
-        if len(edited) < len(original) * 0.3:
-            LogService.log_error(f"Валидация: текст слишком короткий ({len(edited)} < {len(original) * 0.3})")
+        # Длину сравниваем с ИСХОДНЫМ ПЕРЕВОДОМ, а не с китайским оригиналом:
+        # редактура шлифует готовый перевод и не должна заметно урезать объём.
+        # Китайский оригинал как база слишком мягок (рус. текст ~4x длиннее) и
+        # пропускал усечённые ответы канала (напр. гл.98: 1789 симв при переводе 9062).
+        length_baseline = translated if translated else original
+        min_ratio = 0.5 if translated else 0.3
+        if len(edited) < len(length_baseline) * min_ratio:
+            base_name = 'перевод' if translated else 'оригинал'
+            LogService.log_error(f"Валидация: текст слишком короткий ({len(edited)} < {int(len(length_baseline) * min_ratio)}; база={base_name})")
             return False
 
         if len(edited) > len(original) * self.MAX_TEXT_EXPANSION_RATIO:
             ratio = len(edited) / len(original)
             raise TextTooLongError(f"Текст слишком длинный ({ratio:.1f}x > {self.MAX_TEXT_EXPANSION_RATIO}x)")
+
+        # Проверка утечки китайских иероглифов (глюк LLM: непереведённые куски оригинала).
+        # Целевой язык русский → иероглифов быть не должно (допуск MAX_CJK_ALLOWED).
+        cjk_count = self._count_cjk(edited)
+        if cjk_count > self.MAX_CJK_ALLOWED:
+            raise CJKLeakError(
+                f"В отредактированном тексте {cjk_count} китайских иероглифов "
+                f"(> допуска {self.MAX_CJK_ALLOWED}): утечка оригинала в русский результат"
+            )
 
         # Проверка наличия ключевых терминов из глоссария
         missing_critical = []

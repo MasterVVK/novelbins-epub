@@ -595,7 +595,7 @@ def edit_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
         parallel_threads: Количество параллельных потоков (из конфига новеллы)
     """
     from app.services.translator_service import TranslatorService
-    from app.services.original_aware_editor_service import OriginalAwareEditorService, EmptyResultError, NoChangesError, RateLimitError, TextTooLongError, ProhibitedContentError
+    from app.services.original_aware_editor_service import OriginalAwareEditorService, EmptyResultError, NoChangesError, RateLimitError, TextTooLongError, ProhibitedContentError, CJKLeakError
     from app.services.log_service import LogService
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from threading import Lock
@@ -699,12 +699,14 @@ def edit_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
                 max_attempts_empty = 3
                 max_attempts_no_changes = 2
                 max_attempts_too_long = 2
+                max_attempts_cjk = 3  # утечка иероглифов: быстрый повтор (глюк LLM обычно недетерминирован)
                 retry_delays = [0, 300, 600]  # секунды: 0, 5 мин, 10 мин
 
                 attempt = 0
                 empty_result_attempts = 0
                 no_changes_attempts = 0
                 too_long_attempts = 0
+                cjk_attempts = 0
 
                 while True:
                     attempt += 1
@@ -809,6 +811,19 @@ def edit_novel_chapters_task(self, novel_id, chapter_ids, parallel_threads=3):
                         LogService.log_warning(f"⛔ [Novel:{novel_id}, Ch:{chapter.chapter_number}] {e}. Глава ПРОПУЩЕНА.", novel_id=novel_id)
                         print(f"⛔ [Novel:{novel_id}, Ch:{chapter.chapter_number}] PROHIBITED_CONTENT - Глава ПРОПУЩЕНА")
                         return False
+
+                    except CJKLeakError as e:
+                        # Утечка иероглифов в русский результат - быстрый retry без задержек (глюк LLM недетерминирован)
+                        cjk_attempts += 1
+                        if cjk_attempts < max_attempts_cjk:
+                            LogService.log_warning(f"🈲 [Novel:{novel_id}, Ch:{chapter.chapter_number}] {e}. Попытка {cjk_attempts}/{max_attempts_cjk}. Повтор сразу...", novel_id=novel_id)
+                            continue
+                        else:
+                            # Исчерпаны попытки - ПРОПУСКАЕМ (глава останется неотредактированной, помечена в логе)
+                            with counter_lock:
+                                processed_count += 1
+                            LogService.log_error(f"❌ [Novel:{novel_id}, Ch:{chapter.chapter_number}] Утечка иероглифов не устранена за {max_attempts_cjk} попыток. Глава ПРОПУЩЕНА.", novel_id=novel_id)
+                            return False
 
                     except Exception as e:
                         # Другие ошибки - retry с задержками (макс 3 попытки)
