@@ -63,6 +63,7 @@ echo "  • Queue: llm_queue (перевод, редактура, сопоста
 echo "  • Concurrency: 12 (до 12 новелл параллельно)"
 echo "  • Pool: prefork"
 echo "  • Loglevel: INFO"
+echo "  • Logfile: logs/celery_llm.log (+ консоль через tee)"
 echo
 echo -e "${YELLOW}💡 Parsing worker запускается отдельно: ./start_celery_worker.sh${NC}"
 echo
@@ -71,9 +72,11 @@ echo
 echo -e "${GREEN}🚀 Запуск LLM worker...${NC}"
 echo
 
+mkdir -p logs
 celery -A celery_app.celery worker \
     --loglevel=INFO \
     --concurrency=12 \
     --pool=prefork \
     --queues=llm_queue \
-    --hostname=worker-llm@%h
+    --hostname=worker-llm@%h \
+    2>&1 | tee -a logs/celery_llm.log
