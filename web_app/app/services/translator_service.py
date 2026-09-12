@@ -1277,13 +1277,19 @@ class TranslatorService:
             
             # Если есть критические проблемы с абзацами, пробуем перевести еще раз
             if validation['critical']:
-                # Проверяем, является ли проблема связанной с абзацами
-                paragraph_issue = any('абзац' in issue.lower() for issue in validation['critical_issues'])
+                # Повторная попытка помогает не только при проблеме с абзацами:
+                # вырожденный повтор и непереведённый текст — это сбой генерации,
+                # на другой температуре модель обычно выдаёт нормальный перевод.
+                retry_markers = ('абзац', 'вырожденный повтор', 'не переведён')
+                paragraph_issue = any(
+                    any(marker in issue.lower() for marker in retry_markers)
+                    for issue in validation['critical_issues']
+                )
                 
                 if paragraph_issue:
-                    LogService.log_warning(f"Проблема с абзацами в главе {chapter.chapter_number}, пробуем перевести заново",
+                    LogService.log_warning(f"Критическая проблема в главе {chapter.chapter_number} ({validation['critical_issues']}), пробуем перевести заново",
                                          novel_id=chapter.novel_id, chapter_id=chapter.id)
-                    print(f"   ⚠️ Проблема с абзацами: {validation['critical_issues']}")
+                    print(f"   ⚠️ Критическая проблема: {validation['critical_issues']}")
                     print(f"   🔄 Повторная попытка перевода...")
 
                     # Задержка перед повторным переводом (60 секунд)
@@ -1985,7 +1991,16 @@ class TranslatorService:
         
         orig_paragraphs = len([p for p in orig_normalized.split('\n\n') if p.strip()])
         trans_paragraphs = len([p for p in trans_normalized.split('\n\n') if p.strip()])
-        
+
+        # Модель часто разделяет абзацы одинарным переносом, а не пустой строкой.
+        # Тогда подсчёт по '\n\n' даёт 1 абзац на весь перевод, и валидация ложно
+        # падает с «критической разницей в абзацах» (глава уходит в бесконечный ретрай).
+        # Если двойных переносов в переводе нет вовсе — считаем абзацы по одинарным.
+        if trans_paragraphs <= 1 and '\n\n' not in trans_normalized:
+            trans_single_lines = len([p for p in trans_normalized.split('\n') if p.strip()])
+            if trans_single_lines > trans_paragraphs:
+                trans_paragraphs = trans_single_lines
+
         # Если оригинал имеет много одинарных переносов и мало двойных, возможно это особый формат
         # (например, диалоги или стихи)
         single_newlines_orig = original.count('\n')
@@ -2058,6 +2073,21 @@ class TranslatorService:
 
         if len(orig_numbers) != len(trans_numbers):
             issues.append(f"Разница в количестве чисел: {len(orig_numbers)} → {len(trans_numbers)}")
+
+        # Детектор вырождения: модель срывается в бесконечный повтор одного фрагмента
+        # (глава 73 Novel:53 — «未必» подряд 1505 раз, 71% текста). Такой брак не ловится
+        # ни по длине, ни по абзацам: он выглядит как нормальный по объёму перевод.
+        # Фрагмент обязан начинаться с буквы/иероглифа, иначе ловятся ряды многоточий.
+        degeneration = re.search(r'(\w.{0,9}?)\1{19,}', translated, re.DOTALL)
+        if degeneration:
+            frag = degeneration.group(1)[:20].replace('\n', '\\n')
+            critical_issues.append(f"Вырожденный повтор в переводе: '{frag}' подряд 20+ раз")
+
+        # Детектор непереведённого текста: модель вернула китайский оригинал вместо перевода
+        cjk_count = len(re.findall(r'[\u4e00-\u9fff]', translated))
+        cjk_ratio = cjk_count / trans_len if trans_len > 0 else 0
+        if cjk_ratio > 0.30:
+            critical_issues.append(f"Текст не переведён: {cjk_ratio:.0%} символов — иероглифы")
 
         # Статистика для логирования
         stats = {
@@ -2135,12 +2165,15 @@ class TranslatorService:
             elif 'АРТЕФАКТЫ:' in line:
                 current_section = 'artifacts'
                 logger.info(f"📂 Найдена секция: {current_section}")
-            elif line.startswith('- ') and current_section:
+            elif current_section and ' = ' in line:
                 if 'нет новых' in line.lower():
                     logger.info(f"ℹ️ Пропускаем строку 'нет новых': {line}")
                     continue
-                
-                parts = line[2:].split(' = ')
+
+                # Маркер списка не обязателен: kimi отдаёт "- X = Y", qwen — просто "X = Y"
+                item = re.sub(r'^\s*(?:[-*•—+]\s+|\d+[.)]\s+)', '', line)
+                item = item.replace('**', '').replace('`', '')
+                parts = item.split(' = ')
                 if len(parts) == 2:
                     eng, rus = parts[0].strip(), parts[1].strip()
                     if eng and rus and eng != rus:
