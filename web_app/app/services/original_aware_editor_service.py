@@ -12,7 +12,7 @@ from datetime import datetime
 
 from app import db
 from app.models import Chapter, Novel, Task, Translation, GlossaryItem
-from app.services.translator_service import TranslatorService
+from app.services.translator_service import TranslatorService, is_service_message
 from app.services.glossary_aware_editor_service import GlossaryAwareEditorService
 from app.services.log_service import LogService
 from app.services.prompt_template_service import PromptTemplateService
@@ -95,6 +95,9 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
     # Больше порога — считаем брак (глюк LLM оставил куски оригинала) → retry главы.
     MAX_CJK_ALLOWED = 10
 
+    # Сколько раз повторять этап, если вместо ответа пришёл экран дневного лимита Qwen
+    SERVICE_MESSAGE_ATTEMPTS = 3
+
     def __init__(self, translator_service: TranslatorService,
                  fallback_translator: TranslatorService = None):
         super().__init__(translator_service)
@@ -120,13 +123,27 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
 
         primary_result = None
         primary_truncated = False
-        try:
-            primary_result = self.translator.translator.translate_text(
-                translated_text, prompt, "", chapter_id,
-                temperature=self.translator.temperature
+        # Экран лимита Qwen канал отдаёт как обычный ответ. Если принять его за результат,
+        # следующие этапы «редактируют» этот экран, и вся глава пропадает на валидации.
+        # Лимит — на аккаунт, а канал на повторе берёт другой аккаунт, поэтому пробуем ещё.
+        for attempt in range(1, self.SERVICE_MESSAGE_ATTEMPTS + 1):
+            try:
+                primary_result = self.translator.translator.translate_text(
+                    translated_text, prompt, "", chapter_id,
+                    temperature=self.translator.temperature
+                )
+            except LengthLimitError:
+                primary_truncated = True  # явный сигнал усечения (finish_reason=length)
+                break
+            if not is_service_message(primary_result):
+                break
+            LogService.log_warning(
+                f"⚠️ Этап {stage_name}: вместо ответа пришёл экран лимита Qwen "
+                f"(попытка {attempt}/{self.SERVICE_MESSAGE_ATTEMPTS})",
+                chapter_id=chapter_id
             )
-        except LengthLimitError:
-            primary_truncated = True  # явный сигнал усечения (finish_reason=length)
+            primary_result = None
+            self.translator.translator.request_start_time = time.time()
 
         # Основная модель дала годный результат — отдаём.
         if primary_result and str(primary_result).strip():
@@ -155,10 +172,17 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
         self.fallback_translator.translator.current_chapter_id = chapter_id
         self.fallback_translator.translator.current_prompt_type = prompt_type
         self.fallback_translator.translator.request_start_time = time.time()
-        return self.fallback_translator.translator.translate_text(
+        fallback_result = self.fallback_translator.translator.translate_text(
             translated_text, prompt, "", chapter_id,
             temperature=self.fallback_translator.temperature
         )
+        if is_service_message(fallback_result):
+            LogService.log_warning(
+                f"⚠️ Этап {stage_name}: fallback тоже вернул экран лимита Qwen — этап пропускаем",
+                chapter_id=chapter_id
+            )
+            return None
+        return fallback_result
 
     @staticmethod
     def _count_cjk(text: str) -> int:

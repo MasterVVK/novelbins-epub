@@ -29,6 +29,14 @@ except ImportError:
         """Fallback: без нормализации если OpenCC не установлен"""
         return text
 
+# Экран дневного лимита Qwen Chat: browser-channel отдаёт его как обычный ответ модели
+_SERVICE_MESSAGE_RE = re.compile(r"reached today'?s .{0,40}limit|Upgrade your membership", re.IGNORECASE)
+
+
+def is_service_message(text: str) -> bool:
+    """Ответ сервиса (экран лимита) вместо перевода."""
+    return bool(text) and bool(_SERVICE_MESSAGE_RE.search(text))
+
 logger = logging.getLogger(__name__)
 
 
@@ -1280,7 +1288,7 @@ class TranslatorService:
                 # Повторная попытка помогает не только при проблеме с абзацами:
                 # вырожденный повтор и непереведённый текст — это сбой генерации,
                 # на другой температуре модель обычно выдаёт нормальный перевод.
-                retry_markers = ('абзац', 'вырожденный повтор', 'не переведён')
+                retry_markers = ('абзац', 'вырожденный повтор', 'не переведён', 'ответ сервиса')
                 paragraph_issue = any(
                     any(marker in issue.lower() for marker in retry_markers)
                     for issue in validation['critical_issues']
@@ -1339,7 +1347,8 @@ class TranslatorService:
                     if len(translated_parts_retry) == len(text_parts):
                         # Объединяем части повторного перевода
                         full_translation = '\n\n'.join(translated_parts_retry)
-                        title, content = self.extract_title_and_content(full_translation)
+                        retry_title, content = self.extract_title_and_content(full_translation)
+                        title = retry_title or title  # не терять уже переведённое название
                         
                         # Повторная валидация
                         validation = self.validate_translation(chapter.original_text, content, chapter.chapter_number)
@@ -1397,7 +1406,8 @@ class TranslatorService:
                             if len(translated_parts_third) == len(text_parts):
                                 # Объединяем части третьего перевода
                                 full_translation = '\n\n'.join(translated_parts_third)
-                                title, content = self.extract_title_and_content(full_translation)
+                                retry_title, content = self.extract_title_and_content(full_translation)
+                                title = retry_title or title  # не терять уже переведённое название
 
                                 # Финальная валидация
                                 validation = self.validate_translation(chapter.original_text, content, chapter.chapter_number)
@@ -1451,6 +1461,14 @@ class TranslatorService:
                             LogService.log_info(f"Повторный перевод успешен, качество: {self.calculate_quality_score(validation)}", 
                                               novel_id=chapter.novel_id, chapter_id=chapter.id)
                             print(f"   ✅ Повторный перевод успешен")
+                    else:
+                        # Повтор не вернул все части: без этой ветки код шёл дальше
+                        # и сохранял забракованный первый вариант (так в главу попал экран лимита)
+                        LogService.log_error(f"Повторный перевод главы {chapter.chapter_number} не удался: "
+                                           f"переведено {len(translated_parts_retry)}/{len(text_parts)} частей",
+                                           novel_id=chapter.novel_id, chapter_id=chapter.id)
+                        print(f"   ❌ Повторный перевод не удался: {len(translated_parts_retry)}/{len(text_parts)} частей")
+                        return False
                 else:
                     # Если проблема не с абзацами, сразу возвращаем ошибку
                     LogService.log_error(f"Критические проблемы в переводе главы {chapter.chapter_number}: {validation['critical_issues']}", 
@@ -1458,7 +1476,14 @@ class TranslatorService:
                     print(f"   ❌ Критические проблемы в переводе: {validation['critical_issues']}")
                     return False
             
-            LogService.log_info(f"Валидация пройдена, качество: {self.calculate_quality_score(validation)}", 
+            # Страховка: перевод с критическими проблемами не сохраняется ни по какой ветке
+            if validation['critical']:
+                LogService.log_error(f"Глава {chapter.chapter_number} не сохранена, критические проблемы: {validation['critical_issues']}",
+                                   novel_id=chapter.novel_id, chapter_id=chapter.id)
+                print(f"   ❌ Глава не сохранена: {validation['critical_issues']}")
+                return False
+
+            LogService.log_info(f"Валидация пройдена, качество: {self.calculate_quality_score(validation)}",
                               novel_id=chapter.novel_id, chapter_id=chapter.id)
             
             # Генерируем резюме с контекстным глоссарием для консистентности терминов
@@ -1872,6 +1897,11 @@ class TranslatorService:
             translated_title = translated_title.rstrip('.')  # Удаляем точку в конце
             translated_title = translated_title.strip('"\'«»')  # Удаляем кавычки
 
+            if is_service_message(translated_title):
+                LogService.log_warning(f"Вместо названия пришёл экран лимита: '{translated_title}'. Оригинал: '{original_title}'",
+                                       chapter_id=chapter_id)
+                return ""
+
             # Проверка корректности длины
             if not translated_title or len(translated_title) > 200:
                 LogService.log_warning(
@@ -2088,6 +2118,10 @@ class TranslatorService:
         cjk_ratio = cjk_count / trans_len if trans_len > 0 else 0
         if cjk_ratio > 0.30:
             critical_issues.append(f"Текст не переведён: {cjk_ratio:.0%} символов — иероглифы")
+
+        # Экран лимита Qwen вместо перевода (в многочастной главе длина может его не выдать)
+        if is_service_message(translated):
+            critical_issues.append("Ответ сервиса вместо перевода (экран лимита)")
 
         # Статистика для логирования
         stats = {
