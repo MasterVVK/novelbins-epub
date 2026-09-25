@@ -96,7 +96,7 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
     MAX_CJK_ALLOWED = 10
 
     # Сколько раз повторять этап, если вместо ответа пришёл экран дневного лимита Qwen
-    SERVICE_MESSAGE_ATTEMPTS = 3
+    SERVICE_MESSAGE_ATTEMPTS = 6
 
     def __init__(self, translator_service: TranslatorService,
                  fallback_translator: TranslatorService = None):
