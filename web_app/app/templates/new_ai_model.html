@@ -46,6 +46,10 @@
                             </select>
                             <div class="form-text">Google AI Studio - проще, Vertex AI - для производства</div>
                         </div>
+                        <!-- Для не-Gemini провайдеров селект выше скрыт, но скрытое поле всё равно
+                             уходит в POST и записывало всем google-ai. Отправляем вместо него это,
+                             а селект отключаем (disabled-поля не сабмитятся) -->
+                        <input type="hidden" id="api_type_hidden" name="api_type" value="openai-compatible">
 
                         <!-- Базовая информация -->
                         <hr>
@@ -258,6 +262,20 @@ function updateProviderFields() {
 
     providerFields.style.display = 'block';
     submitBtn.disabled = false;
+
+    // api_type: у Gemini его выбирают руками, остальным проставляем сами. Отправляется
+    // ровно одно поле — второе disabled, иначе в POST ушли бы оба под одним именем.
+    const API_TYPE_BY_PROVIDER = { openai: 'openai', anthropic: 'anthropic', ollama: 'ollama' };
+    const apiTypeSelect = document.getElementById('api_type_gemini');
+    const apiTypeHidden = document.getElementById('api_type_hidden');
+    if (provider === 'gemini') {
+        apiTypeSelect.disabled = false;
+        apiTypeHidden.disabled = true;
+    } else {
+        apiTypeSelect.disabled = true;
+        apiTypeHidden.disabled = false;
+        apiTypeHidden.value = API_TYPE_BY_PROVIDER[provider] || 'openai-compatible';
+    }
 
     // Скрываем все специфичные поля
     geminiApiType.style.display = 'none';
