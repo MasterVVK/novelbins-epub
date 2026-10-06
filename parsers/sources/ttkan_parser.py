@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """
 Парсер TTKan (ttkan.co) на основе базового класса
-Использует requests + BeautifulSoup (контент SSR, Selenium не нужен)
+Использует requests + BeautifulSoup (контент SSR).
+С 09.2026 сайт закрыт JS-проверкой браузера (gatekeeper, 403 challenge_required):
+её проходит undetected-chromedriver, дальше requests работает с полученными
+cookies и тем же User-Agent; при истечении clearance проверка проходится заново.
 """
 import time
 import random
@@ -24,10 +27,13 @@ class TtkanParser(BaseParser):
     def __init__(self, auth_cookies: str = None, socks_proxy: str = None):
         super().__init__("ttkan")
 
-        self.base_url = "https://ttkan.co"
+        self.base_url = "https://www.ttkan.co"
         self.auth_cookies = auth_cookies
         self.socks_proxy = socks_proxy
         self.consecutive_errors = 0
+        # Gatekeeper clearance: cookies и UA браузера, прошедшего проверку
+        self.gk_cookies = {}
+        self.gk_user_agent = None
         self.chapter_request_count = 0
         self.batch_size = 50  # Сброс сессии каждые N глав
 
@@ -234,8 +240,96 @@ class TtkanParser(BaseParser):
                     name, value = cookie.split('=', 1)
                     self.session.cookies.set(name.strip(), value.strip())
 
+        self._apply_gatekeeper()
+
         self.consecutive_errors = 0
         print(f"🔄 TTKan: сессия сброшена (новый UA, новые соединения)")
+
+    def _apply_gatekeeper(self):
+        """Переносит clearance-cookies и UA браузера в requests-сессию"""
+        if not self.gk_user_agent:
+            return
+        self.session.headers['User-Agent'] = self.gk_user_agent
+        for name, value in self.gk_cookies.items():
+            self.session.cookies.set(name, value, domain='www.ttkan.co')
+
+    def _solve_gatekeeper(self, url: str, timeout: int = 120) -> bool:
+        """Проходит JS-проверку браузера в undetected-chromedriver и забирает cookies"""
+        import subprocess
+        import undetected_chromedriver as uc
+
+        print(f"🛡️ TTKan: проверка браузера (gatekeeper), открываем Chrome: {url}")
+        options = uc.ChromeOptions()
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+        options.add_argument('--disable-gpu')
+        options.add_argument('--window-size=1280,900')
+        if self.socks_proxy:
+            options.add_argument(f"--proxy-server=socks5://{self.socks_proxy.replace('socks5://', '')}")
+
+        version_main = None
+        try:
+            result = subprocess.run([uc.find_chrome_executable(), '--version'],
+                                    capture_output=True, text=True, timeout=5)
+            version_match = re.search(r'(\d+)\.', result.stdout)
+            if version_match:
+                version_main = int(version_match.group(1))
+        except Exception as e:
+            print(f"   ⚠️ Не удалось определить версию Chrome: {e}")
+
+        driver = None
+        try:
+            driver = uc.Chrome(options=options, version_main=version_main)
+            driver.set_page_load_timeout(120)
+            driver.get(url)
+            start = time.time()
+            while time.time() - start < timeout:
+                html = driver.page_source
+                if '__gatekeeper_challenge' not in driver.current_url and 'data-state="checking"' not in html \
+                        and '/novel/' in html:
+                    break
+                time.sleep(2)
+            else:
+                print(f"❌ TTKan: проверка браузера не пройдена за {timeout}с")
+                return False
+
+            self.gk_user_agent = driver.execute_script("return navigator.userAgent")
+            self.gk_cookies = {c['name']: c['value'] for c in driver.get_cookies()}
+            print(f"✅ TTKan: проверка пройдена за {time.time() - start:.0f}с, cookies: {list(self.gk_cookies)}")
+        except Exception as e:
+            print(f"❌ TTKan: ошибка браузерной проверки: {e}")
+            return False
+        finally:
+            if driver:
+                try:
+                    driver.quit()
+                except Exception:
+                    pass
+
+        self._apply_gatekeeper()
+        return True
+
+    def _get_page_content(self, url: str, timeout: int = 10, description: str = "") -> Optional[str]:
+        """GET с обработкой gatekeeper: на 403 challenge_required проходит проверку и повторяет запрос"""
+        for attempt in range(2):
+            try:
+                self.request_count += 1
+                if description:
+                    print(f"🌐 {description}: {url}")
+                response = self.session.get(url, timeout=timeout)
+                # Без Accept: text/html сайт отдаёт JSON challenge_required, с ним — HTML-страницу проверки
+                if response.status_code == 403 and attempt == 0 and \
+                        ('challenge_required' in response.text or '__gatekeeper_challenge' in response.text):
+                    print(f"🛡️ TTKan: 403 challenge_required — нужна проверка браузера")
+                    if self._solve_gatekeeper(url):
+                        continue
+                response.raise_for_status()
+                self.success_count += 1
+                return response.text
+            except Exception as e:
+                print(f"❌ Ошибка запроса к {url}: {e}")
+                return None
+        return None
 
     def get_chapter_content(self, chapter_url: str, max_retries: int = 3) -> Dict:
         """Получить содержимое главы"""
@@ -248,8 +342,9 @@ class TtkanParser(BaseParser):
             time.sleep(batch_pause)
             self.reset_session()
 
-        # Ротация User-Agent при каждом запросе
-        self.session.headers['User-Agent'] = random.choice(self.user_agents)
+        # Ротация User-Agent при каждом запросе (clearance привязан к UA браузера — тогда не ротируем)
+        if not self.gk_user_agent:
+            self.session.headers['User-Agent'] = random.choice(self.user_agents)
         # Referer как при чтении — предыдущая глава или список
         self.session.headers['Referer'] = chapter_url.rsplit('_', 1)[0] + '_' + str(max(1, int(re.search(r'_(\d+)\.html', chapter_url).group(1)) - 1)) + '.html' if re.search(r'_(\d+)\.html', chapter_url) else 'https://ttkan.co/'
 
