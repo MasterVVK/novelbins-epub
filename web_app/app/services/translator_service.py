@@ -1620,13 +1620,19 @@ class TranslatorService:
         elif force_small:
             max_words = 200  # Очень маленькие части для проблемного контента
         
+        # Размер в «словах»: у китайского нет пробелов, поэтому иероглифы считаем
+        # отдельно (~6 иероглифов на слово). Иначе глава в 15 тыс. иероглифов весит
+        # ~300 «слов», уходит одним запросом и перевод обрезается по лимиту вывода.
+        def _size(s: str) -> int:
+            return len(s.split()) + sum(1 for c in s if '\u4e00' <= c <= '\u9fff') // 6
+
         paragraphs = text.split('\n\n')
         parts = []
         current_part = []
         current_words = 0
         
         for paragraph in paragraphs:
-            paragraph_words = len(paragraph.split())
+            paragraph_words = _size(paragraph)
             
             # Если абзац сам по себе слишком большой, разбиваем его
             if paragraph_words > max_words:
@@ -1666,7 +1672,7 @@ class TranslatorService:
                 temp_part = ""
                 for sentence in sentences:
                     # Проверяем, превышает ли добавление этого предложения лимит
-                    would_exceed = len(temp_part.split()) + len(sentence.split()) > max_words
+                    would_exceed = _size(temp_part) + _size(sentence) > max_words
 
                     if would_exceed and temp_part:
                         # Сохраняем накопленную часть
