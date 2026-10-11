@@ -136,7 +136,7 @@ class AIAdapterService:
             elif self.model.provider == 'qwen_free':
                 return await self._call_qwen_free(system_prompt, user_prompt, temperature, max_tokens,
                                                   disable_thinking=disable_thinking)
-            elif self.model.provider == 'qwen2api':
+            elif self.model.provider in ('qwen2api', 'vllm'):
                 return await self._call_qwen2api(system_prompt, user_prompt, temperature, max_tokens,
                                                  disable_thinking=disable_thinking)
             else:
@@ -799,8 +799,13 @@ class AIAdapterService:
         - reasoning_content (если придёт) отбрасываем;
         - при пустом content → error_type='upstream_mute' для ретрая;
         - ReadTimeout → error_type='upstream_timeout'.
+
+        Тот же клиент обслуживает provider='vllm' (свой vLLM, напр. Qwen3.8-Flash-Next
+        на DGX Spark): ключ необязателен, thinking — через
+        chat_template_kwargs.enable_thinking (AIModel.enable_thinking).
         """
-        if not self.model.api_key:
+        is_vllm = self.model.provider == 'vllm'
+        if not self.model.api_key and not is_vllm:
             return {'success': False, 'error': 'API ключ не указан', 'error_type': 'invalid_api_key'}
 
         actual_max_tokens = min(max_tokens, self.model.max_output_tokens)
@@ -808,7 +813,10 @@ class AIAdapterService:
         # thinking-режим определяется суффиксом в model_id ('-thinking')
         is_thinking_model = '-thinking' in (self.model.model_id or '')
         thinking_marker = 'via_model_id' if is_thinking_model else 'off'
-        if disable_thinking and is_thinking_model:
+        if is_vllm:
+            vllm_thinking = bool(getattr(self.model, 'enable_thinking', False)) and not disable_thinking
+            thinking_marker = 'on' if vllm_thinking else 'off'
+        elif disable_thinking and is_thinking_model:
             logger.warning(
                 f"Qwen2API: disable_thinking=True, но model_id={self.model.model_id} "
                 f"содержит '-thinking'. Чтобы реально отключить — поменяйте модель."
@@ -835,6 +843,24 @@ class AIAdapterService:
             # идентична — просто контент собирается из SSE-чанков.
             'stream': True
         }
+        if is_vllm:
+            # Шаблон Qwen по умолчанию включает рассуждение уровня xhigh (десятки тысяч
+            # знаков) — поэтому всегда задаём флаг явно, а уровень и бюджет берём из
+            # provider_config: reasoning_effort (xhigh/medium/low), thinking_token_budget.
+            pcfg = self.model.provider_config or {}
+            # Переводчик шлёт temperature 0.1 — в режиме рассуждения это почти жадная
+            # выборка, и Qwen иногда застревает в петле. provider_config может задать
+            # свою temperature и presence_penalty (рекомендация Qwen против повторов).
+            if pcfg.get('temperature') is not None:
+                payload['temperature'] = float(pcfg['temperature'])
+            if pcfg.get('presence_penalty') is not None:
+                payload['presence_penalty'] = float(pcfg['presence_penalty'])
+            template_kwargs = {'enable_thinking': vllm_thinking}
+            if vllm_thinking:
+                template_kwargs['reasoning_effort'] = pcfg.get('reasoning_effort', 'low')
+                if pcfg.get('thinking_token_budget'):
+                    payload['thinking_token_budget'] = int(pcfg['thinking_token_budget'])
+            payload['chat_template_kwargs'] = template_kwargs
 
         async with httpx.AsyncClient(timeout=1800.0) as client:
             try:
@@ -842,7 +868,7 @@ class AIAdapterService:
                     'POST',
                     f"{self.model.api_endpoint.rstrip('/')}/chat/completions",
                     headers={
-                        'Authorization': f'Bearer {self.model.api_key}',
+                        'Authorization': f'Bearer {self.model.api_key or "EMPTY"}',
                         'Content-Type': 'application/json',
                         'Accept': 'text/event-stream'
                     },
