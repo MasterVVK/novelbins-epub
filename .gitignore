@@ -182,3 +182,6 @@ test_pro.py
 # Screenshots and images (generated during tests/debugging)
 /tmp/*.png
 /tmp/*.jpg
+
+# Пакеты Anthropic: метаданные и результаты (рабочие данные)
+web_app/data/anthropic_batches/
