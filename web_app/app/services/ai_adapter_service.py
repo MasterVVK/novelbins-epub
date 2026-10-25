@@ -116,7 +116,8 @@ class AIAdapterService:
             elif self.model.provider == 'openai':
                 return await self._call_openai(system_prompt, user_prompt, temperature, max_tokens)
             elif self.model.provider == 'anthropic':
-                return await self._call_anthropic(system_prompt, user_prompt, temperature, max_tokens)
+                return await self._call_anthropic(system_prompt, user_prompt, temperature, max_tokens,
+                                                  disable_thinking=disable_thinking)
             elif self.model.provider in ('ollama', 'ollama_turbo'):
                 return await self._call_ollama(system_prompt, user_prompt, temperature, max_tokens,
                                                expected_output_multiplier, min_output_tokens,
@@ -307,8 +308,16 @@ class AIAdapterService:
                 }
 
     async def _call_anthropic(self, system_prompt: str, user_prompt: str,
-                              temperature: float, max_tokens: int) -> Dict:
-        """Вызов Anthropic API"""
+                              temperature: float, max_tokens: int,
+                              disable_thinking: bool = False) -> Dict:
+        """Вызов Anthropic API.
+
+        Новые модели (Claude Opus 5.5 и др.) рассуждают всегда — thinking нельзя
+        выключить, только регулировать output_config.effort. Маппинг переключателя:
+            enable_thinking=False / disable_thinking → effort=low (минимум рассуждений)
+            enable_thinking=True, mode in (None, 'on') → effort по умолчанию (не передаём)
+            enable_thinking=True, mode='high'          → effort=max
+        """
         if not self.model.api_key:
             return {'success': False, 'error': 'API ключ не указан'}
 
@@ -316,43 +325,69 @@ class AIAdapterService:
         actual_max_tokens = min(max_tokens, self.model.max_output_tokens)
         LogService.log_info(f"Anthropic запрос: {self.model.model_id} | Temperature: {temperature} | Max tokens: {actual_max_tokens:,} / {self.model.max_output_tokens:,}")
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post(
-                f"{self.model.api_endpoint}/messages",
-                headers={
-                    'x-api-key': self.model.api_key,
-                    'anthropic-version': '2023-06-01',
-                    'Content-Type': 'application/json'
-                },
-                json={
-                    'model': self.model.model_id,
-                    'system': system_prompt,
-                    'messages': [
-                        {'role': 'user', 'content': user_prompt}
-                    ],
-                    'temperature': temperature,
-                    'max_tokens': actual_max_tokens
-                }
-            )
+        payload = {
+            'model': self.model.model_id,
+            'system': system_prompt,
+            'messages': [
+                {'role': 'user', 'content': user_prompt}
+            ],
+            'temperature': temperature,
+            'max_tokens': actual_max_tokens
+        }
+        if disable_thinking or not getattr(self.model, 'enable_thinking', False):
+            payload['output_config'] = {'effort': 'low'}
+        elif getattr(self.model, 'thinking_mode', None) == 'high':
+            payload['output_config'] = {'effort': 'max'}
+        headers = {
+            'x-api-key': self.model.api_key,
+            'anthropic-version': '2023-06-01',
+            'Content-Type': 'application/json'
+        }
+
+        # Глава целиком генерируется минутами — 60с не хватало
+        async with httpx.AsyncClient(timeout=httpx.Timeout(900.0, connect=30.0)) as client:
+            response = await client.post(f"{self.model.api_endpoint}/messages", headers=headers, json=payload)
+
+            # Новые модели (Claude Opus 5.5 и др.) отклоняют temperature — повторяем без него
+            if response.status_code == 400 and 'temperature' in response.text:
+                LogService.log_info(f"Anthropic: {self.model.model_id} не принимает temperature — повтор без него")
+                payload.pop('temperature', None)
+                response = await client.post(f"{self.model.api_endpoint}/messages", headers=headers, json=payload)
+
+            # Старые модели могут не знать effort — повторяем без него
+            if response.status_code == 400 and 'output_config' in payload and 'effort' in response.text:
+                LogService.log_info(f"Anthropic: {self.model.model_id} не принимает effort — повтор без него")
+                payload.pop('output_config', None)
+                response = await client.post(f"{self.model.api_endpoint}/messages", headers=headers, json=payload)
 
             if response.status_code == 200:
                 data = response.json()
-                content_blocks = data.get('content', [])
-                if content_blocks:
+                # Берём все текстовые блоки (перед ними могут идти thinking-блоки)
+                text = ''.join(b.get('text', '') for b in data.get('content', []) if b.get('type') == 'text')
+                if text:
+                    stop_reason = data.get('stop_reason', 'unknown')
                     return {
                         'success': True,
-                        'content': content_blocks[0].get('text', ''),
+                        'content': text,
                         'usage': data.get('usage', {}),
-                        'finish_reason': data.get('stop_reason', 'unknown')
+                        # max_tokens → length, как у OpenAI-совместимых провайдеров
+                        'finish_reason': 'length' if stop_reason == 'max_tokens' else stop_reason
                     }
+                elif data.get('stop_reason') == 'max_tokens':
+                    thinking = ((data.get('usage') or {}).get('output_tokens_details') or {}).get('thinking_tokens')
+                    return {'success': False, 'error': (
+                        f'Anthropic: весь лимит max_tokens={actual_max_tokens} ушёл на рассуждения '
+                        f'(thinking_tokens={thinking}), текста нет. Увеличьте max_output_tokens '
+                        f'или ослабьте Thinking.')}
                 else:
                     return {'success': False, 'error': 'Нет контента в ответе'}
             else:
-                error_data = response.json()
-                return {
-                    'success': False,
-                    'error': error_data.get('error', {}).get('message', f'HTTP {response.status_code}')
-                }
+                try:
+                    error_data = response.json()
+                    msg = error_data.get('error', {}).get('message', f'HTTP {response.status_code}')
+                except Exception:
+                    msg = f'HTTP {response.status_code}: {response.text[:200]}'
+                return {'success': False, 'error': msg}
 
     def _resolve_deepseek_thinking_params(self, disable_thinking: bool = False) -> Dict:
         """Вычислить параметры thinking/reasoning_effort для DeepSeek API.

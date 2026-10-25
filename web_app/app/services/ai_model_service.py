@@ -476,25 +476,28 @@ class AIModelService:
             if not model.api_key:
                 return {'success': False, 'error': 'API ключ не указан'}
 
+            headers = {
+                'x-api-key': model.api_key,
+                'anthropic-version': '2023-06-01',
+                'Content-Type': 'application/json'
+            }
+            payload = {
+                'model': model.model_id,
+                'messages': [{'role': 'user', 'content': prompt}],
+                'temperature': model.default_temperature,
+                'max_tokens': 100
+            }
             async with httpx.AsyncClient(timeout=60.0) as client:
-                response = await client.post(
-                    f"{model.api_endpoint}/messages",
-                    headers={
-                        'x-api-key': model.api_key,
-                        'anthropic-version': '2023-06-01',
-                        'Content-Type': 'application/json'
-                    },
-                    json={
-                        'model': model.model_id,
-                        'messages': [{'role': 'user', 'content': prompt}],
-                        'temperature': model.default_temperature,
-                        'max_tokens': 100
-                    }
-                )
+                response = await client.post(f"{model.api_endpoint}/messages", headers=headers, json=payload)
+
+                # Новые модели (Claude Opus 5.5 и др.) отклоняют temperature — повторяем без него
+                if response.status_code == 400 and 'temperature' in response.text:
+                    payload.pop('temperature', None)
+                    response = await client.post(f"{model.api_endpoint}/messages", headers=headers, json=payload)
 
                 if response.status_code == 200:
                     result = response.json()
-                    text = result.get('content', [{}])[0].get('text', '')
+                    text = ''.join(b.get('text', '') for b in result.get('content', []) if b.get('type') == 'text')
                     return {
                         'success': True,
                         'response': text[:100],
@@ -715,6 +718,61 @@ class AIModelService:
         except Exception as e:
             logger.error(f"Ошибка получения моделей DeepSeek: {e}")
             return []
+
+    @staticmethod
+    async def fetch_anthropic_models(api_key: str, api_endpoint: str = None) -> List[Dict]:
+        """Получить список доступных моделей Anthropic через GET /v1/models.
+
+        Проходит все страницы (has_more/last_id). Возвращает список словарей вида
+        [{'id': 'claude-...', 'name': 'Claude ...', 'created_at': '...',
+          'max_input_tokens': int|None, 'max_output_tokens': int|None}, ...].
+        При ошибке API бросает RuntimeError с текстом ошибки.
+        """
+        if not api_key:
+            return []
+
+        base = (api_endpoint or 'https://api.anthropic.com/v1').rstrip('/')
+        headers = {
+            'x-api-key': api_key,
+            'anthropic-version': '2023-06-01',
+            'Accept': 'application/json'
+        }
+
+        models = []
+        after_id = None
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            for _ in range(20):  # защита от бесконечной пагинации
+                params = {'limit': 1000}
+                if after_id:
+                    params['after_id'] = after_id
+                response = await client.get(f"{base}/models", headers=headers, params=params)
+
+                if response.status_code != 200:
+                    try:
+                        err = response.json().get('error', {})
+                        msg = err.get('message') if isinstance(err, dict) else str(err)
+                    except Exception:
+                        msg = response.text[:200]
+                    logger.error(f"Anthropic /models вернул HTTP {response.status_code}: {msg}")
+                    raise RuntimeError(f"HTTP {response.status_code}: {msg}")
+
+                data = response.json()
+                for item in data.get('data', []):
+                    if not item.get('id'):
+                        continue
+                    models.append({
+                        'id': item['id'],
+                        'name': item.get('display_name') or item['id'],
+                        'created_at': item.get('created_at', ''),
+                        'max_input_tokens': item.get('max_input_tokens'),
+                        'max_output_tokens': item.get('max_tokens'),
+                    })
+
+                if not data.get('has_more') or not data.get('last_id'):
+                    break
+                after_id = data['last_id']
+
+        return models
 
     @staticmethod
     async def _test_openrouter(model: AIModel, prompt: str) -> Dict:

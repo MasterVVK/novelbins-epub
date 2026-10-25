@@ -305,6 +305,7 @@ function updateProviderFields() {
         case 'anthropic':
             apiEndpoint.value = 'https://api.anthropic.com/v1';
             apiKeySection.style.display = 'block';
+            fetchModelsBtn.style.display = 'block';
             setModelPreset('claude-3-5-sonnet-20241022', 'Claude 3.5 Sonnet');
             break;
 
@@ -477,6 +478,17 @@ async function fetchAvailableModels() {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({api_key: apiKey})
+            });
+        } else if (provider === 'anthropic') {
+            const apiKey = document.getElementById('api_key').value;
+            if (!apiKey) {
+                availableModelsDiv.innerHTML = '<div class="alert alert-warning">Введите API ключ Anthropic для получения списка моделей</div>';
+                return;
+            }
+            response = await fetch('/api/anthropic/models', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({api_key: apiKey, endpoint: endpoint})
             });
         } else {
             availableModelsDiv.innerHTML = '<div class="alert alert-warning">Получение списка моделей не поддерживается для этого провайдера</div>';
@@ -671,6 +683,26 @@ async function fetchAvailableModels() {
                         </a>
                     `;
                 }
+            } else if (provider === 'anthropic') {
+                // Отображение моделей Anthropic (GET /v1/models, новые сверху)
+                for (const model of models) {
+                    const safeId = (model.id || '').replace(/'/g, "\\'");
+                    const safeName = (model.name || model.id).replace(/'/g, "\\'").replace(/"/g, '&quot;');
+                    const created = model.created_at ? `<small class="text-muted ms-2">${model.created_at.slice(0, 10)}</small>` : '';
+                    const ctx = model.max_input_tokens ? `<span class="badge bg-primary ms-2">${Math.round(model.max_input_tokens/1000)}k контекст</span>` : '';
+                    const onclick = model.max_input_tokens
+                        ? `selectOpenRouterModel('${safeId}', '${safeName}', ${model.max_input_tokens}, ${model.max_output_tokens || 8192})`
+                        : `selectModel('${safeId}', '${safeName}')`;
+                    html += `
+                        <a href="#" class="list-group-item list-group-item-action"
+                           onclick="${onclick}; return false;">
+                            <strong>${model.name}</strong>
+                            <small class="text-muted ms-2">${model.id}</small>
+                            ${created}
+                            ${ctx}
+                        </a>
+                    `;
+                }
             }
             html += '</div>';
             availableModelsDiv.innerHTML = html;
@@ -683,6 +715,8 @@ async function fetchAvailableModels() {
                 availableModelsDiv.innerHTML = '<div class="alert alert-warning">Не удалось получить список моделей OpenRouter. Проверьте подключение к интернету.</div>';
             } else if (provider === 'deepseek') {
                 availableModelsDiv.innerHTML = '<div class="alert alert-warning">Модели не найдены. Проверьте API ключ DeepSeek.</div>';
+            } else if (provider === 'anthropic') {
+                availableModelsDiv.innerHTML = '<div class="alert alert-warning">Модели не найдены. Проверьте API ключ Anthropic.</div>';
             } else {
                 availableModelsDiv.innerHTML = '<div class="alert alert-warning">Модели не найдены.</div>';
             }

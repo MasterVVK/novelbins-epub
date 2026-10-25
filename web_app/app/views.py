@@ -2124,6 +2124,29 @@ def api_fetch_deepseek_models():
         return jsonify({'error': str(e)}), 500
 
 
+@main_bp.route('/api/anthropic/models', methods=['POST'])
+def api_fetch_anthropic_models():
+    """API для получения списка моделей Anthropic"""
+    from app.services.ai_model_service import AIModelService
+    import asyncio
+
+    try:
+        data = request.json or {}
+        api_key = data.get('api_key')
+        if not api_key:
+            return jsonify({'error': 'API ключ Anthropic обязателен'}), 400
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        models = loop.run_until_complete(
+            AIModelService.fetch_anthropic_models(api_key, data.get('endpoint'))
+        )
+        return jsonify(models)
+    except Exception as e:
+        logger.error(f"Ошибка получения моделей Anthropic: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
 @main_bp.route('/celery-monitor')
 def celery_monitor():
     """Страница мониторинга Celery"""

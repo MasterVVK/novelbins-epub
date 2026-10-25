@@ -30,8 +30,19 @@
 
                         <div class="mb-3">
                             <label for="model_id" class="form-label">ID модели (в API провайдера)</label>
+                            {% if model.provider == 'anthropic' %}
+                            <div class="input-group">
+                                <input type="text" class="form-control" id="model_id" name="model_id"
+                                       value="{{ model.model_id }}" required>
+                                <button type="button" class="btn btn-outline-secondary" onclick="fetchAnthropicModels()">
+                                    <i class="bi bi-search"></i> Получить список
+                                </button>
+                            </div>
+                            <div id="available-models" class="mt-2"></div>
+                            {% else %}
                             <input type="text" class="form-control" id="model_id" name="model_id"
                                    value="{{ model.model_id }}" required>
+                            {% endif %}
                             <div class="form-text">Например: gemini-2.5-flash, gpt-4o, claude-3-5-sonnet-20241022</div>
                         </div>
                     </div>
@@ -413,6 +424,66 @@ document.getElementById('editModelForm').addEventListener('submit', async functi
 
     syncWrapperVisibility();
 })();
+
+{% if model.provider == 'anthropic' %}
+// Список моделей Anthropic (GET /v1/models) — тот же маршрут, что и в форме создания
+async function fetchAnthropicModels() {
+    const div = document.getElementById('available-models');
+    const apiKey = document.getElementById('api_key').value;
+    const endpoint = document.getElementById('api_endpoint').value;
+    if (!apiKey) {
+        div.innerHTML = '<div class="alert alert-warning">Введите API ключ Anthropic для получения списка моделей</div>';
+        return;
+    }
+    div.innerHTML = '<div class="alert alert-info">Загрузка списка моделей...</div>';
+
+    try {
+        const response = await fetch('/api/anthropic/models', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({api_key: apiKey, endpoint: endpoint})
+        });
+        const data = await response.json();
+        if (response.status !== 200 || data.error) {
+            div.innerHTML = `<div class="alert alert-danger">Ошибка получения моделей: ${data.error || 'Неизвестная ошибка'}</div>`;
+            return;
+        }
+        if (!data.length) {
+            div.innerHTML = '<div class="alert alert-warning">Модели не найдены. Проверьте API ключ Anthropic.</div>';
+            return;
+        }
+
+        const current = document.getElementById('model_id').value;
+        let html = '<div class="list-group" style="max-height: 320px; overflow-y: auto;">';
+        data.forEach((m, i) => {
+            const created = m.created_at ? `<small class="text-muted ms-2">${m.created_at.slice(0, 10)}</small>` : '';
+            const ctx = m.max_input_tokens ? `<span class="badge bg-primary ms-2">${Math.round(m.max_input_tokens/1000)}k контекст</span>` : '';
+            const active = m.id === current ? ' active' : '';
+            html += `
+                <a href="#" class="list-group-item list-group-item-action${active}"
+                   onclick="selectAnthropicModel(${i}); return false;">
+                    <strong>${m.name}</strong>
+                    <small class="ms-2${active ? '' : ' text-muted'}">${m.id}</small>
+                    ${created}${ctx}
+                </a>`;
+        });
+        html += '</div>';
+        window._anthropicModels = data;
+        div.innerHTML = html;
+    } catch (error) {
+        div.innerHTML = `<div class="alert alert-danger">Ошибка: ${error.message}</div>`;
+    }
+}
+
+function selectAnthropicModel(i) {
+    const m = window._anthropicModels[i];
+    document.getElementById('model_id').value = m.id;
+    if (m.max_input_tokens) document.getElementById('max_input_tokens').value = m.max_input_tokens;
+    if (m.max_output_tokens) document.getElementById('max_output_tokens').value = m.max_output_tokens;
+    document.getElementById('available-models').innerHTML =
+        `<div class="alert alert-success mt-2"><i class="bi bi-check-circle"></i> Выбрана модель: <strong>${m.name}</strong> (${m.id}). Не забудьте сохранить.</div>`;
+}
+{% endif %}
 
 async function testModel() {
     const testButton = event.target.closest('button');
