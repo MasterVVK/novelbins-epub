@@ -4,6 +4,7 @@
 Специально для романа "Одна мысль о вечности" и других сянься
 """
 
+import re
 import time
 import json
 import logging
@@ -97,6 +98,17 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
 
     # Сколько раз повторять этап, если вместо ответа пришёл экран дневного лимита Qwen
     SERVICE_MESSAGE_ATTEMPTS = 6
+
+    # Обрыв ответа на полуслове (лимит токенов, зависание веб-канала): «…ворвался в Убивающую»,
+    # «…чтобы пр», «…ответил:». Законченная глава кончается концом фразы, закрывающей кавычкой
+    # или скобкой (авторская заметка) либо «~»/«～» (приписки автора). Хвост из нерусских символов —
+    # водяные знаки сайтов («R1292», «Δㄟ»), реклама иероглифами, «```» — перед проверкой отрезаем.
+    COMPLETE_ENDING_CHARS = '.!?…»"”“’\')）]}>~～*'
+    _TRAILING_JUNK_RE = re.compile(r'[^А-Яа-яЁё' + re.escape(COMPLETE_ENDING_CHARS) + r']+$')
+    # Итоговая проверка считает обрывом только заметную потерю: редактура короче перевода
+    # хотя бы на 10% (на этапах достаточно, что ответ короче входа этапа). Так старые главы
+    # с рекламным хвостом без точки не уходят в бесконечный retry.
+    TRUNCATION_FINAL_MAX_RATIO = 0.9
 
     def __init__(self, translator_service: TranslatorService,
                  fallback_translator: TranslatorService = None):
@@ -192,6 +204,31 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
             return 0
         return sum(1 for c in text if '一' <= c <= '鿿')
 
+    @classmethod
+    def _ends_complete(cls, text: str) -> bool:
+        """Текст кончается законченной фразой (хвост из нерусских символов не учитывается)."""
+        core = cls._TRAILING_JUNK_RE.sub('', (text or '').rstrip())
+        return bool(core) and core[-1] in cls.COMPLETE_ENDING_CHARS
+
+    @classmethod
+    def _is_truncated(cls, text: str, reference: str, max_ratio: float = 1.0) -> bool:
+        """Текст оборван на полуслове относительно эталона: эталон кончается законченной фразой,
+        а текст — нет, и текст короче эталона (×max_ratio). Если эталон сам кончается без точки
+        (реплика-клиффхэнгер «…произнёс:», рекламный хвост), по концовке судить нельзя."""
+        return (len(text) < len(reference) * max_ratio
+                and cls._ends_complete(reference) and not cls._ends_complete(text))
+
+    def _stage_truncated(self, result: str, previous: str, stage_no: int, chapter: Chapter) -> bool:
+        """Ответ этапа оборван на полуслове → отбрасываем, следующий этап идёт с предыдущим полным текстом."""
+        if not self._is_truncated(result, previous):
+            return False
+        tail = result.rstrip()[-40:].replace('\n', ' ')
+        LogService.log_warning(
+            f"✂️ Этап {stage_no}: ответ оборван на полуслове ({len(result)} из {len(previous)} симв., «…{tail}») — отброшен",
+            novel_id=chapter.novel_id, chapter_id=chapter.id)
+        print(f"   ✂️ Этап {stage_no}: ответ оборван на полуслове ({len(result)} из {len(previous)} симв.) — отброшен")
+        return True
+
     def _check_text_length(self, result: str, original: str, stage_name: str, chapter_id: int) -> bool:
         """
         Проверка длины результата редактуры.
@@ -265,7 +302,9 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
         LogService.log_info("Этап 1/4: Исправляем несоответствия с оригиналом и глоссарием", chapter_id=chapter.id)
         try:
             result = self.fix_with_original(original_text, edited_text, glossary, chapter.id)
-            if result and result != edited_text:
+            if result and result != edited_text and self._stage_truncated(result, edited_text, 1, chapter):
+                failed_stages.append('fix')
+            elif result and result != edited_text:
                 edited_text = result
                 completed_stages.append('fix')
                 print(f"   ✅ Этап 1 выполнен")
@@ -285,7 +324,9 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
         LogService.log_info("Этап 2/4: Улучшаем стиль с оригиналом", chapter_id=chapter.id)
         try:
             result = self.improve_style_with_original(original_text, edited_text, glossary, chapter.id)
-            if result and result != edited_text:
+            if result and result != edited_text and self._stage_truncated(result, edited_text, 2, chapter):
+                failed_stages.append('style')
+            elif result and result != edited_text:
                 edited_text = result
                 completed_stages.append('style')
                 print(f"   ✅ Этап 2 выполнен")
@@ -304,7 +345,9 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
         LogService.log_info("Этап 3/4: Полируем диалоги с оригиналом", chapter_id=chapter.id)
         try:
             result = self.polish_dialogues_with_original(original_text, edited_text, glossary, chapter.id)
-            if result and result != edited_text:
+            if result and result != edited_text and self._stage_truncated(result, edited_text, 3, chapter):
+                failed_stages.append('dialogue')
+            elif result and result != edited_text:
                 edited_text = result
                 completed_stages.append('dialogue')
                 print(f"   ✅ Этап 3 выполнен")
@@ -323,7 +366,9 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
         LogService.log_info("Этап 4/4: Финальная полировка с оригиналом", chapter_id=chapter.id)
         try:
             result = self.final_polish_with_original(original_text, edited_text, glossary, chapter.id)
-            if result and result != edited_text:
+            if result and result != edited_text and self._stage_truncated(result, edited_text, 4, chapter):
+                failed_stages.append('final')
+            elif result and result != edited_text:
                 edited_text = result
                 completed_stages.append('final')
                 print(f"   ✅ Этап 4 выполнен")
@@ -657,6 +702,13 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
         if len(edited) < len(length_baseline) * min_ratio:
             base_name = 'перевод' if translated else 'оригинал'
             LogService.log_error(f"Валидация: текст слишком короткий ({len(edited)} < {int(len(length_baseline) * min_ratio)}; база={base_name})")
+            return False
+
+        # Обрыв на полуслове, при котором потеряно меньше половины текста, проходит порог длины выше
+        # (напр. N22 гл.514: 8133 из 11028 симв., «…ворвался в Убивающую») — ловим по концовке.
+        if translated and self._is_truncated(edited, translated, self.TRUNCATION_FINAL_MAX_RATIO):
+            tail = edited.rstrip()[-40:].replace('\n', ' ')
+            LogService.log_error(f"Валидация: текст оборван на полуслове ({len(edited)} из {len(translated)} симв., «…{tail}»)")
             return False
 
         if len(edited) > len(original) * self.MAX_TEXT_EXPANSION_RATIO:
