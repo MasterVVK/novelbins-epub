@@ -127,6 +127,14 @@ class OriginalAwareEditorService(GlossaryAwareEditorService):
         редактуры. При отсутствии fallback_translator или повторной LengthLimitError — пробрасываем
         исключение наверх (текущий этап будет помечен как failed, редактура продолжит со следующим).
         """
+        # Правила оформления, которые модель сама не соблюдает, задаются в её provider_config:
+        # Qwen4 оставляет реплики в кавычках, как во входном тексте, теряет «ё» и пересказывает
+        # термины глоссария, а Qwen3.8 нормализует это без подсказки. Анализу правила не нужны.
+        model = getattr(self.translator.translator, 'model', None)
+        style_rules = (getattr(model, 'provider_config', None) or {}).get('editing_style_rules')
+        if style_rules and stage_name != 'analysis':
+            prompt = f"{prompt}\n\n{style_rules}"
+
         # Первая попытка через основной translator
         if self.translator.translator.current_chapter_id is None:
             self.translator.translator.current_chapter_id = chapter_id
