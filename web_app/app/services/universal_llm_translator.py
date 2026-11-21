@@ -802,8 +802,10 @@ class UniversalLLMTranslator:
                         # Кидаем исключение чтобы остановить всю задачу
                         raise RateLimitError(f"Часовой лимит не снят после ~60 минут ожидания")
 
-                    # Обработка overloaded для всех провайдеров
-                    if error_type == 'overloaded':
+                    # Обработка overloaded для всех провайдеров; у Anthropic так же ждём и 429 —
+                    # иначе rate_limit уходил в общий else и этап молча пропускался
+                    busy_types = ('overloaded', 'rate_limit') if self.model.provider == 'anthropic' else ('overloaded',)
+                    if error_type in busy_types:
                         LogService.log_warning(f"⚠️ Модель {self.model.model_id} перегружена")
                         LogService.log_warning(f"   Текст ошибки: {error}")
 
@@ -835,7 +837,7 @@ class UniversalLLMTranslator:
                                 retry_error = retry_result.get('error', 'Неизвестная ошибка')
                                 LogService.log_warning(f"⚠️ Попытка {attempt} неудачна: {retry_error} (тип: {retry_error_type})")
 
-                                if retry_error_type != 'overloaded':
+                                if retry_error_type not in busy_types:
                                     LogService.log_error(f"❌ Тип ошибки изменился на {retry_error_type}, прерываем повторы")
                                     if self.save_prompt_history and self.current_chapter_id:
                                         self._save_prompt_history(system_prompt, user_prompt, None, retry_result, False, retry_error)

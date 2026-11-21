@@ -327,7 +327,9 @@ class AIAdapterService:
 
         payload = {
             'model': self.model.model_id,
-            'system': system_prompt,
+            # Системный промпт этапа одинаков для всех глав задачи — кэшируем (5 мин, чтение ×0.1).
+            # Промпт короче минимума модели для кэша API молча не кэширует, ошибки нет.
+            'system': [{'type': 'text', 'text': system_prompt, 'cache_control': {'type': 'ephemeral'}}],
             'messages': [
                 {'role': 'user', 'content': user_prompt}
             ],
@@ -346,48 +348,74 @@ class AIAdapterService:
 
         # Глава целиком генерируется минутами — 60с не хватало
         async with httpx.AsyncClient(timeout=httpx.Timeout(900.0, connect=30.0)) as client:
-            response = await client.post(f"{self.model.api_endpoint}/messages", headers=headers, json=payload)
-
-            # Новые модели (Claude Opus 5.5 и др.) отклоняют temperature — повторяем без него
-            if response.status_code == 400 and 'temperature' in response.text:
-                LogService.log_info(f"Anthropic: {self.model.model_id} не принимает temperature — повтор без него")
-                payload.pop('temperature', None)
+            try:
                 response = await client.post(f"{self.model.api_endpoint}/messages", headers=headers, json=payload)
 
-            # Старые модели могут не знать effort — повторяем без него
-            if response.status_code == 400 and 'output_config' in payload and 'effort' in response.text:
-                LogService.log_info(f"Anthropic: {self.model.model_id} не принимает effort — повтор без него")
-                payload.pop('output_config', None)
-                response = await client.post(f"{self.model.api_endpoint}/messages", headers=headers, json=payload)
+                # Новые модели (Claude Opus 5.5 и др.) отклоняют temperature — повторяем без него
+                if response.status_code == 400 and 'temperature' in response.text:
+                    LogService.log_info(f"Anthropic: {self.model.model_id} не принимает temperature — повтор без него")
+                    payload.pop('temperature', None)
+                    response = await client.post(f"{self.model.api_endpoint}/messages", headers=headers, json=payload)
+
+                # Старые модели могут не знать effort — повторяем без него
+                if response.status_code == 400 and 'output_config' in payload and 'effort' in response.text:
+                    LogService.log_info(f"Anthropic: {self.model.model_id} не принимает effort — повтор без него")
+                    payload.pop('output_config', None)
+                    response = await client.post(f"{self.model.api_endpoint}/messages", headers=headers, json=payload)
+            except httpx.TransportError as e:
+                # Таймаут/обрыв соединения: без error_type UniversalLLMTranslator не повторял бы этап
+                return {'success': False, 'error': f'Anthropic: {type(e).__name__}: {e}',
+                        'error_type': 'service_unavailable'}
 
             if response.status_code == 200:
                 data = response.json()
+                stop_reason = data.get('stop_reason', 'unknown')
+                usage = data.get('usage', {})
+                if usage.get('cache_read_input_tokens') or usage.get('cache_creation_input_tokens'):
+                    LogService.log_info(f"Anthropic кэш: чтение {usage.get('cache_read_input_tokens') or 0}, "
+                                        f"запись {usage.get('cache_creation_input_tokens') or 0} токенов")
                 # Берём все текстовые блоки (перед ними могут идти thinking-блоки)
                 text = ''.join(b.get('text', '') for b in data.get('content', []) if b.get('type') == 'text')
+                if stop_reason == 'refusal':
+                    # Отказ по политике безопасности — как PROHIBITED_CONTENT у Gemini: этап не повторяем
+                    return {'success': False, 'error': 'PROHIBITED_CONTENT: Anthropic отказ (stop_reason=refusal)',
+                            'finish_reason': 'refusal'}
+                if stop_reason == 'max_tokens':
+                    # Ответ оборван — не выдаём его за готовый: editor переключится на fallback-модель
+                    thinking = ((usage.get('output_tokens_details') or {}).get('thinking_tokens'))
+                    return {'success': False, 'error_type': 'length', 'truncated_content': text,
+                            'finish_reason': 'length', 'error': (
+                                f'Anthropic: ответ обрезан по лимиту max_tokens={actual_max_tokens} '
+                                f'(текст {len(text)} симв., thinking_tokens={thinking}). Увеличьте '
+                                f'max_output_tokens или ослабьте Thinking.')}
                 if text:
-                    stop_reason = data.get('stop_reason', 'unknown')
-                    return {
-                        'success': True,
-                        'content': text,
-                        'usage': data.get('usage', {}),
-                        # max_tokens → length, как у OpenAI-совместимых провайдеров
-                        'finish_reason': 'length' if stop_reason == 'max_tokens' else stop_reason
-                    }
-                elif data.get('stop_reason') == 'max_tokens':
-                    thinking = ((data.get('usage') or {}).get('output_tokens_details') or {}).get('thinking_tokens')
-                    return {'success': False, 'error': (
-                        f'Anthropic: весь лимит max_tokens={actual_max_tokens} ушёл на рассуждения '
-                        f'(thinking_tokens={thinking}), текста нет. Увеличьте max_output_tokens '
-                        f'или ослабьте Thinking.')}
-                else:
-                    return {'success': False, 'error': 'Нет контента в ответе'}
-            else:
-                try:
-                    error_data = response.json()
-                    msg = error_data.get('error', {}).get('message', f'HTTP {response.status_code}')
-                except Exception:
-                    msg = f'HTTP {response.status_code}: {response.text[:200]}'
-                return {'success': False, 'error': msg}
+                    return {'success': True, 'content': text, 'usage': usage, 'finish_reason': stop_reason}
+                return {'success': False, 'error': 'Нет контента в ответе'}
+
+            try:
+                error_data = response.json()
+                msg = error_data.get('error', {}).get('message', f'HTTP {response.status_code}')
+            except Exception:
+                msg = f'HTTP {response.status_code}: {response.text[:200]}'
+            # Тип ошибки — чтобы UniversalLLMTranslator повторял временные сбои, а не пропускал этап
+            status = response.status_code
+            error_type = 'general'
+            if status == 429:
+                error_type = 'rate_limit'
+            elif status == 529:
+                error_type = 'overloaded'
+            elif status == 503:
+                error_type = 'service_unavailable'
+            elif status in (500, 502, 504):
+                error_type = 'server_error'
+            elif status in (401, 403):
+                error_type = 'invalid_api_key'
+            elif status == 400 and 'credit balance' in msg.lower():
+                error_type = 'insufficient_balance'
+            result = {'success': False, 'error': msg, 'error_type': error_type, 'status_code': status}
+            if response.headers.get('retry-after'):
+                result['retry_after'] = response.headers['retry-after']
+            return result
 
     def _resolve_deepseek_thinking_params(self, disable_thinking: bool = False) -> Dict:
         """Вычислить параметры thinking/reasoning_effort для DeepSeek API.
